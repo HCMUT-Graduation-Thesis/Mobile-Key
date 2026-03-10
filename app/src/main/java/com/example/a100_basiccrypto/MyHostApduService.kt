@@ -3,6 +3,8 @@ package com.example.a100_basiccrypto
 import android.content.Intent
 import android.nfc.cardemulation.HostApduService
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.example.a100_basiccrypto.ApduConstants.CLA_ISO
 import com.example.a100_basiccrypto.ApduConstants.CLA_PROPRIETARY
@@ -10,33 +12,33 @@ import com.example.a100_basiccrypto.ApduConstants.INS_COMMIT_PAIRING
 import com.example.a100_basiccrypto.ApduConstants.INS_EXCHANGE_AND_DERIVE
 import com.example.a100_basiccrypto.ApduConstants.INS_EXCHANGE_IMMOBILIZER
 import com.example.a100_basiccrypto.ApduConstants.INS_VERIFY_NONCE
-import com.example.a100_basiccrypto.ApduConstants.SW_DATA_MISMATCH
 import com.example.a100_basiccrypto.ApduConstants.SW_DECRYPTION_FAILED
 import com.example.a100_basiccrypto.ApduConstants.SW_INTERNAL_ERROR
 import com.example.a100_basiccrypto.ApduConstants.SW_SUCCESS
+import com.example.a100_basiccrypto.ApduConstants.SW_TIMEOUT
 import com.example.a100_basiccrypto.ApduConstants.SW_UNKNOWN_CMD
-import com.example.a100_basiccrypto.ApduConstants.SW_WRONG_LENGTH
-import com.example.a100_basiccrypto.CryptoUtils.hexToBytes
+import com.example.a100_basiccrypto.ApduConstants.TRANSACTION_TIMEOUT_MS
 import com.example.a100_basiccrypto.CryptoUtils.toHex
+import java.security.KeyPair
+import java.security.KeyPairGenerator
+import java.security.spec.ECGenParameterSpec
 
 class MyHostApduService : HostApduService() {
 
     companion object {
         private const val TAG = "NfcEcdhLock"
         private const val LOG_ACTION = "com.example.a100_basiccrypto.LOG_ACTION"
-
-        // --- TEST VECTORS & HARDCODED DATA ---
-        private const val APP_PRIVATE_KEY_A_HEX = "C88F01F510D9AC3F70A292DAA2316DE544E9AAB8AFE84049C62A9C57862D1433"
-        private const val APP_PUBLIC_KEY_A_HEX = "04DAD0B65394221CF9B051E1FECA5787D098DFE637FC90B9EF945D0C37725811805271A0461CDB8252D61F1C456FA3E59AB1F45B33ACCF5F58389E0577B8990BB3"
-        
-        private const val PUBLIC_KEY_B_HEX = "04BDD198F673E16ED3FF0C5555E8E6E2A6A3EEA052805C07A358DC137D9DC93213E1D5CA5E54336D9FFA7F0D9CECB01C53BFE5AF9EE29D7D5F67F6BAF8F955CDE5"
-        private const val IMMOBILIZER_TOKEN_HEX = "11223344556677889900AABBCCDDEEFF11223344556677889900AABBCCDDEEFF11223344556677889900AABBCCDDEEFF11223344556677889900AABBCCDDEEFF"
-        
         private const val HKDF_INFO = "NFC_OWNER_CONFIRM"
     }
 
     private var currentSessionKey: ByteArray? = null
-    private var isPairingComplete = false
+    private var ephemeralKeyPair: KeyPair? = null
+    private val identityCrypto: IIdentityCrypto = EccIdentityCryptoImpl()
+    
+    private val timeoutHandler = Handler(Looper.getMainLooper())
+    private val timeoutRunnable = Runnable {
+        handleTimeout()
+    }
 
     private fun sendLogToGui(message: String) {
         val intent = Intent(LOG_ACTION).apply {
@@ -54,12 +56,15 @@ class MyHostApduService : HostApduService() {
 
         // Phase 1: Select AID
         if (commandApdu[0] == CLA_ISO && commandApdu[1] == 0xA4.toByte()) {
-            resetState()
-            sendLogToGui("Phase 1: Select AID successful")
+            startTransaction()
+            sendLogToGui("Phase 1: Connected to Reader (Select AID success)")
             return SW_SUCCESS
         }
 
         if (commandApdu[0] != CLA_PROPRIETARY) return SW_UNKNOWN_CMD
+
+        // Restart timeout on each command
+        resetTimeout()
 
         return when (commandApdu[1]) {
             INS_EXCHANGE_AND_DERIVE -> handlePhase2a(commandApdu)
@@ -70,97 +75,111 @@ class MyHostApduService : HostApduService() {
         }
     }
 
-    private fun resetState() {
+    private fun startTransaction() {
+        timeoutHandler.removeCallbacks(timeoutRunnable)
+        timeoutHandler.postDelayed(timeoutRunnable, TRANSACTION_TIMEOUT_MS)
         currentSessionKey = null
-        isPairingComplete = false
+        ephemeralKeyPair = null
+    }
+
+    private fun resetTimeout() {
+        timeoutHandler.removeCallbacks(timeoutRunnable)
+        timeoutHandler.postDelayed(timeoutRunnable, TRANSACTION_TIMEOUT_MS)
+    }
+
+    private fun handleTimeout() {
+        currentSessionKey = null
+        ephemeralKeyPair = null
+        sendLogToGui("Transaction Failed (Timeout)")
+        Log.e(TAG, "Transaction Timeout Reached")
     }
 
     /**
-     * Phase 2.a: ECDH + HKDF
+     * Phase 2.a: Ephemeral Key Exchange & Session Key Generation
      */
     private fun handlePhase2a(apdu: ByteArray): ByteArray {
-        if (apdu.size < 5 || apdu[4].toInt() != 0x41) return SW_WRONG_LENGTH
         return try {
-            val pubKeyBBytes = apdu.sliceArray(5 until 5 + 65)
-            val privKeyA = CryptoUtils.getPrivateKeyFromHex(APP_PRIVATE_KEY_A_HEX)
-            val pubKeyB = CryptoUtils.getPublicKeyFromHex(pubKeyBBytes.toHex())
-            
-            val sharedSecret = CryptoUtils.generateSharedSecret(privKeyA, pubKeyB)
+            val pubKeyReaderBytes = apdu.sliceArray(5 until 5 + 65)
+            val pubKeyReader = CryptoUtils.getPublicKeyFromHex(pubKeyReaderBytes.toHex())
+
+            // Generate Ephemeral Key Pair for HCE
+            val kpg = KeyPairGenerator.getInstance("EC")
+            kpg.initialize(ECGenParameterSpec("secp256r1"))
+            ephemeralKeyPair = kpg.generateKeyPair()
+
+            // Calculate Shared Secret
+            val sharedSecret = CryptoUtils.generateSharedSecret(ephemeralKeyPair!!.private, pubKeyReader)
+
+            // Derive Session Key
+            val salt = PasswordManager.getPassword(this).toByteArray()
             currentSessionKey = CryptoUtils.deriveSessionKey(
                 ikm = sharedSecret,
-                salt = "12345678".toByteArray(),
+                salt = salt,
                 info = HKDF_INFO.toByteArray(),
                 length = 32
             )
-            
-            sendLogToGui("Phase 2.a: Session Key Created")
+
+            sendLogToGui("Phase 2.a: Session Key generated successfully")
             Log.i(TAG, "Session Key: ${currentSessionKey?.toHex()}")
-            
-            APP_PUBLIC_KEY_A_HEX.hexToBytes() + SW_SUCCESS
+
+            val ephemeralPubKeyHce = CryptoUtils.run {
+                val ecPubKey = ephemeralKeyPair!!.public as java.security.interfaces.ECPublicKey
+                val x = ecPubKey.w.affineX.toByteArray().normalize(32)
+                val y = ecPubKey.w.affineY.toByteArray().normalize(32)
+                byteArrayOf(0x04.toByte()) + x + y
+            }
+
+            ephemeralPubKeyHce + SW_SUCCESS
         } catch (e: Exception) {
+            Log.e(TAG, "Phase 2.a Error: ${e.message}")
             SW_INTERNAL_ERROR
         }
     }
 
     /**
-     * Phase 2.b: Nonce Verification
-     * Reader sends Plaintext Nonce -> App returns Encrypted Nonce
+     * Phase 2.b: Nonce Verification (Encrypted)
      */
     private fun handlePhase2b(apdu: ByteArray): ByteArray {
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
             val lc = apdu[4].toInt() and 0xFF
-            val noncePlaintext = apdu.sliceArray(5 until 5 + lc)
-            sendLogToGui("Phase 2.b: Received plaintext nonce [${String(noncePlaintext)}]")
+            val decryptedNonce = CryptoUtils.decryptAesGcm(apdu.sliceArray(5 until 5 + lc), sessionKey)
+            sendLogToGui("Phase 2.b: Nonce verified")
 
-            sendLogToGui("-> Action: Encrypting and sending back")
-            val response = CryptoUtils.encryptAesGcm(noncePlaintext, sessionKey)
-            response + SW_SUCCESS
+            CryptoUtils.encryptAesGcm(decryptedNonce, sessionKey) + SW_SUCCESS
         } catch (e: Exception) {
-            Log.e(TAG, "P2b Error: ${e.message}")
-            sendLogToGui("Phase 2.b: Encryption failed!")
-            SW_INTERNAL_ERROR
+            sendLogToGui("Transaction Failed (Decryption Error)")
+            SW_DECRYPTION_FAILED
         }
     }
 
     /**
-     * Phase 3: Exchange Immobilizer (100% Encrypted)
+     * Phase 3: Long Key & Immobilizer Token Exchange (Encrypted)
      */
     private fun handlePhase3(apdu: ByteArray): ByteArray {
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
             val lc = apdu[4].toInt() and 0xFF
-            val encryptedData = apdu.sliceArray(5 until 5 + lc)
-            sendLogToGui("Phase 3: Received encrypted data (${lc} bytes)")
+            val decryptedData = CryptoUtils.decryptAesGcm(apdu.sliceArray(5 until 5 + lc), sessionKey)
 
-            val decryptedData = CryptoUtils.decryptAesGcm(encryptedData, sessionKey)
-            sendLogToGui("-> Decryption successful: ${decryptedData.size} bytes")
-            
-            if (decryptedData.size != 129) {
-                sendLogToGui("-> Error: Invalid structure (Expected 129 bytes)")
-                return SW_DATA_MISMATCH
+            // [Long_PK_Reader (65)] + [Token (64)]
+            val longPkReader = decryptedData.sliceArray(0 until 65).toHex()
+            val token = decryptedData.sliceArray(65 until 129).toHex()
+
+            // Save to SharedPreferences
+            val prefs = getSharedPreferences("nfc_lock_prefs", MODE_PRIVATE)
+            prefs.edit().apply {
+                putString("last_reader_pk", longPkReader)
+                putString("immobilizer_token", token)
+                apply()
             }
-            
-            val pkBReceived = decryptedData.sliceArray(0 until 65)
-            val tokenReceived = decryptedData.sliceArray(65 until 129)
-            
-            val isPkBMatch = pkBReceived.contentEquals(PUBLIC_KEY_B_HEX.hexToBytes())
-            val isTokenMatch = tokenReceived.contentEquals(IMMOBILIZER_TOKEN_HEX.hexToBytes())
-            
-            sendLogToGui("-> PK_B Check: ${if (isPkBMatch) "Matched" else "Failed"}")
-            sendLogToGui("-> Token Check: ${if (isTokenMatch) "Matched" else "Failed"}")
-            
-            if (isPkBMatch && isTokenMatch) {
-                sendLogToGui("Phase 3: Verification complete. Sending encrypted PK_A.")
-                val responseData = APP_PUBLIC_KEY_A_HEX.hexToBytes()
-                CryptoUtils.encryptAesGcm(responseData, sessionKey) + SW_SUCCESS
-            } else {
-                sendLogToGui("Phase 3 Error: Data Mismatch")
-                SW_DATA_MISMATCH
-            }
+
+            sendLogToGui("Phase 3: Immobilizer Token received and saved")
+
+            val longPkHce = identityCrypto.getPublicKey()
+            CryptoUtils.encryptAesGcm(longPkHce, sessionKey) + SW_SUCCESS
         } catch (e: Exception) {
-            Log.e(TAG, "P3 Error: ${e.message}")
-            sendLogToGui("Phase 3: Decryption or authentication error")
+            sendLogToGui("Transaction Failed (Decryption Error)")
             SW_DECRYPTION_FAILED
         }
     }
@@ -172,22 +191,32 @@ class MyHostApduService : HostApduService() {
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
             val lc = apdu[4].toInt() and 0xFF
-            val encryptedData = apdu.sliceArray(5 until 5 + lc)
-            val decryptedData = CryptoUtils.decryptAesGcm(encryptedData, sessionKey)
-            
+            val decryptedData = CryptoUtils.decryptAesGcm(apdu.sliceArray(5 until 5 + lc), sessionKey)
+
             if (decryptedData.size == 1 && decryptedData[0] == 0x01.toByte()) {
-                isPairingComplete = true
-                sendLogToGui("Phase 4: Pairing Complete!")
+                getSharedPreferences("nfc_lock_prefs", MODE_PRIVATE).edit().putBoolean("isPaired", true).apply()
+                timeoutHandler.removeCallbacks(timeoutRunnable)
+                sendLogToGui("Pairing Complete")
                 SW_SUCCESS
             } else {
-                sendLogToGui("Phase 4: Invalid commit flag")
-                SW_DATA_MISMATCH
+                SW_DECRYPTION_FAILED
             }
         } catch (e: Exception) {
-            sendLogToGui("Phase 4: Decryption failed")
+            sendLogToGui("Transaction Failed (Decryption Error)")
             SW_DECRYPTION_FAILED
         }
     }
 
-    override fun onDeactivated(reason: Int) {}
+    override fun onDeactivated(reason: Int) {
+        timeoutHandler.removeCallbacks(timeoutRunnable)
+        currentSessionKey = null
+    }
+
+    private fun ByteArray.normalize(size: Int): ByteArray {
+        if (this.size == size) return this
+        if (this.size > size) return this.sliceArray(this.size - size until this.size)
+        val res = ByteArray(size)
+        System.arraycopy(this, 0, res, size - this.size, this.size)
+        return res
+    }
 }
