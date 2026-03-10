@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">100_BasicCrypto</string>
+    <string name="serv_desc">NFC Lock Service</string>
+    <string name="aid_desc">ECDH Exchange AID</string>
+</resources>
