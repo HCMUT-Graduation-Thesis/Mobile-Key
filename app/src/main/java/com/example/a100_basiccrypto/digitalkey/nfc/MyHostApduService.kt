@@ -18,7 +18,7 @@ import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_INTERNAL_ERRO
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_SUCCESS
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_UNKNOWN_CMD
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.TRANSACTION_TIMEOUT_MS
-import com.example.a100_basiccrypto.digitalkey.storage.SharedPreferencesKeyStorage
+import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.digitalkey.transactions.OwnerPairingTransaction
 import com.example.a100_basiccrypto.digitalkey.transactions.TransactionRouter
 
@@ -30,7 +30,7 @@ class MyHostApduService : HostApduService() {
     }
 
     private val chainingManager = NfcChainingManager()
-    private val storageManager by lazy { SharedPreferencesKeyStorage(applicationContext) }
+    private val storageManager by lazy { SecureKeyStorageManager(applicationContext) }
     private val identityCrypto = DilithiumIdentityCryptoImpl()
     
     private val router: TransactionRouter by lazy {
@@ -61,15 +61,11 @@ class MyHostApduService : HostApduService() {
         val cla = commandApdu[0]
         val ins = commandApdu[1]
         
-        // Format values as HEX for logging
-        val claHex = "%02X".format(cla)
-        val insHex = "%02X".format(ins)
-        val p1Hex = if (commandApdu.size > 2) "%02X".format(commandApdu[2]) else "--"
-        val p2Hex = if (commandApdu.size > 3) "%02X".format(commandApdu[3]) else "--"
+        val p1 = if (commandApdu.size > 2) "%02X".format(commandApdu[2]) else "--"
+        val p2 = if (commandApdu.size > 3) "%02X".format(commandApdu[3]) else "--"
         
-        Log.d(TAG, "RX: CLA=$claHex, INS=$insHex, P1=$p1Hex, P2=$p2Hex, Full=$hexCommand")
+        Log.d(TAG, "RX: CLA=$cla, INS=$ins, P1=$p1, P2=$p2, Full=$hexCommand")
 
-        // 1. SELECT AID
         if (commandApdu.size >= 2 && cla == CLA_ISO && ins == 0xA4.toByte()) {
             resetSession()
             sendLogToGui("Phase 1: Connected.")
@@ -80,7 +76,6 @@ class MyHostApduService : HostApduService() {
         
         resetTimeoutTimer()
 
-        // 2. Handle GET_NEXT_CHUNK
         if (ins == INS_GET_NEXT_CHUNK && commandApdu.size >= 3) {
             val chunkIndex = commandApdu[2].toInt() and 0xFF
             val chunk = chainingManager.getNextOutgoingChunk(chunkIndex)
@@ -88,19 +83,16 @@ class MyHostApduService : HostApduService() {
             return chunk
         }
 
-        // 3. Handle Fragmentation
         val fullPayload = chainingManager.handleIncomingFragment(commandApdu)
         
         return if (fullPayload != null) {
-            // IMPORTANT: If fullPayload is the same object as commandApdu, it was a short command.
-            // If it's different, it's the REASSEMBLED data payload (already stripped of headers).
             val dataPayload = if (fullPayload === commandApdu) {
                 if (commandApdu.size >= 5) {
                     val lc = commandApdu[4].toInt() and 0xFF
                     commandApdu.sliceArray(5 until minOf(commandApdu.size, 5 + lc))
                 } else ByteArray(0)
             } else {
-                fullPayload // Already pure data from ChainingManager
+                fullPayload
             }
 
             Log.d(TAG, "Routing: msgId=${"%02X".format(ins)}, Data size=${dataPayload.size}")

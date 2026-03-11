@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.android.application)
+    // alias(libs.plugins.kotlin.android) // Remove or comment this line as it might be applied elsewhere
 }
 
 android {
@@ -41,6 +42,10 @@ dependencies {
     // Bouncy Castle for PQC (Dilithium)
     implementation(libs.bouncycastle.prov)
     implementation(libs.bouncycastle.pqc)
+    
+    // Security and JSON
+    implementation(libs.androidx.security.crypto)
+    implementation(libs.gson)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
