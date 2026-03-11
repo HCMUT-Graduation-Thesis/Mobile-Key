@@ -4,11 +4,7 @@ plugins {
 
 android {
     namespace = "com.example.a100_basiccrypto"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.a100_basiccrypto"
@@ -41,6 +37,11 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.activity)
     implementation(libs.androidx.constraintlayout)
+    
+    // Bouncy Castle for PQC (Dilithium)
+    implementation(libs.bouncycastle.prov)
+    implementation(libs.bouncycastle.pqc)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
