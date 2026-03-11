@@ -1,4 +1,4 @@
-package com.example.a100_basiccrypto
+package com.example.a100_basiccrypto.digitalkey.nfc
 
 object ApduConstants {
     // Application ID (AID)
