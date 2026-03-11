@@ -18,6 +18,7 @@ import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_INTERNAL_ERRO
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_SUCCESS
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_UNKNOWN_CMD
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.TRANSACTION_TIMEOUT_MS
+import com.example.a100_basiccrypto.digitalkey.storage.PasswordManager
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.digitalkey.transactions.OwnerPairingTransaction
 import com.example.a100_basiccrypto.digitalkey.transactions.TransactionRouter
@@ -37,7 +38,7 @@ class MyHostApduService : HostApduService() {
         val pairingHandler = OwnerPairingTransaction(
             identityCrypto = identityCrypto,
             storageManager = storageManager,
-            passwordProvider = { "12345678" },
+            passwordProvider = { PasswordManager.getPassword(applicationContext) },
             onLog = { sendLogToGui(it) }
         )
         TransactionRouter(pairingHandler)
@@ -61,10 +62,12 @@ class MyHostApduService : HostApduService() {
         val cla = commandApdu[0]
         val ins = commandApdu[1]
         
-        val p1 = if (commandApdu.size > 2) "%02X".format(commandApdu[2]) else "--"
-        val p2 = if (commandApdu.size > 3) "%02X".format(commandApdu[3]) else "--"
+        val claHex = "%02X".format(cla)
+        val insHex = "%02X".format(ins)
+        val p1Hex = if (commandApdu.size > 2) "%02X".format(commandApdu[2]) else "--"
+        val p2Hex = if (commandApdu.size > 3) "%02X".format(commandApdu[3]) else "--"
         
-        Log.d(TAG, "RX: CLA=$cla, INS=$ins, P1=$p1, P2=$p2, Full=$hexCommand")
+        Log.d(TAG, "RX: CLA=$claHex, INS=$insHex, P1=$p1Hex, P2=$p2Hex, Full=$hexCommand")
 
         if (commandApdu.size >= 2 && cla == CLA_ISO && ins == 0xA4.toByte()) {
             resetSession()

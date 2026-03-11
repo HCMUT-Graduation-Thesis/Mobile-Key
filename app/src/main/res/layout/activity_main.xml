@@ -1,25 +1,163 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:padding="16dp"
+    android:background="#F0F2F5"
     tools:context=".MainActivity">
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="NFC ECDH Lock Status"
-        android:textSize="20sp"
+        android:text="Smart Digital Key"
+        android:textSize="24sp"
         android:textStyle="bold"
+        android:textColor="#1A1A1A"
         android:layout_marginBottom="16dp" />
+
+    <!-- Main Key Card -->
+    <LinearLayout
+        android:id="@+id/card_key_info"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@android:color/white"
+        android:padding="16dp"
+        android:elevation="2dp"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:id="@+id/tv_key_name"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Vehicle: Not Paired"
+            android:textStyle="bold"
+            android:textSize="18sp"
+            android:textColor="#333333" />
+
+        <TextView
+            android:id="@+id/tv_key_state"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Status: NO_KEY"
+            android:textSize="14sp"
+            android:layout_marginTop="4dp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#EEEEEE"
+            android:layout_marginVertical="12dp" />
+
+        <!-- Metadata Section -->
+        <TextView
+            android:id="@+id/tv_metadata_brand"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Brand: --"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/tv_metadata_plate"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Plate: --"
+            android:textSize="13sp"
+            android:layout_marginTop="2dp" />
+
+        <TextView
+            android:id="@+id/tv_metadata_color"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Color: --"
+            android:textSize="13sp"
+            android:layout_marginTop="2dp" />
+
+        <TextView
+            android:id="@+id/tv_account_id"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Linked Account: None"
+            android:textSize="12sp"
+            android:textColor="#777777"
+            android:layout_marginTop="8dp" />
+    </LinearLayout>
+
+    <!-- Quick Actions (Disabled by default) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="16dp">
+
+        <Button
+            android:id="@+id/btn_unlock"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Unlock"
+            android:enabled="false"
+            android:layout_marginRight="4dp" />
+
+        <Button
+            android:id="@+id/btn_lock"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Lock"
+            android:enabled="false"
+            android:layout_marginRight="4dp" />
+
+        <Button
+            android:id="@+id/btn_start"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Start"
+            android:enabled="false" />
+    </LinearLayout>
+
+    <!-- Setup Section -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Pairing Setup"
+        android:textStyle="bold"
+        android:layout_marginBottom="4dp" />
+
+    <EditText
+        android:id="@+id/et_pairing_password"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Enter Pairing Password"
+        android:text="12345678"
+        android:inputType="textPassword"
+        android:textSize="14sp"
+        android:layout_marginBottom="8dp" />
+
+    <Button
+        android:id="@+id/btn_save_password"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Update Pairing Credentials"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Log Section -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Activity Terminal"
+        android:textStyle="bold"
+        android:layout_marginBottom="4dp" />
 
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:background="#F5F5F5"
+        android:background="#1E1E1E"
         android:padding="8dp">
 
         <TextView
@@ -27,9 +165,9 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:fontFamily="monospace"
-            android:text="Waiting for NFC interaction..."
-            android:textColor="@android:color/black"
-            android:textSize="12sp" />
+            android:text="Terminal Ready..."
+            android:textColor="#00FF00"
+            android:textSize="11sp" />
     </ScrollView>
 
 </LinearLayout>
