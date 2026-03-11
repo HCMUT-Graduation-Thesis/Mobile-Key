@@ -1,4 +1,4 @@
-package com.example.a100_basiccrypto
+package com.example.a100_basiccrypto.digitalkey.storage
 
 import android.content.Context
 
@@ -6,7 +6,7 @@ import android.content.Context
  * Manages access to the Salt (Password).
  */
 object PasswordManager {
-    private const val PREF_NAME = "nfc_lock_prefs"
+    private const val PREF_NAME = "digital_key_prefs"
     private const val KEY_PASSWORD = "salt_password"
     private const val DEFAULT_PASSWORD = "12345678"
 

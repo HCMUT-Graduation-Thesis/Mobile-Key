@@ -3,18 +3,18 @@ package com.example.a100_basiccrypto.digitalkey.transactions
 import android.util.Log
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.digitalkey.core.KeyState
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_ERR_GENERAL
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_PAIRING_COMMIT_REQ
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_PAIRING_ENC_PAYLOAD
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_PAIRING_NONCE_REQ
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_PAIRING_PUBKEY_REQ
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.normalize
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.digitalkey.crypto.IIdentityCrypto
-import com.example.a100_basiccrypto.digitalkey.nfc.ApduConstants.INS_COMMIT_PAIRING
-import com.example.a100_basiccrypto.digitalkey.nfc.ApduConstants.INS_EXCHANGE_AND_DERIVE
-import com.example.a100_basiccrypto.digitalkey.nfc.ApduConstants.INS_EXCHANGE_IMMOBILIZER
-import com.example.a100_basiccrypto.digitalkey.nfc.ApduConstants.INS_VERIFY_NONCE
-import com.example.a100_basiccrypto.digitalkey.nfc.ApduConstants.SW_DECRYPTION_FAILED
-import com.example.a100_basiccrypto.digitalkey.nfc.ApduConstants.SW_INTERNAL_ERROR
-import com.example.a100_basiccrypto.digitalkey.nfc.ApduConstants.SW_SUCCESS
-import com.example.a100_basiccrypto.digitalkey.nfc.ApduConstants.SW_UNKNOWN_CMD
+import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_DECRYPTION_FAILED
+import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_INTERNAL_ERROR
+import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_SUCCESS
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import java.security.KeyPair
 import java.security.KeyPairGenerator
@@ -33,14 +33,13 @@ class OwnerPairingTransaction(
     private var isComplete = false
     private val HKDF_INFO = "NFC_OWNER_CONFIRM"
 
-    override fun processCommand(apdu: ByteArray): ByteArray {
-        val ins = apdu[1]
-        return when (ins) {
-            INS_EXCHANGE_AND_DERIVE -> handlePhase2a(apdu)
-            INS_VERIFY_NONCE -> handlePhase2b(apdu)
-            INS_EXCHANGE_IMMOBILIZER -> handlePhase3(apdu)
-            INS_COMMIT_PAIRING -> handlePhase4(apdu)
-            else -> SW_UNKNOWN_CMD
+    override fun processCommand(msgId: Byte, payload: ByteArray): ByteArray {
+        return when (msgId) {
+            MSG_PAIRING_PUBKEY_REQ -> handleExchangePubKey(payload)
+            MSG_PAIRING_NONCE_REQ -> handleVerifyNonce(payload)
+            MSG_PAIRING_ENC_PAYLOAD -> handleExchangeImmobilizerToken(payload)
+            MSG_PAIRING_COMMIT_REQ -> handleCommitPairing(payload)
+            else -> byteArrayOf(MSG_ERR_GENERAL)
         }
     }
 
@@ -52,9 +51,9 @@ class OwnerPairingTransaction(
 
     override fun isTransactionComplete(): Boolean = isComplete
 
-    private fun handlePhase2a(apdu: ByteArray): ByteArray {
+    private fun handleExchangePubKey(payload: ByteArray): ByteArray {
         return try {
-            val pubKeyReaderBytes = apdu.sliceArray(5 until 5 + 65)
+            val pubKeyReaderBytes = payload.sliceArray(0 until 65)
             val pubKeyReader = CryptoUtils.getPublicKeyFromHex(pubKeyReaderBytes.toHex())
 
             val kpg = KeyPairGenerator.getInstance("EC").apply {
@@ -78,10 +77,10 @@ class OwnerPairingTransaction(
         }
     }
 
-    private fun handlePhase2b(apdu: ByteArray): ByteArray {
+    private fun handleVerifyNonce(payload: ByteArray): ByteArray {
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
-            val decryptedNonce = CryptoUtils.decryptAesGcm(apdu.sliceArray(5 until apdu.size), sessionKey)
+            val decryptedNonce = CryptoUtils.decryptAesGcm(payload, sessionKey)
             onLog("Phase 2.b: Nonce verified")
             CryptoUtils.encryptAesGcm(decryptedNonce, sessionKey) + SW_SUCCESS
         } catch (e: Exception) {
@@ -90,10 +89,10 @@ class OwnerPairingTransaction(
         }
     }
 
-    private fun handlePhase3(apdu: ByteArray): ByteArray {
+    private fun handleExchangeImmobilizerToken(payload: ByteArray): ByteArray {
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
-            val decryptedData = CryptoUtils.decryptAesGcm(apdu.sliceArray(5 until apdu.size), sessionKey)
+            val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
             
             // [vehiclePublicKey (~1952)] + [immobilizerToken (64)]
             val token = decryptedData.sliceArray(decryptedData.size - 64 until decryptedData.size)
@@ -114,10 +113,10 @@ class OwnerPairingTransaction(
         }
     }
 
-    private fun handlePhase4(apdu: ByteArray): ByteArray {
+    private fun handleCommitPairing(payload: ByteArray): ByteArray {
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
-            val decryptedData = CryptoUtils.decryptAesGcm(apdu.sliceArray(5 until apdu.size), sessionKey)
+            val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
             if (decryptedData.size == 1 && decryptedData[0] == 0x01.toByte()) {
                 val record = storageManager.getDigitalKey()
                 record?.let {

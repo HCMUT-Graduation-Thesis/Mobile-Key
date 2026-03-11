@@ -1,0 +1,46 @@
+package com.example.a100_basiccrypto.digitalkey.core
+
+object MessageConstants {
+    // 1. OWNER PAIRING TRANSACTION (Range 0x10 - 0x2F)
+    const val MSG_PAIRING_REQ         = 0x11.toByte()
+    const val MSG_PAIRING_RES         = 0x12.toByte()
+    const val MSG_PAIRING_PUBKEY_REQ  = 0x13.toByte()
+    const val MSG_PAIRING_PUBKEY_RES  = 0x14.toByte()
+    const val MSG_PAIRING_NONCE_REQ   = 0x15.toByte()
+    const val MSG_PAIRING_NONCE_RES   = 0x16.toByte()
+    const val MSG_PAIRING_COMMIT_REQ  = 0x17.toByte()
+    const val MSG_PAIRING_COMMIT_RES  = 0x18.toByte()
+    const val MSG_PAIRING_ENC_PAYLOAD = 0x19.toByte()
+
+    // 2. STANDARD TRANSACTION (Range 0x30 - 0x4F)
+    const val MSG_STD_HANDSHAKE_REQ   = 0x31.toByte()
+    const val MSG_STD_HANDSHAKE_RES   = 0x32.toByte()
+    const val MSG_STD_EPK_EXCHANGE_REQ= 0x33.toByte()
+    const val MSG_STD_EPK_EXCHANGE_RES= 0x34.toByte()
+    const val MSG_STD_VERIFY_CAR_REQ  = 0x35.toByte()
+    const val MSG_STD_VERIFY_CAR_RES  = 0x36.toByte()
+    const val MSG_STD_VERIFY_USER_REQ = 0x37.toByte()
+    const val MSG_STD_VERIFY_USER_RES = 0x38.toByte()
+    const val MSG_STD_COMMIT_REQ      = 0x39.toByte()
+    const val MSG_STD_COMMIT_RES      = 0x3A.toByte()
+    const val MSG_STD_DELETE_KEY_REQ  = 0x3B.toByte()
+    const val MSG_STD_DELETE_KEY_RES  = 0x3C.toByte()
+
+    // 3. FAST TRANSACTION (Range 0x50 - 0x6F)
+    const val MSG_FAST_AUTH_REQ       = 0x51.toByte()
+    const val MSG_FAST_AUTH_RES       = 0x52.toByte()
+    const val MSG_FAST_ACTION_REQ     = 0x53.toByte()
+    const val MSG_FAST_ACTION_RES     = 0x54.toByte()
+    const val MSG_FAST_DELETE_REQ     = 0x55.toByte()
+    const val MSG_FAST_DELETE_RES     = 0x56.toByte()
+
+    // 4. GLOBAL STATUS & ERRORS (Range 0xE0 - 0xFF)
+    const val MSG_GLOBAL_SUCCESS      = 0x90.toByte() // Equivalent to SW 9000
+    const val MSG_ERR_GENERAL         = 0xE0.toByte()
+    const val MSG_ERR_REPLAY_ATTACK   = 0xE1.toByte()
+    const val MSG_ERR_AUTH_FAIL       = 0xE2.toByte()
+    const val MSG_ERR_DESYNC          = 0xE3.toByte()
+    const val MSG_ERR_TIMEOUT         = 0xE4.toByte()
+    const val MSG_ERR_CRYPTO          = 0xE5.toByte()
+    const val MSG_ERR_INVALID_FORMAT  = 0xE6.toByte()
+}

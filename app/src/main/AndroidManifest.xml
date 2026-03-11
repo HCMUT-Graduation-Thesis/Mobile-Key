@@ -16,7 +16,7 @@
         android:theme="@style/Theme._100_BasicCrypto">
 
         <service
-            android:name=".MyHostApduService"
+            android:name=".digitalkey.nfc.MyHostApduService"
             android:exported="true"
             android:permission="android.permission.BIND_NFC_SERVICE">
             <intent-filter>

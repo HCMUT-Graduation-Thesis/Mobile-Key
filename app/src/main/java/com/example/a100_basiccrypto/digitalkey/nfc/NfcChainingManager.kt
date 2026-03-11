@@ -1,8 +1,8 @@
 package com.example.a100_basiccrypto.digitalkey.nfc
 
-import com.example.a100_basiccrypto.ApduConstants.MAX_APDU_PAYLOAD_SIZE
-import com.example.a100_basiccrypto.ApduConstants.SW_HAS_MORE_DATA
-import com.example.a100_basiccrypto.ApduConstants.SW_SUCCESS
+import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.MAX_APDU_PAYLOAD_SIZE
+import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_HAS_MORE_DATA
+import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_SUCCESS
 import java.io.ByteArrayOutputStream
 
 /**
