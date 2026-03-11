@@ -21,12 +21,17 @@ import java.security.KeyPairGenerator
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 
+/**
+ * Implementation of the Owner Pairing process.
+ */
 class OwnerPairingTransaction(
     private val identityCrypto: IIdentityCrypto,
     private val storageManager: IKeyStorageManager,
     private val passwordProvider: () -> String,
     private val onLog: (String) -> Unit
 ) : ITransactionHandler {
+
+    override val transactionType: TransactionType = TransactionType.OWNER_PAIRING
 
     private var currentSessionKey: ByteArray? = null
     private var ephemeralKeyPair: KeyPair? = null
@@ -98,8 +103,8 @@ class OwnerPairingTransaction(
             val token = decryptedData.sliceArray(decryptedData.size - 64 until decryptedData.size)
             val vehiclePK = decryptedData.sliceArray(0 until decryptedData.size - 64)
 
-            // Update record
-            val record = storageManager.getDigitalKey() ?: DigitalKeyRecord()
+            // Create new record for provisioning
+            val record = DigitalKeyRecord()
             record.vehiclePublicKey = vehiclePK
             record.immobilizerToken = token
             record.devicePublicKey = identityCrypto.getPublicKey()
@@ -118,8 +123,8 @@ class OwnerPairingTransaction(
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
             if (decryptedData.size == 1 && decryptedData[0] == 0x01.toByte()) {
-                val record = storageManager.getDigitalKey()
-                record?.let {
+                val records = storageManager.getAllKeys()
+                records.lastOrNull()?.let {
                     it.keyState = KeyState.ACTIVE
                     storageManager.saveDigitalKey(it)
                 }

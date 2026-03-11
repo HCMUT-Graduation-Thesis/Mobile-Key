@@ -1,10 +1,24 @@
 package com.example.a100_basiccrypto.digitalkey.storage
 
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
+import com.example.a100_basiccrypto.digitalkey.core.SyncStatus
 
+/**
+ * Interface for managing digital key storage.
+ */
 interface IKeyStorageManager {
     fun saveDigitalKey(record: DigitalKeyRecord)
-    fun getDigitalKey(): DigitalKeyRecord?
-    fun updateTransactionCounter(counter: Int)
+    fun getDigitalKey(keyID: ByteArray? = null): DigitalKeyRecord?
+    fun getAllKeys(): List<DigitalKeyRecord>
+    
+    // Account-based queries
+    fun getKeysByAccount(accountID: String): List<DigitalKeyRecord>
+    
+    // Synchronization support
+    fun updateSyncStatus(keyID: ByteArray, status: SyncStatus)
+    fun getPendingSyncKeys(): List<DigitalKeyRecord>
+
+    fun updateTransactionCounter(keyID: ByteArray, counter: Int)
+    fun deleteKey(keyID: ByteArray)
     fun clearAll()
 }
