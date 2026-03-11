@@ -1,5 +1,8 @@
 package com.example.a100_basiccrypto.digitalkey.nfc
 
+/**
+ * NFC and APDU related constants.
+ */
 object NfcConstants {
     const val AID_HCE = "F0010203040506"
     const val CLA_ISO = 0x00.toByte()
@@ -16,5 +19,7 @@ object NfcConstants {
 
     const val MAX_APDU_PAYLOAD_SIZE = 200
     const val TRANSACTION_TIMEOUT_MS = 10000L
-    const val INS_GET_NEXT_CHUNK = 0x31.toByte()
+    
+    // Based on Reader logs, GET_NEXT_CHUNK uses INS 0x01
+    const val INS_GET_NEXT_CHUNK = 0x01.toByte()
 }

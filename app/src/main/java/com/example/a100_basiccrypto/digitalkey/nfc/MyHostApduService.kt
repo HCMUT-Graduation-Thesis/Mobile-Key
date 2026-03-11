@@ -37,7 +37,7 @@ class MyHostApduService : HostApduService() {
         val pairingHandler = OwnerPairingTransaction(
             identityCrypto = identityCrypto,
             storageManager = storageManager,
-            passwordProvider = { "12345678" }, // Hardcoded for now
+            passwordProvider = { "12345678" },
             onLog = { sendLogToGui(it) }
         )
         TransactionRouter(pairingHandler)
@@ -55,51 +55,69 @@ class MyHostApduService : HostApduService() {
     }
 
     override fun processCommandApdu(commandApdu: ByteArray?, extras: Bundle?): ByteArray {
-        if (commandApdu == null) return SW_INTERNAL_ERROR
+        if (commandApdu == null || commandApdu.size < 2) return SW_INTERNAL_ERROR
 
         val hexCommand = commandApdu.toHex()
         val cla = commandApdu[0]
         val ins = commandApdu[1]
         
-        Log.d(TAG, "RX: CLA=${"%02X".format(cla)}, INS=${"%02X".format(ins)}, Full=${if (hexCommand.length > 30) hexCommand.take(30) + "..." else hexCommand}")
+        // Format values as HEX for logging
+        val claHex = "%02X".format(cla)
+        val insHex = "%02X".format(ins)
+        val p1Hex = if (commandApdu.size > 2) "%02X".format(commandApdu[2]) else "--"
+        val p2Hex = if (commandApdu.size > 3) "%02X".format(commandApdu[3]) else "--"
+        
+        Log.d(TAG, "RX: CLA=$claHex, INS=$insHex, P1=$p1Hex, P2=$p2Hex, Full=$hexCommand")
 
         // 1. SELECT AID
         if (commandApdu.size >= 2 && cla == CLA_ISO && ins == 0xA4.toByte()) {
             resetSession()
-            sendLogToGui("Phase 1: Connected. Starting timeout...")
+            sendLogToGui("Phase 1: Connected.")
             return SW_SUCCESS
         }
 
-        if (commandApdu[0] != CLA_PROPRIETARY) return SW_UNKNOWN_CMD
+        if (cla != CLA_ISO && cla != CLA_PROPRIETARY) return SW_UNKNOWN_CMD
         
         resetTimeoutTimer()
 
-        // Handle GET_NEXT_CHUNK (TX Chaining)
-        if (commandApdu[1] == INS_GET_NEXT_CHUNK) {
+        // 2. Handle GET_NEXT_CHUNK
+        if (ins == INS_GET_NEXT_CHUNK && commandApdu.size >= 3) {
             val chunkIndex = commandApdu[2].toInt() and 0xFF
-            return chainingManager.getNextOutgoingChunk(chunkIndex)
+            val chunk = chainingManager.getNextOutgoingChunk(chunkIndex)
+            Log.d(TAG, "TX Chunk #$chunkIndex: ${chunk.toHex()}")
+            return chunk
         }
 
-        // Lấy INS làm msgId
-        val msgId = commandApdu[1]
-
-        // Handle Fragmentation (RX Chaining)
+        // 3. Handle Fragmentation
         val fullPayload = chainingManager.handleIncomingFragment(commandApdu)
         
         return if (fullPayload != null) {
-            Log.d(TAG, "Routing: msgId=${"%02X".format(ins)}, Payload size=${fullPayload.size}")
-            val result = router.route(ins, fullPayload)
+            // IMPORTANT: If fullPayload is the same object as commandApdu, it was a short command.
+            // If it's different, it's the REASSEMBLED data payload (already stripped of headers).
+            val dataPayload = if (fullPayload === commandApdu) {
+                if (commandApdu.size >= 5) {
+                    val lc = commandApdu[4].toInt() and 0xFF
+                    commandApdu.sliceArray(5 until minOf(commandApdu.size, 5 + lc))
+                } else ByteArray(0)
+            } else {
+                fullPayload // Already pure data from ChainingManager
+            }
+
+            Log.d(TAG, "Routing: msgId=${"%02X".format(ins)}, Data size=${dataPayload.size}")
+            val result = router.route(ins, dataPayload)
             
-            Log.d(TAG, "Response: size=${result.size}, Data=${result.toHex().take(70)}...")
+            Log.d(TAG, "TX Full Response: ${result.toHex()}")
 
             if (result.size > MAX_APDU_PAYLOAD_SIZE) {
                 chainingManager.setOutgoingBuffer(result)
-                chainingManager.getNextOutgoingChunk(0)
+                val firstChunk = chainingManager.getNextOutgoingChunk(0)
+                Log.d(TAG, "TX Chunk #0: ${firstChunk.toHex()}")
+                firstChunk
             } else {
                 result
             }
         } else {
-            Log.d(TAG, "Chaining: Waiting for more chunks...")
+            Log.d(TAG, "Chaining: Waiting for more fragments...")
             SW_HAS_MORE_DATA
         }
     }
