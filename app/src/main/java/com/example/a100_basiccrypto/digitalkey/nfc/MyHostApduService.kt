@@ -84,7 +84,7 @@ class MyHostApduService : HostApduService() {
         if (cla == CLASS_OWNER_PAIRING || cla == 0x80.toByte()) {
             if (!isPairingModeEnabled) {
                 Log.w(TAG, "Pairing Blocked: Mode not enabled by User.")
-                return SW_UNKNOWN_CMD // Or 0x6985 (Conditions not satisfied)
+                return SW_UNKNOWN_CMD 
             }
         }
 
@@ -95,7 +95,14 @@ class MyHostApduService : HostApduService() {
             return SW_SUCCESS
         }
 
-        // 3. Validate supported classes
+        // 3. Handle GET_NEXT_CHUNK
+        // Now using 0xFF, so it will NEVER collide with business INS codes (0x01, 0x02, etc.)
+        if (ins == INS_GET_NEXT_CHUNK) {
+            val chunkIndex = if (commandApdu.size >= 3) commandApdu[2].toInt() and 0xFF else 0
+            return chainingManager.getNextOutgoingChunk(chunkIndex)
+        }
+
+        // 4. Validate supported classes
         val isAllowedClass = cla == CLA_ISO || 
                             cla == CLA_PROPRIETARY || 
                             cla == CLASS_OWNER_PAIRING || 
@@ -109,11 +116,6 @@ class MyHostApduService : HostApduService() {
         if (!isAllowedClass) return SW_UNKNOWN_CMD
         
         resetTimeoutTimer()
-
-        if (ins == INS_GET_NEXT_CHUNK && commandApdu.size >= 3) {
-            val chunkIndex = commandApdu[2].toInt() and 0xFF
-            return chainingManager.getNextOutgoingChunk(chunkIndex)
-        }
 
         val fullPayload = chainingManager.handleIncomingFragment(commandApdu)
         

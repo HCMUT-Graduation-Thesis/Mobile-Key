@@ -20,6 +20,6 @@ object NfcConstants {
     const val MAX_APDU_PAYLOAD_SIZE = 200
     const val TRANSACTION_TIMEOUT_MS = 10000L
     
-    // Based on Reader logs, GET_NEXT_CHUNK uses INS 0x01
-    const val INS_GET_NEXT_CHUNK = 0x01.toByte()
+    // Đổi từ 0x01 sang 0xFF để tránh trùng với INS_UNLOCK
+    const val INS_GET_NEXT_CHUNK = 0xFF.toByte()
 }

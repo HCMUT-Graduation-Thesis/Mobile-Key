@@ -11,6 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
+import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 
@@ -82,6 +83,12 @@ class HomeActivity : AppCompatActivity() {
             holder.tvName.text = item.friendlyName.ifEmpty { "Digital Key" }
             holder.tvStatus.text = "Status: ${item.keyState.name}"
             holder.tvPlate.text = "Plate: ${item.carMetadata?.licensePlate ?: "--"}"
+            
+            // Hiển thị KeyID và ModuleID dưới dạng Hex để đối chiếu với Reader
+            // KeyID cũng là ByteArray nên dùng .toHex()
+            holder.tvKeyId.text = "KeyID: ${item.keyID?.toHex() ?: "--"}"
+            holder.tvModuleId.text = "ModuleID: ${item.moduleID?.toHex() ?: "--"}"
+            
             holder.itemView.setOnClickListener { onClick(item) }
         }
 
@@ -91,6 +98,8 @@ class HomeActivity : AppCompatActivity() {
             val tvName: TextView = view.findViewById(R.id.tv_item_name)
             val tvStatus: TextView = view.findViewById(R.id.tv_item_status)
             val tvPlate: TextView = view.findViewById(R.id.tv_item_plate)
+            val tvKeyId: TextView = view.findViewById(R.id.tv_item_keyid)
+            val tvModuleId: TextView = view.findViewById(R.id.tv_item_moduleid)
         }
     }
 }
