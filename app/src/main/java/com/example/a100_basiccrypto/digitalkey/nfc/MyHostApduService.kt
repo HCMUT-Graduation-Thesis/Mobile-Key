@@ -89,19 +89,9 @@ class MyHostApduService : HostApduService() {
         val fullPayload = chainingManager.handleIncomingFragment(commandApdu)
         
         return if (fullPayload != null) {
-            val dataPayload = if (fullPayload === commandApdu) {
-                if (commandApdu.size >= 5) {
-                    val lc = commandApdu[4].toInt() and 0xFF
-                    commandApdu.sliceArray(5 until minOf(commandApdu.size, 5 + lc))
-                } else ByteArray(0)
-            } else {
-                fullPayload
-            }
-
-            Log.d(TAG, "Routing: msgId=${"%02X".format(ins)}, Data size=${dataPayload.size}")
-            val result = router.route(ins, dataPayload)
+            val result = router.route(ins, fullPayload)
             
-            Log.d(TAG, "TX Full Response: ${result.toHex()}")
+            Log.d(TAG, "TX Raw Payload: ${result.toHex()}")
 
             if (result.size > MAX_APDU_PAYLOAD_SIZE) {
                 chainingManager.setOutgoingBuffer(result)
@@ -109,7 +99,15 @@ class MyHostApduService : HostApduService() {
                 Log.d(TAG, "TX Chunk #0: ${firstChunk.toHex()}")
                 firstChunk
             } else {
-                result
+                // If it's an error SW (2 bytes starting with 0x6...) return as is
+                // Otherwise, append SW_SUCCESS (9000)
+                val finalResponse = if (result.size == 2 && (result[0].toInt() and 0xFF) >= 0x60) {
+                    result
+                } else {
+                    result + SW_SUCCESS
+                }
+                Log.d(TAG, "TX Final Response: ${finalResponse.toHex()}")
+                finalResponse
             }
         } else {
             Log.d(TAG, "Chaining: Waiting for more fragments...")

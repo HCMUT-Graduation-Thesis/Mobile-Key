@@ -15,18 +15,18 @@ import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.digitalkey.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_DECRYPTION_FAILED
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_INTERNAL_ERROR
-import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_SUCCESS
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import com.google.gson.Gson
 import java.nio.ByteBuffer
 import java.security.KeyPair
 import java.security.KeyPairGenerator
+import java.security.MessageDigest
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 
 /**
  * Implementation of the Owner Pairing process.
- * Handles Phase 2 (ECDH), Phase 3 (Data Exchange), and Phase 4 (Commit).
+ * Handlers return raw data payloads only. APDU status words are added by the transport layer.
  */
 class OwnerPairingTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -40,6 +40,7 @@ class OwnerPairingTransaction(
     private var currentSessionKey: ByteArray? = null
     private var ephemeralKeyPair: KeyPair? = null
     private var isComplete = false
+    
     private val HKDF_INFO = "NFC_OWNER_CONFIRM"
     private val FAST_AUTH_TAG = "DIGITAL_KEY_FAST_AUTH"
     private val gson = Gson()
@@ -62,9 +63,6 @@ class OwnerPairingTransaction(
 
     override fun isTransactionComplete(): Boolean = isComplete
 
-    /**
-     * Phase 2.a: Ephemeral Key Exchange (ECDH)
-     */
     private fun handleExchangePubKey(payload: ByteArray): ByteArray {
         return try {
             val pubKeyReaderBytes = payload.sliceArray(0 until 65)
@@ -79,136 +77,137 @@ class OwnerPairingTransaction(
             val salt = passwordProvider().toByteArray()
             currentSessionKey = CryptoUtils.deriveSessionKey(sharedSecret, salt, HKDF_INFO.toByteArray(), 32)
 
-            onLog("Phase 2.a: Session Key generated")
+            onLog("Phase 2.a: Session Key established")
             
             val ecPubKey = ephemeralKeyPair!!.public as ECPublicKey
             val x = ecPubKey.w.affineX.toByteArray().normalize(32)
             val y = ecPubKey.w.affineY.toByteArray().normalize(32)
-            byteArrayOf(0x04.toByte()) + x + y + SW_SUCCESS
+            
+            // Return raw uncompressed point data (65 bytes)
+            byteArrayOf(0x04.toByte()) + x + y 
         } catch (e: Exception) {
             Log.e("Pairing", "Error Phase 2a: ${e.message}")
             SW_INTERNAL_ERROR
         }
     }
 
-    /**
-     * Phase 2.b: Nonce Verification (AES-GCM)
-     */
     private fun handleVerifyNonce(payload: ByteArray): ByteArray {
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
             val decryptedNonce = CryptoUtils.decryptAesGcm(payload, sessionKey)
             onLog("Phase 2.b: Nonce verified")
-            CryptoUtils.encryptAesGcm(decryptedNonce, sessionKey) + SW_SUCCESS
+            // Return raw encrypted data only
+            CryptoUtils.encryptAesGcm(decryptedNonce, sessionKey)
         } catch (e: Exception) {
-            onLog("Phase 2.b: Decryption failed")
+            Log.e("Pairing", "Error Phase 2b: ${e.message}")
             SW_DECRYPTION_FAILED
         }
     }
 
-    /**
-     * Phase 3: Comprehensive Data Exchange.
-     * Receives vehicle keys, IDs, permissions, validity, and metadata.
-     * FastAuthKey is derived locally from the Session Key.
-     */
     private fun handleExchangeVehicleData(payload: ByteArray): ByteArray {
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
+            Log.d("Pairing", "Phase 3: Decrypted Data size = ${decryptedData.size}")
+            
             val buffer = ByteBuffer.wrap(decryptedData)
+            val record = DigitalKeyRecord()
 
-            // 1. Vehicle Public Key (~1952 bytes)
-            val vehiclePK = ByteArray(1952)
-            buffer.get(vehiclePK)
-
-            // 2. Identification (moduleID: 16 bytes, slotID: 1 byte)
-            val moduleID = ByteArray(16)
-            buffer.get(moduleID)
-            val slotID = buffer.get()
-
-            // 3. Security (initialCounter: 4 bytes)
-            // Note: fastAuthKey is NOT received, it is derived below.
-            val initialCounter = buffer.int
-
-            // 4. Lifecycle (permissions: 4 bytes, validity: 16 bytes)
-            val permissions = buffer.int
-            val validityStart = buffer.long
-            val validityEnd = buffer.long
-
-            // 5. Immobilizer Token (64 bytes)
-            val token = ByteArray(64)
-            buffer.get(token)
-
-            // 6. Metadata (JSON string - remaining bytes)
-            val metadataBytes = ByteArray(buffer.remaining())
-            buffer.get(metadataBytes)
-            val metadataJson = String(metadataBytes)
-            val carMetadata = try {
-                gson.fromJson(metadataJson, CarMetadata::class.java)
-            } catch (e: Exception) {
-                CarMetadata(modelName = "Unknown Vehicle")
+            // 1. Vehicle Public Key (1952 bytes)
+            if (buffer.remaining() >= 1952) {
+                val vehiclePK = ByteArray(1952)
+                buffer.get(vehiclePK)
+                record.vehiclePublicKey = vehiclePK
             }
 
-            // 7. Derive Fast Auth Key (K_FA) locally
-            val fastAuthKey = CryptoUtils.deriveSessionKey(
+            // 2. Identification (moduleID: 16 bytes, slotID: 1 byte)
+            if (buffer.remaining() >= 17) {
+                val moduleID = ByteArray(16)
+                buffer.get(moduleID)
+                record.moduleID = moduleID
+                record.slotID = buffer.get()
+            }
+
+            // 3. Counter (4 bytes) & Permissions (4 bytes)
+            if (buffer.remaining() >= 8) {
+                record.transactionCounter = buffer.int
+                record.permissions = buffer.int
+            }
+
+            // 4. Validity (16 bytes)
+            if (buffer.remaining() >= 16) {
+                record.validityStart = buffer.long
+                record.validityEnd = buffer.long
+            }
+
+            // 5. Immobilizer Token (64 bytes)
+            if (buffer.remaining() >= 64) {
+                val token = ByteArray(64)
+                buffer.get(token)
+                record.immobilizerToken = token
+            }
+
+            // 6. Metadata
+            if (buffer.hasRemaining()) {
+                val remaining = ByteArray(buffer.remaining())
+                buffer.get(remaining)
+                try {
+                    val metadataJson = String(remaining)
+                    record.carMetadata = gson.fromJson(metadataJson, CarMetadata::class.java)
+                    record.friendlyName = record.carMetadata?.modelName ?: "My Vehicle"
+                } catch (e: Exception) {
+                    Log.w("Pairing", "Failed to parse metadata JSON")
+                }
+            }
+
+            // 7. Derive Fast Auth Key (K_FA) locally FROM Session Key
+            // Requirement: Use dynamic password from UI as salt.
+            val salt = passwordProvider().toByteArray()
+            record.fastAuthKey = CryptoUtils.deriveSessionKey(
                 sessionKey, 
-                ByteArray(6),
+                salt, 
                 FAST_AUTH_TAG.toByteArray(), 
                 32
             )
 
-            // Assemble the DigitalKeyRecord
-            val record = DigitalKeyRecord().apply {
-                this.vehiclePublicKey = vehiclePK
-                this.moduleID = moduleID
-                this.slotID = slotID
-                this.fastAuthKey = fastAuthKey
-                this.transactionCounter = initialCounter
-                this.permissions = permissions
-                this.validityStart = validityStart
-                this.validityEnd = validityEnd
-                this.immobilizerToken = token
-                this.carMetadata = carMetadata
-                this.friendlyName = if (carMetadata.modelName.isNotEmpty()) carMetadata.modelName else "My Vehicle"
-                this.devicePublicKey = identityCrypto.getPublicKey()
-                this.keyState = KeyState.PROVISIONING
-            }
-
-            storageManager.saveDigitalKey(record)
-
-            onLog("Phase 3: Vehicle Profile & Metadata received. FastAuthKey derived.")
+            // 8. Calculate Local KeyID (8 bytes slice of SHA-256 PK)
+            val devicePubKey = identityCrypto.getPublicKey()
+            record.keyID = MessageDigest.getInstance("SHA-256")
+                .digest(devicePubKey)
+                .sliceArray(0..7)
             
-            // Response with Device Public Key (Dilithium) to the reader
-            CryptoUtils.encryptAesGcm(record.devicePublicKey!!, sessionKey)
+            record.devicePublicKey = devicePubKey
+            record.keyState = KeyState.PROVISIONING
+            
+            storageManager.saveDigitalKey(record)
+            onLog("Phase 3: Vehicle Profile stored. KeyID: ${record.keyID?.toHex()}")
+            
+            // Return raw encrypted Device Public Key only
+            CryptoUtils.encryptAesGcm(devicePubKey, sessionKey)
         } catch (e: Exception) {
-            Log.e("Pairing", "Error Phase 3: ${e.message}")
-            onLog("Phase 3: Data processing failed")
+            Log.e("Pairing", "Error Phase 3: ${e.message}", e)
             SW_DECRYPTION_FAILED
         }
     }
 
-    /**
-     * Phase 4: Final Commitment
-     */
     private fun handleCommitPairing(payload: ByteArray): ByteArray {
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
             if (decryptedData.size == 1 && decryptedData[0] == 0x01.toByte()) {
-                // Activate the most recent provisioning key
                 val records = storageManager.getAllKeys()
                 records.lastOrNull { it.keyState == KeyState.PROVISIONING }?.let {
                     it.keyState = KeyState.ACTIVE
                     storageManager.saveDigitalKey(it)
                 }
                 isComplete = true
-                onLog("Phase 4: Pairing Complete! Key is now ACTIVE.")
-                SW_SUCCESS
+                onLog("Phase 4: Pairing Complete!")
+                ByteArray(0) // Empty payload for success (Service adds 9000)
             } else {
                 SW_DECRYPTION_FAILED
             }
         } catch (e: Exception) {
-            onLog("Phase 4: Decryption failed")
+            Log.e("Pairing", "Error Phase 4: ${e.message}")
             SW_DECRYPTION_FAILED
         }
     }
