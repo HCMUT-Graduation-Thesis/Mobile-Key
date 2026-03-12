@@ -26,7 +26,6 @@ import java.security.spec.ECGenParameterSpec
 
 /**
  * Implementation of the Owner Pairing process.
- * Handlers return raw data payloads only. APDU status words are added by the transport layer.
  */
 class OwnerPairingTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -74,8 +73,11 @@ class OwnerPairingTransaction(
             ephemeralKeyPair = kpg.generateKeyPair()
 
             val sharedSecret = CryptoUtils.generateSharedSecret(ephemeralKeyPair!!.private, pubKeyReader)
+            Log.d("CryptoCheck", "Shared Secret: ${sharedSecret.toHex()}")
+            
             val salt = passwordProvider().toByteArray()
             currentSessionKey = CryptoUtils.deriveSessionKey(sharedSecret, salt, HKDF_INFO.toByteArray(), 32)
+            Log.d("CryptoCheck", "Session Key: ${currentSessionKey?.toHex()}")
 
             onLog("Phase 2.a: Session Key established")
             
@@ -83,7 +85,6 @@ class OwnerPairingTransaction(
             val x = ecPubKey.w.affineX.toByteArray().normalize(32)
             val y = ecPubKey.w.affineY.toByteArray().normalize(32)
             
-            // Return raw uncompressed point data (65 bytes)
             byteArrayOf(0x04.toByte()) + x + y 
         } catch (e: Exception) {
             Log.e("Pairing", "Error Phase 2a: ${e.message}")
@@ -96,7 +97,6 @@ class OwnerPairingTransaction(
         return try {
             val decryptedNonce = CryptoUtils.decryptAesGcm(payload, sessionKey)
             onLog("Phase 2.b: Nonce verified")
-            // Return raw encrypted data only
             CryptoUtils.encryptAesGcm(decryptedNonce, sessionKey)
         } catch (e: Exception) {
             Log.e("Pairing", "Error Phase 2b: ${e.message}")
@@ -113,14 +113,12 @@ class OwnerPairingTransaction(
             val buffer = ByteBuffer.wrap(decryptedData)
             val record = DigitalKeyRecord()
 
-            // 1. Vehicle Public Key (1952 bytes)
             if (buffer.remaining() >= 1952) {
                 val vehiclePK = ByteArray(1952)
                 buffer.get(vehiclePK)
                 record.vehiclePublicKey = vehiclePK
             }
 
-            // 2. Identification (moduleID: 16 bytes, slotID: 1 byte)
             if (buffer.remaining() >= 17) {
                 val moduleID = ByteArray(16)
                 buffer.get(moduleID)
@@ -128,26 +126,22 @@ class OwnerPairingTransaction(
                 record.slotID = buffer.get()
             }
 
-            // 3. Counter (4 bytes) & Permissions (4 bytes)
             if (buffer.remaining() >= 8) {
                 record.transactionCounter = buffer.int
                 record.permissions = buffer.int
             }
 
-            // 4. Validity (16 bytes)
             if (buffer.remaining() >= 16) {
                 record.validityStart = buffer.long
                 record.validityEnd = buffer.long
             }
 
-            // 5. Immobilizer Token (64 bytes)
             if (buffer.remaining() >= 64) {
                 val token = ByteArray(64)
                 buffer.get(token)
                 record.immobilizerToken = token
             }
 
-            // 6. Metadata
             if (buffer.hasRemaining()) {
                 val remaining = ByteArray(buffer.remaining())
                 buffer.get(remaining)
@@ -160,8 +154,6 @@ class OwnerPairingTransaction(
                 }
             }
 
-            // 7. Derive Fast Auth Key (K_FA) locally FROM Session Key
-            // Requirement: Use dynamic password from UI as salt.
             val salt = passwordProvider().toByteArray()
             record.fastAuthKey = CryptoUtils.deriveSessionKey(
                 sessionKey, 
@@ -169,8 +161,8 @@ class OwnerPairingTransaction(
                 FAST_AUTH_TAG.toByteArray(), 
                 32
             )
+            Log.d("CryptoCheck", "Fast Auth Key (derived from SessionKey): ${record.fastAuthKey?.toHex()}")
 
-            // 8. Calculate Local KeyID (8 bytes slice of SHA-256 PK)
             val devicePubKey = identityCrypto.getPublicKey()
             record.keyID = MessageDigest.getInstance("SHA-256")
                 .digest(devicePubKey)
@@ -182,7 +174,6 @@ class OwnerPairingTransaction(
             storageManager.saveDigitalKey(record)
             onLog("Phase 3: Vehicle Profile stored. KeyID: ${record.keyID?.toHex()}")
             
-            // Return raw encrypted Device Public Key only
             CryptoUtils.encryptAesGcm(devicePubKey, sessionKey)
         } catch (e: Exception) {
             Log.e("Pairing", "Error Phase 3: ${e.message}", e)
@@ -202,7 +193,7 @@ class OwnerPairingTransaction(
                 }
                 isComplete = true
                 onLog("Phase 4: Pairing Complete!")
-                ByteArray(0) // Empty payload for success (Service adds 9000)
+                ByteArray(0)
             } else {
                 SW_DECRYPTION_FAILED
             }
