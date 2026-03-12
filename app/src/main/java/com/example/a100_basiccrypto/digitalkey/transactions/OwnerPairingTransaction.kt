@@ -21,12 +21,12 @@ import com.google.gson.Gson
 import java.nio.ByteBuffer
 import java.security.KeyPair
 import java.security.KeyPairGenerator
-import java.security.MessageDigest
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 
 /**
  * Standard Owner Pairing Implementation with Debug Logging.
+ * Updated to receive KeyID from Reader in Phase 3.
  */
 class OwnerPairingTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -100,9 +100,16 @@ class OwnerPairingTransaction(
     private fun handleVerifyNonce(payload: ByteArray): ByteArray {
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
-            val decryptedNonce = CryptoUtils.decryptAesGcm(payload, sessionKey)
+            val decrypted2b = CryptoUtils.decryptAesGcm(payload, sessionKey)
+            
+            // Per spec: First 16 bytes is Nonce, remainder is HCE PK if needed for Reader's KeyID calc.
+            // But since this is HCE side, we just verify nonce and send back HCE PK.
             onLog("Phase 2.b: Nonce verified")
-            CryptoUtils.encryptAesGcm(decryptedNonce, sessionKey)
+            
+            val hcePubKey = identityCrypto.getPublicKey()
+            val response = decrypted2b.sliceArray(0 until 16) + hcePubKey
+            
+            CryptoUtils.encryptAesGcm(response, sessionKey)
         } catch (e: Exception) {
             Log.e("Pairing", "Error Phase 2b: ${e.message}")
             SW_DECRYPTION_FAILED
@@ -114,12 +121,8 @@ class OwnerPairingTransaction(
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
             
-            // --- DEBUG LOGS START ---
-            Log.d("DEBUG_PAIRING", "---------------------------------------")
-            Log.d("DEBUG_PAIRING", "Decrypted Data Size: ${decryptedData.size}")
-            Log.d("DEBUG_PAIRING", "Hex: ${decryptedData.toHex()}")
+            Log.d("DEBUG_PAIRING", "Phase 3 Decrypted Data Size: ${decryptedData.size}")
             onLog("Phase 3: Data Received (${decryptedData.size} bytes)")
-            // --- DEBUG LOGS END ---
             
             val buffer = ByteBuffer.wrap(decryptedData)
             val record = DigitalKeyRecord()
@@ -129,53 +132,52 @@ class OwnerPairingTransaction(
                 val vehiclePK = ByteArray(1952)
                 buffer.get(vehiclePK)
                 record.vehiclePublicKey = vehiclePK
-                Log.d("DEBUG_PAIRING", "Read PK (1952). Remaining: ${buffer.remaining()}")
             }
 
-            // 2. ModuleID (16) + SlotID (1)
+            // 2. KeyID (Fixed 8 bytes) - NEW: Received from Reader
+            if (buffer.remaining() >= 8) {
+                val kid = ByteArray(8)
+                buffer.get(kid)
+                record.keyID = kid
+                Log.d("DEBUG_PAIRING", "Received KeyID from Reader: ${kid.toHex()}")
+            }
+
+            // 3. ModuleID (16) + SlotID (1)
             if (buffer.remaining() >= 17) {
                 val mid = ByteArray(16)
                 buffer.get(mid)
                 record.moduleID = mid
                 record.slotID = buffer.get()
-                Log.d("DEBUG_PAIRING", "Read MID & Slot. Remaining: ${buffer.remaining()}")
             }
 
-            // 3. Counter (4) + Permissions (4)
+            // 4. Counter (4) + Permissions (4)
             if (buffer.remaining() >= 8) {
                 record.transactionCounter = buffer.int
                 record.permissions = buffer.int
-                Log.d("DEBUG_PAIRING", "Read Counter & Perms. Remaining: ${buffer.remaining()}")
             }
 
-            // 4. Validity Start (8) + End (8)
+            // 5. Validity Start (8) + End (8)
             if (buffer.remaining() >= 16) {
                 record.validityStart = buffer.long
                 record.validityEnd = buffer.long
-                Log.d("DEBUG_PAIRING", "Read Validity. Remaining: ${buffer.remaining()}")
             }
 
-            // 5. Immobilizer Token (Fixed 64 bytes)
+            // 6. Immobilizer Token (Fixed 64 bytes)
             if (buffer.remaining() >= 64) {
                 val token = ByteArray(64)
                 buffer.get(token)
                 record.immobilizerToken = token
-                Log.d("DEBUG_PAIRING", "Read Token (64). Remaining: ${buffer.remaining()}")
-            } else {
-                Log.w("DEBUG_PAIRING", "WARNING: Less than 64 bytes left for Token! (${buffer.remaining()} left)")
             }
 
-            // 6. Metadata JSON (Remaining bytes)
+            // 7. Metadata JSON (Remaining bytes)
             if (buffer.hasRemaining()) {
                 val remaining = ByteArray(buffer.remaining())
                 buffer.get(remaining)
-                val metadataStr = String(remaining, Charsets.UTF_8)
-                Log.d("DEBUG_PAIRING", "Metadata Raw String: $metadataStr")
+                val metadataStr = String(remaining, Charsets.UTF_8).trim { it <= ' ' || it == '\u0000' }
                 
                 try {
-                    val metadataJson = metadataStr.trim { it <= ' ' || it == '\u0000' }
-                    if (metadataJson.isNotEmpty()) {
-                        record.carMetadata = gson.fromJson(metadataJson, CarMetadata::class.java)
+                    if (metadataStr.isNotEmpty()) {
+                        record.carMetadata = gson.fromJson(metadataStr, CarMetadata::class.java)
                         record.friendlyName = record.carMetadata?.modelName ?: "My Vehicle"
                     }
                 } catch (e: Exception) {
@@ -185,17 +187,15 @@ class OwnerPairingTransaction(
 
             val salt = passwordProvider().toByteArray()
             record.fastAuthKey = CryptoUtils.deriveSessionKey(sessionKey, salt, FAST_AUTH_TAG.toByteArray(), 32)
-
-            val devicePubKey = identityCrypto.getPublicKey()
-            record.keyID = MessageDigest.getInstance("SHA-256").digest(devicePubKey).sliceArray(0..7)
-            record.devicePublicKey = devicePubKey
+            record.devicePublicKey = identityCrypto.getPublicKey()
             record.keyState = KeyState.PROVISIONING
             
             pendingRecord = record
             storageManager.saveDigitalKey(record)
-            onLog("Phase 3 Complete. KeyID: ${record.keyID?.toHex()}")
+            onLog("Phase 3 Complete. KeyID (Synced): ${record.keyID?.toHex()}")
             
-            CryptoUtils.encryptAesGcm(devicePubKey, sessionKey)
+            // Response to Reader (Confirmation)
+            CryptoUtils.encryptAesGcm(record.devicePublicKey!!, sessionKey)
         } catch (e: Exception) {
             Log.e("Pairing", "Error Phase 3: ${e.message}")
             SW_DECRYPTION_FAILED

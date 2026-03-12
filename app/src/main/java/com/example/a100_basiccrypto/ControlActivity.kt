@@ -21,6 +21,7 @@ class ControlActivity : AppCompatActivity() {
     private lateinit var tvName: TextView
     private lateinit var tvPlate: TextView
     private lateinit var tvStatus: TextView
+    private lateinit var btnClearLog: Button
     
     private val storageManager by lazy { SecureKeyStorageManager(this) }
     private var currentKey: DigitalKeyRecord? = null
@@ -42,6 +43,7 @@ class ControlActivity : AppCompatActivity() {
         tvName = findViewById(R.id.tv_detail_name)
         tvPlate = findViewById(R.id.tv_detail_plate)
         tvStatus = findViewById(R.id.tv_detail_status)
+        btnClearLog = findViewById(R.id.btn_clear_control_log)
 
         val keyId = intent.getByteArrayExtra("KEY_ID")
         currentKey = storageManager.getAllKeys().find { it.keyID?.contentEquals(keyId) == true }
@@ -57,6 +59,10 @@ class ControlActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_control_unlock).setOnClickListener { performAction(INS_UNLOCK, "UNLOCK") }
         findViewById<Button>(R.id.btn_control_lock).setOnClickListener { performAction(INS_LOCK, "LOCK") }
         findViewById<Button>(R.id.btn_control_start).setOnClickListener { performAction(INS_START_ENGINE, "START ENGINE") }
+
+        btnClearLog.setOnClickListener {
+            tvLog.text = ""
+        }
 
         val filter = IntentFilter("com.example.a100_basiccrypto.LOG_ACTION")
         registerReceiver(nfcReceiver, filter, RECEIVER_EXPORTED)

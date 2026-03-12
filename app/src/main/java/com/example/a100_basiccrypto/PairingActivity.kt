@@ -20,6 +20,7 @@ class PairingActivity : AppCompatActivity() {
     private lateinit var tvLog: TextView
     private lateinit var etPassword: EditText
     private lateinit var btnStart: Button
+    private lateinit var btnClearLog: Button
 
     private val nfcReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -27,7 +28,7 @@ class PairingActivity : AppCompatActivity() {
             if (message != null) {
                 updateLog(message)
                 if (message.contains("Pairing Complete")) {
-                    MyHostApduService.isPairingModeEnabled = false // Disable after success
+                    MyHostApduService.isPairingModeEnabled = false
                     Toast.makeText(this@PairingActivity, "Success! Returning home...", Toast.LENGTH_LONG).show()
                     Handler(Looper.getMainLooper()).postDelayed({
                         finish()
@@ -44,6 +45,7 @@ class PairingActivity : AppCompatActivity() {
         tvLog = findViewById(R.id.tv_pairing_log)
         etPassword = findViewById(R.id.et_pairing_password)
         btnStart = findViewById(R.id.btn_start_pairing)
+        btnClearLog = findViewById(R.id.btn_clear_pairing_log)
 
         etPassword.setText(PasswordManager.getPassword(this))
 
@@ -51,23 +53,18 @@ class PairingActivity : AppCompatActivity() {
             val pwd = etPassword.text.toString()
             if (pwd.isNotEmpty()) {
                 PasswordManager.setPassword(this, pwd)
-                
-                // ENABLE pairing mode when user confirms
                 MyHostApduService.isPairingModeEnabled = true
-                
                 updateLog("Pairing Mode ENABLED. Please tap NFC reader now.")
                 Toast.makeText(this, "Ready to pair", Toast.LENGTH_SHORT).show()
             }
         }
 
+        btnClearLog.setOnClickListener {
+            tvLog.text = ""
+        }
+
         val filter = IntentFilter("com.example.a100_basiccrypto.LOG_ACTION")
         registerReceiver(nfcReceiver, filter, RECEIVER_EXPORTED)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // Optional: Reset state just in case
-        // MyHostApduService.isPairingModeEnabled = false
     }
 
     private fun updateLog(message: String) {
@@ -79,7 +76,6 @@ class PairingActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
-        // Disable pairing mode if user leaves the screen
         MyHostApduService.isPairingModeEnabled = false
     }
 
