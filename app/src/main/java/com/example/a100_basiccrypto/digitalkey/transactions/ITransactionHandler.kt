@@ -1,19 +1,17 @@
 package com.example.a100_basiccrypto.digitalkey.transactions
 
+import com.example.a100_basiccrypto.digitalkey.core.LogicalFrame
+
 /**
- * Common interface for all transaction handlers.
+ * Common interface for all transaction handlers using Logical Frames.
  */
 interface ITransactionHandler {
     /**
-     * Identifies the type of the transaction (Owner Pairing, Fast Auth, etc.).
+     * Processes an incoming logical frame.
+     * @param frame The received frame [CLASS][INS][LEN][DATA]
+     * @return Response raw payload (The Router will wrap it back into a frame)
      */
-    val transactionType: TransactionType
-
-    /**
-     * Processes an incoming command payload.
-     * @return Response payload to send back to the reader.
-     */
-    fun processCommand(msgId: Byte, payload: ByteArray): ByteArray
+    fun processCommand(frame: LogicalFrame): ByteArray
     
     /**
      * Resets any session-specific state in the handler.

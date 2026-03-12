@@ -6,9 +6,11 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.example.a100_basiccrypto.digitalkey.core.LogicalFrame
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_OWNER_PAIRING
+import com.example.a100_basiccrypto.digitalkey.core.TransportType
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.digitalkey.crypto.DilithiumIdentityCryptoImpl
-import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.AID_HCE
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.CLA_ISO
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.CLA_PROPRIETARY
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.INS_GET_NEXT_CHUNK
@@ -75,7 +77,7 @@ class MyHostApduService : HostApduService() {
             return SW_SUCCESS
         }
 
-        if (cla != CLA_ISO && cla != CLA_PROPRIETARY) return SW_UNKNOWN_CMD
+        if (cla != CLA_ISO && cla != CLA_PROPRIETARY && cla != CLASS_OWNER_PAIRING && cla != 0x80.toByte()) return SW_UNKNOWN_CMD
         
         resetTimeoutTimer()
 
@@ -89,7 +91,12 @@ class MyHostApduService : HostApduService() {
         val fullPayload = chainingManager.handleIncomingFragment(commandApdu)
         
         return if (fullPayload != null) {
-            val result = router.route(ins, fullPayload)
+            // Reconstruct a LogicalFrame from the APDU headers and reassembled data
+            val inputFrame = LogicalFrame(cla, ins, fullPayload)
+            
+            Log.d(TAG, "Routing Logic Frame: CLASS=${"%02X".format(inputFrame.msgClass)}, INS=${"%02X".format(inputFrame.msgId)}, Data size=${inputFrame.payload.size}")
+            val responseFrame = router.route(inputFrame, TransportType.NFC)
+            val result = responseFrame.payload
             
             Log.d(TAG, "TX Raw Payload: ${result.toHex()}")
 
@@ -99,8 +106,7 @@ class MyHostApduService : HostApduService() {
                 Log.d(TAG, "TX Chunk #0: ${firstChunk.toHex()}")
                 firstChunk
             } else {
-                // If it's an error SW (2 bytes starting with 0x6...) return as is
-                // Otherwise, append SW_SUCCESS (9000)
+                // Return as is if it's an error code (2 bytes >= 0x60), otherwise append 9000
                 val finalResponse = if (result.size == 2 && (result[0].toInt() and 0xFF) >= 0x60) {
                     result
                 } else {

@@ -4,11 +4,12 @@ import android.util.Log
 import com.example.a100_basiccrypto.digitalkey.core.CarMetadata
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.digitalkey.core.KeyState
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_ERR_GENERAL
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_PAIRING_COMMIT_REQ
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_PAIRING_ENC_PAYLOAD
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_PAIRING_NONCE_REQ
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_PAIRING_PUBKEY_REQ
+import com.example.a100_basiccrypto.digitalkey.core.LogicalFrame
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.PHASE_COMMIT
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.PHASE_DATA_SYNC
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.PHASE_KEY_EXCHANGE
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.PHASE_PAIRING_REQ
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.PHASE_VERIFY_NONCE
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.normalize
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
@@ -25,7 +26,7 @@ import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 
 /**
- * Implementation of the Owner Pairing process.
+ * Implementation of the Owner Pairing process using LogicalFrames.
  */
 class OwnerPairingTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -33,8 +34,6 @@ class OwnerPairingTransaction(
     private val passwordProvider: () -> String,
     private val onLog: (String) -> Unit
 ) : ITransactionHandler {
-
-    override val transactionType: TransactionType = TransactionType.OWNER_PAIRING
 
     private var currentSessionKey: ByteArray? = null
     private var ephemeralKeyPair: KeyPair? = null
@@ -44,13 +43,14 @@ class OwnerPairingTransaction(
     private val FAST_AUTH_TAG = "DIGITAL_KEY_FAST_AUTH"
     private val gson = Gson()
 
-    override fun processCommand(msgId: Byte, payload: ByteArray): ByteArray {
-        return when (msgId) {
-            MSG_PAIRING_PUBKEY_REQ -> handleExchangePubKey(payload)
-            MSG_PAIRING_NONCE_REQ -> handleVerifyNonce(payload)
-            MSG_PAIRING_ENC_PAYLOAD -> handleExchangeVehicleData(payload)
-            MSG_PAIRING_COMMIT_REQ -> handleCommitPairing(payload)
-            else -> byteArrayOf(MSG_ERR_GENERAL)
+    override fun processCommand(frame: LogicalFrame): ByteArray {
+        return when (frame.msgId) {
+            PHASE_PAIRING_REQ -> handleStartPairing()
+            PHASE_KEY_EXCHANGE -> handleExchangePubKey(frame.payload)
+            PHASE_VERIFY_NONCE -> handleVerifyNonce(frame.payload)
+            PHASE_DATA_SYNC -> handleExchangeVehicleData(frame.payload)
+            PHASE_COMMIT -> handleCommitPairing(frame.payload)
+            else -> byteArrayOf(0xE0.toByte())
         }
     }
 
@@ -61,6 +61,11 @@ class OwnerPairingTransaction(
     }
 
     override fun isTransactionComplete(): Boolean = isComplete
+
+    private fun handleStartPairing(): ByteArray {
+        onLog("Phase 1: Pairing Request Received")
+        return ByteArray(0)
+    }
 
     private fun handleExchangePubKey(payload: ByteArray): ByteArray {
         return try {
@@ -161,7 +166,7 @@ class OwnerPairingTransaction(
                 FAST_AUTH_TAG.toByteArray(), 
                 32
             )
-            Log.d("CryptoCheck", "Fast Auth Key (derived from SessionKey): ${record.fastAuthKey?.toHex()}")
+            Log.d("CryptoCheck", "Fast Auth Key: ${record.fastAuthKey?.toHex()}")
 
             val devicePubKey = identityCrypto.getPublicKey()
             record.keyID = MessageDigest.getInstance("SHA-256")
@@ -172,7 +177,7 @@ class OwnerPairingTransaction(
             record.keyState = KeyState.PROVISIONING
             
             storageManager.saveDigitalKey(record)
-            onLog("Phase 3: Vehicle Profile stored. KeyID: ${record.keyID?.toHex()}")
+            onLog("Phase 3: Profile stored. KeyID: ${record.keyID?.toHex()}")
             
             CryptoUtils.encryptAesGcm(devicePubKey, sessionKey)
         } catch (e: Exception) {

@@ -1,46 +1,57 @@
 package com.example.a100_basiccrypto.digitalkey.core
 
+/**
+ * UNIFIED LOGICAL COMMAND SET V2.1
+ * Transport Agnostic Format: [CLASS (1b)] [INS (1b)] [LENGTH (2b)] [DATA (Nb)]
+ */
 object MessageConstants {
-    // 1. OWNER PAIRING TRANSACTION (Range 0x10 - 0x2F)
-    const val MSG_PAIRING_REQ         = 0x11.toByte()
-    const val MSG_PAIRING_RES         = 0x12.toByte()
-    const val MSG_PAIRING_PUBKEY_REQ  = 0x13.toByte()
-    const val MSG_PAIRING_PUBKEY_RES  = 0x14.toByte()
-    const val MSG_PAIRING_NONCE_REQ   = 0x15.toByte()
-    const val MSG_PAIRING_NONCE_RES   = 0x16.toByte()
-    const val MSG_PAIRING_COMMIT_REQ  = 0x17.toByte()
-    const val MSG_PAIRING_COMMIT_RES  = 0x18.toByte()
-    const val MSG_PAIRING_ENC_PAYLOAD = 0x19.toByte()
 
-    // 2. STANDARD TRANSACTION (Range 0x30 - 0x4F)
-    const val MSG_STD_HANDSHAKE_REQ   = 0x31.toByte()
-    const val MSG_STD_HANDSHAKE_RES   = 0x32.toByte()
-    const val MSG_STD_EPK_EXCHANGE_REQ= 0x33.toByte()
-    const val MSG_STD_EPK_EXCHANGE_RES= 0x34.toByte()
-    const val MSG_STD_VERIFY_CAR_REQ  = 0x35.toByte()
-    const val MSG_STD_VERIFY_CAR_RES  = 0x36.toByte()
-    const val MSG_STD_VERIFY_USER_REQ = 0x37.toByte()
-    const val MSG_STD_VERIFY_USER_RES = 0x38.toByte()
-    const val MSG_STD_COMMIT_REQ      = 0x39.toByte()
-    const val MSG_STD_COMMIT_RES      = 0x3A.toByte()
-    const val MSG_STD_DELETE_KEY_REQ  = 0x3B.toByte()
-    const val MSG_STD_DELETE_KEY_RES  = 0x3C.toByte()
+    // --- LOGICAL CLASSES (Security Context & Routing Group) ---
+    const val CLASS_FAST_ACTION      = 0x10.toByte() // Fast Auth (HMAC/AES-GCM)
+    const val CLASS_ENGINE_OP        = 0x20.toByte() // Engine start/stop (Token required)
+    const val CLASS_TELEMETRY        = 0x30.toByte() // Status & Vehicle Info
+    const val CLASS_ADMIN            = 0x40.toByte() // High Sensitive (PQC Signature required)
+    const val CLASS_OWNER_PAIRING    = 0x50.toByte() // Owner Provisioning Flow
+    const val CLASS_FRIEND_PAIRING   = 0x60.toByte() // Friend Provisioning Flow
 
-    // 3. FAST TRANSACTION (Range 0x50 - 0x6F)
-    const val MSG_FAST_AUTH_REQ       = 0x51.toByte()
-    const val MSG_FAST_AUTH_RES       = 0x52.toByte()
-    const val MSG_FAST_ACTION_REQ     = 0x53.toByte()
-    const val MSG_FAST_ACTION_RES     = 0x54.toByte()
-    const val MSG_FAST_DELETE_REQ     = 0x55.toByte()
-    const val MSG_FAST_DELETE_RES     = 0x56.toByte()
+    // --- CLASS 0x10: Basic Access (INS) ---
+    const val INS_UNLOCK             = 0x01.toByte()
+    const val INS_LOCK               = 0x02.toByte()
+    const val INS_OPEN_TRUNK         = 0x03.toByte()
+    const val INS_REMOVE_FRIEND      = 0x04.toByte()
 
-    // 4. GLOBAL STATUS & ERRORS (Range 0xE0 - 0xFF)
-    const val MSG_GLOBAL_SUCCESS      = 0x90.toByte() // Equivalent to SW 9000
-    const val MSG_ERR_GENERAL         = 0xE0.toByte()
-    const val MSG_ERR_REPLAY_ATTACK   = 0xE1.toByte()
-    const val MSG_ERR_AUTH_FAIL       = 0xE2.toByte()
-    const val MSG_ERR_DESYNC          = 0xE3.toByte()
-    const val MSG_ERR_TIMEOUT         = 0xE4.toByte()
-    const val MSG_ERR_CRYPTO          = 0xE5.toByte()
-    const val MSG_ERR_INVALID_FORMAT  = 0xE6.toByte()
+    // --- CLASS 0x20: Engine Operation (INS) ---
+    const val INS_START_ENGINE       = 0x01.toByte()
+    const val INS_STOP_ENGINE        = 0x02.toByte()
+
+    // --- CLASS 0x30: Telemetry (INS) ---
+    const val INS_GET_STATUS         = 0x01.toByte()
+    const val INS_GET_BATTERY        = 0x02.toByte()
+    const val INS_GET_VEHICLE_INFO   = 0x03.toByte()
+
+    // --- CLASS 0x40: Admin Commands (INS) ---
+    const val INS_REVOKE_OWNER       = 0x01.toByte()
+    const val INS_FACTORY_RESET      = 0x02.toByte()
+
+    // --- CLASS 0x50: Owner Provisioning Phases (INS) ---
+    const val PHASE_PAIRING_REQ      = 0x11.toByte()
+    const val PHASE_KEY_EXCHANGE     = 0x13.toByte()
+    const val PHASE_VERIFY_NONCE     = 0x15.toByte()
+    const val PHASE_DATA_SYNC        = 0x19.toByte()
+    const val PHASE_COMMIT           = 0x17.toByte()
+
+    // --- CLASS 0x60: Friend Provisioning Phases (INS) ---
+    const val PHASE_FRIEND_INIT      = 0x11.toByte()
+    const val PHASE_FRIEND_ECDH      = 0x13.toByte()
+    const val PHASE_VERIFY_ATTEST    = 0x21.toByte() // Verify Owner's Attestation Package
+    const val PHASE_FRIEND_POP       = 0x23.toByte() // Proof of Possession (PQC Signature)
+    const val PHASE_FRIEND_PROV      = 0x19.toByte() // Receive Token & SlotID
+    const val PHASE_FRIEND_COMMIT    = 0x17.toByte()
+
+    // --- GLOBAL STATUS & ERRORS ---
+    const val MSG_GLOBAL_SUCCESS     = 0x90.toByte()
+    const val MSG_ERR_GENERAL        = 0xE0.toByte()
+    const val MSG_ERR_AUTH_FAIL      = 0xE2.toByte()
+    const val MSG_ERR_INVALID_CLASS  = 0xE7.toByte()
+    const val MSG_ERR_PERMISSION     = 0xE8.toByte()
 }
