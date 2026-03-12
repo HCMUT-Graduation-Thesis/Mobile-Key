@@ -26,7 +26,7 @@ import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 
 /**
- * Implementation of the Owner Pairing process using LogicalFrames.
+ * Standard Owner Pairing Implementation with Debug Logging.
  */
 class OwnerPairingTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -38,6 +38,7 @@ class OwnerPairingTransaction(
     private var currentSessionKey: ByteArray? = null
     private var ephemeralKeyPair: KeyPair? = null
     private var isComplete = false
+    private var pendingRecord: DigitalKeyRecord? = null
     
     private val HKDF_INFO = "NFC_OWNER_CONFIRM"
     private val FAST_AUTH_TAG = "DIGITAL_KEY_FAST_AUTH"
@@ -58,6 +59,7 @@ class OwnerPairingTransaction(
         currentSessionKey = null
         ephemeralKeyPair = null
         isComplete = false
+        pendingRecord = null
     }
 
     override fun isTransactionComplete(): Boolean = isComplete
@@ -78,11 +80,9 @@ class OwnerPairingTransaction(
             ephemeralKeyPair = kpg.generateKeyPair()
 
             val sharedSecret = CryptoUtils.generateSharedSecret(ephemeralKeyPair!!.private, pubKeyReader)
-            Log.d("CryptoCheck", "Shared Secret: ${sharedSecret.toHex()}")
             
             val salt = passwordProvider().toByteArray()
             currentSessionKey = CryptoUtils.deriveSessionKey(sharedSecret, salt, HKDF_INFO.toByteArray(), 32)
-            Log.d("CryptoCheck", "Session Key: ${currentSessionKey?.toHex()}")
 
             onLog("Phase 2.a: Session Key established")
             
@@ -113,75 +113,91 @@ class OwnerPairingTransaction(
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            Log.d("Pairing", "Phase 3: Decrypted Data size = ${decryptedData.size}")
+            
+            // --- DEBUG LOGS START ---
+            Log.d("DEBUG_PAIRING", "---------------------------------------")
+            Log.d("DEBUG_PAIRING", "Decrypted Data Size: ${decryptedData.size}")
+            Log.d("DEBUG_PAIRING", "Hex: ${decryptedData.toHex()}")
+            onLog("Phase 3: Data Received (${decryptedData.size} bytes)")
+            // --- DEBUG LOGS END ---
             
             val buffer = ByteBuffer.wrap(decryptedData)
             val record = DigitalKeyRecord()
 
+            // 1. Vehicle Public Key (Fixed 1952 bytes)
             if (buffer.remaining() >= 1952) {
                 val vehiclePK = ByteArray(1952)
                 buffer.get(vehiclePK)
                 record.vehiclePublicKey = vehiclePK
+                Log.d("DEBUG_PAIRING", "Read PK (1952). Remaining: ${buffer.remaining()}")
             }
 
+            // 2. ModuleID (16) + SlotID (1)
             if (buffer.remaining() >= 17) {
-                val moduleID = ByteArray(16)
-                buffer.get(moduleID)
-                record.moduleID = moduleID
+                val mid = ByteArray(16)
+                buffer.get(mid)
+                record.moduleID = mid
                 record.slotID = buffer.get()
+                Log.d("DEBUG_PAIRING", "Read MID & Slot. Remaining: ${buffer.remaining()}")
             }
 
+            // 3. Counter (4) + Permissions (4)
             if (buffer.remaining() >= 8) {
                 record.transactionCounter = buffer.int
                 record.permissions = buffer.int
+                Log.d("DEBUG_PAIRING", "Read Counter & Perms. Remaining: ${buffer.remaining()}")
             }
 
+            // 4. Validity Start (8) + End (8)
             if (buffer.remaining() >= 16) {
                 record.validityStart = buffer.long
                 record.validityEnd = buffer.long
+                Log.d("DEBUG_PAIRING", "Read Validity. Remaining: ${buffer.remaining()}")
             }
 
+            // 5. Immobilizer Token (Fixed 64 bytes)
             if (buffer.remaining() >= 64) {
                 val token = ByteArray(64)
                 buffer.get(token)
                 record.immobilizerToken = token
+                Log.d("DEBUG_PAIRING", "Read Token (64). Remaining: ${buffer.remaining()}")
+            } else {
+                Log.w("DEBUG_PAIRING", "WARNING: Less than 64 bytes left for Token! (${buffer.remaining()} left)")
             }
 
+            // 6. Metadata JSON (Remaining bytes)
             if (buffer.hasRemaining()) {
                 val remaining = ByteArray(buffer.remaining())
                 buffer.get(remaining)
+                val metadataStr = String(remaining, Charsets.UTF_8)
+                Log.d("DEBUG_PAIRING", "Metadata Raw String: $metadataStr")
+                
                 try {
-                    val metadataJson = String(remaining)
-                    record.carMetadata = gson.fromJson(metadataJson, CarMetadata::class.java)
-                    record.friendlyName = record.carMetadata?.modelName ?: "My Vehicle"
+                    val metadataJson = metadataStr.trim { it <= ' ' || it == '\u0000' }
+                    if (metadataJson.isNotEmpty()) {
+                        record.carMetadata = gson.fromJson(metadataJson, CarMetadata::class.java)
+                        record.friendlyName = record.carMetadata?.modelName ?: "My Vehicle"
+                    }
                 } catch (e: Exception) {
-                    Log.w("Pairing", "Failed to parse metadata JSON")
+                    Log.e("DEBUG_PAIRING", "Metadata parse failed: ${e.message}")
                 }
             }
 
             val salt = passwordProvider().toByteArray()
-            record.fastAuthKey = CryptoUtils.deriveSessionKey(
-                sessionKey, 
-                salt, 
-                FAST_AUTH_TAG.toByteArray(), 
-                32
-            )
-            Log.d("CryptoCheck", "Fast Auth Key: ${record.fastAuthKey?.toHex()}")
+            record.fastAuthKey = CryptoUtils.deriveSessionKey(sessionKey, salt, FAST_AUTH_TAG.toByteArray(), 32)
 
             val devicePubKey = identityCrypto.getPublicKey()
-            record.keyID = MessageDigest.getInstance("SHA-256")
-                .digest(devicePubKey)
-                .sliceArray(0..7)
-            
+            record.keyID = MessageDigest.getInstance("SHA-256").digest(devicePubKey).sliceArray(0..7)
             record.devicePublicKey = devicePubKey
             record.keyState = KeyState.PROVISIONING
             
+            pendingRecord = record
             storageManager.saveDigitalKey(record)
-            onLog("Phase 3: Profile stored. KeyID: ${record.keyID?.toHex()}")
+            onLog("Phase 3 Complete. KeyID: ${record.keyID?.toHex()}")
             
             CryptoUtils.encryptAesGcm(devicePubKey, sessionKey)
         } catch (e: Exception) {
-            Log.e("Pairing", "Error Phase 3: ${e.message}", e)
+            Log.e("Pairing", "Error Phase 3: ${e.message}")
             SW_DECRYPTION_FAILED
         }
     }
@@ -191,14 +207,16 @@ class OwnerPairingTransaction(
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
             if (decryptedData.size == 1 && decryptedData[0] == 0x01.toByte()) {
-                val records = storageManager.getAllKeys()
-                records.lastOrNull { it.keyState == KeyState.PROVISIONING }?.let {
-                    it.keyState = KeyState.ACTIVE
-                    storageManager.saveDigitalKey(it)
+                val recordToActivate = pendingRecord ?: storageManager.getAllKeys().lastOrNull { it.keyState == KeyState.PROVISIONING }
+                if (recordToActivate != null) {
+                    recordToActivate.keyState = KeyState.ACTIVE
+                    storageManager.saveDigitalKey(recordToActivate)
+                    onLog("Phase 4: Pairing Complete! Status: ACTIVE")
+                    isComplete = true
+                    ByteArray(0)
+                } else {
+                    SW_DECRYPTION_FAILED
                 }
-                isComplete = true
-                onLog("Phase 4: Pairing Complete!")
-                ByteArray(0)
             } else {
                 SW_DECRYPTION_FAILED
             }

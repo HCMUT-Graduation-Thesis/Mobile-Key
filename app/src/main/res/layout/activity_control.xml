@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="#F0F2F5"
+    android:fitsSystemWindows="true">
+
+    <TextView
+        android:id="@+id/tv_control_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Vehicle Control"
+        android:textSize="22sp"
+        android:textStyle="bold" />
+
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="16dp"
+        app:cardCornerRadius="8dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:id="@+id/tv_detail_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Vehicle Name"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_detail_plate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Plate: --" />
+
+            <TextView
+                android:id="@+id/tv_detail_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Status: ACTIVE" />
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <GridLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:columnCount="2"
+        android:rowCount="2"
+        android:alignmentMode="alignMargins">
+
+        <Button
+            android:id="@+id/btn_control_unlock"
+            android:layout_width="0dp"
+            android:layout_columnWeight="1"
+            android:text="Unlock" />
+
+        <Button
+            android:id="@+id/btn_control_lock"
+            android:layout_width="0dp"
+            android:layout_columnWeight="1"
+            android:text="Lock" />
+
+        <Button
+            android:id="@+id/btn_control_start"
+            android:layout_width="match_parent"
+            android:layout_rowWeight="1"
+            android:layout_columnSpan="2"
+            android:text="Engine Start" />
+    </GridLayout>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Transaction Log:"
+        android:textStyle="bold"
+        android:layout_marginTop="16dp" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#1E1E1E"
+        android:layout_marginTop="8dp"
+        android:padding="8dp">
+
+        <TextView
+            android:id="@+id/tv_control_log"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:text="Ready..."
+            android:textColor="#00FF00"
+            android:textSize="12sp" />
+    </ScrollView>
+
+</LinearLayout>

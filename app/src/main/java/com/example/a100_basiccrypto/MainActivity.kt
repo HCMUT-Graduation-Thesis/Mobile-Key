@@ -10,6 +10,10 @@ import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.example.a100_basiccrypto.digitalkey.core.KeyState
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_LOCK
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_START_ENGINE
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_UNLOCK
 import com.example.a100_basiccrypto.digitalkey.storage.PasswordManager
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 
@@ -30,6 +34,7 @@ class MainActivity : AppCompatActivity() {
     
     private lateinit var btnSavePassword: Button
     private lateinit var etPairingPassword: EditText
+    private lateinit var btnClearKeys: Button
     
     private val storageManager by lazy { SecureKeyStorageManager(this) }
 
@@ -38,7 +43,6 @@ class MainActivity : AppCompatActivity() {
             val message = intent?.getStringExtra("log_message")
             if (message != null) {
                 updateLog(message)
-                // Refresh UI whenever interaction happens
                 runOnUiThread { refreshKeyStateUI() }
             }
         }
@@ -48,48 +52,81 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Initialize Primary Info Views
-        tvLog = findViewById(R.id.tv_log)
-        tvKeyName = findViewById(R.id.tv_key_name)
-        tvKeyState = findViewById(R.id.tv_key_state)
-        tvAccountId = findViewById(R.id.tv_account_id)
-        
-        // Initialize Metadata Views
-        tvMetadataBrand = findViewById(R.id.tv_metadata_brand)
-        tvMetadataPlate = findViewById(R.id.tv_metadata_plate)
-        tvMetadataColor = findViewById(R.id.tv_metadata_color)
-        
-        // Initialize Action Buttons
-        btnUnlock = findViewById(R.id.btn_unlock)
-        btnLock = findViewById(R.id.btn_lock)
-        btnStart = findViewById(R.id.btn_start)
-        
-        // Initialize Setup Views
-        btnSavePassword = findViewById(R.id.btn_save_password)
-        etPairingPassword = findViewById(R.id.et_pairing_password)
+        // 1. Initialize Views
+        initViews()
 
-        updateLog("System Initialized. Ready for secure transactions.")
-        
-        // Load existing password
-        etPairingPassword.setText(PasswordManager.getPassword(this))
-        
-        refreshKeyStateUI()
+        // 2. Setup Listeners for Quick Actions
+        setupActionListeners()
 
-        // Handle Password Saving
+        // 3. Setup Setup Listeners
         btnSavePassword.setOnClickListener {
             val pairingPassword = etPairingPassword.text.toString()
             if (pairingPassword.isNotEmpty()) {
                 PasswordManager.setPassword(this, pairingPassword)
                 Toast.makeText(this, "Credentials Updated", Toast.LENGTH_SHORT).show()
                 updateLog("Pairing credentials updated in secure vault.")
-            } else {
-                Toast.makeText(this, "Entry cannot be empty", Toast.LENGTH_SHORT).show()
             }
         }
+
+        btnClearKeys.setOnClickListener {
+            storageManager.clearAll()
+            refreshKeyStateUI()
+            updateLog("All keys cleared. System reset.")
+            Toast.makeText(this, "System Reset", Toast.LENGTH_SHORT).show()
+        }
+
+        // Load existing password
+        etPairingPassword.setText(PasswordManager.getPassword(this))
+        
+        refreshKeyStateUI()
 
         // Register Receiver for NFC logs
         val filter = IntentFilter("com.example.a100_basiccrypto.LOG_ACTION")
         registerReceiver(nfcReceiver, filter, RECEIVER_EXPORTED)
+    }
+
+    private fun initViews() {
+        tvLog = findViewById(R.id.tv_log)
+        tvKeyName = findViewById(R.id.tv_key_name)
+        tvKeyState = findViewById(R.id.tv_key_state)
+        tvAccountId = findViewById(R.id.tv_account_id)
+        tvMetadataBrand = findViewById(R.id.tv_metadata_brand)
+        tvMetadataPlate = findViewById(R.id.tv_metadata_plate)
+        tvMetadataColor = findViewById(R.id.tv_metadata_color)
+        btnUnlock = findViewById(R.id.btn_unlock)
+        btnLock = findViewById(R.id.btn_lock)
+        btnStart = findViewById(R.id.btn_start)
+        btnSavePassword = findViewById(R.id.btn_save_password)
+        etPairingPassword = findViewById(R.id.et_pairing_password)
+        btnClearKeys = findViewById(R.id.btn_clear_keys)
+    }
+
+    private fun setupActionListeners() {
+        btnUnlock.setOnClickListener { performAction(INS_UNLOCK, "UNLOCK") }
+        btnLock.setOnClickListener { performAction(INS_LOCK, "LOCK") }
+        btnStart.setOnClickListener { performAction(INS_START_ENGINE, "START ENGINE") }
+    }
+
+    private fun performAction(ins: Byte, actionName: String) {
+        val latestKey = storageManager.getAllKeys().lastOrNull { it.keyState == KeyState.ACTIVE }
+        
+        if (latestKey != null) {
+            // 1. Simulate Transaction logic
+            val nextCounter = latestKey.transactionCounter + 1
+            storageManager.updateTransactionCounter(latestKey.keyID!!, nextCounter)
+            
+            // 2. Update UI
+            updateLog("Standard Tx: Executing $actionName...")
+            updateLog("Success: ${latestKey.friendlyName}, Counter: $nextCounter")
+            
+            Toast.makeText(this, "$actionName Success", Toast.LENGTH_SHORT).show()
+            
+            // Re-sync UI
+            refreshKeyStateUI()
+        } else {
+            updateLog("Error: No ACTIVE key found to perform $actionName")
+            Toast.makeText(this, "Action Denied: No Active Key", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun refreshKeyStateUI() {
@@ -101,26 +138,24 @@ class MainActivity : AppCompatActivity() {
             tvKeyState.text = "Status: ${latestKey.keyState.name}"
             tvAccountId.text = "Linked Account: ${latestKey.accountID ?: "Device Local"}"
             
-            // Populate Metadata
             latestKey.carMetadata?.let {
                 tvMetadataBrand.text = "Brand: ${it.brandName} ${it.modelName}"
                 tvMetadataPlate.text = "Plate: ${it.licensePlate}"
                 tvMetadataColor.text = "Color: ${it.color}"
             }
 
-            // State-based Styling & Permissions
             val color = when (latestKey.keyState.name) {
                 "ACTIVE" -> {
                     setActionsEnabled(true)
-                    0xFF4CAF50.toInt() // Material Green
+                    0xFF4CAF50.toInt()
                 }
                 "PROVISIONING" -> {
                     setActionsEnabled(false)
-                    0xFFFFC107.toInt() // Material Amber
+                    0xFFFFC107.toInt()
                 }
                 else -> {
                     setActionsEnabled(false)
-                    0xFFF44336.toInt() // Material Red
+                    0xFFF44336.toInt()
                 }
             }
             tvKeyState.setTextColor(color)
@@ -142,7 +177,7 @@ class MainActivity : AppCompatActivity() {
         tvMetadataBrand.text = "Brand: --"
         tvMetadataPlate.text = "Plate: --"
         tvMetadataColor.text = "Color: --"
-        tvKeyState.setTextColor(0xFF9E9E9E.toInt()) // Gray
+        tvKeyState.setTextColor(0xFF9E9E9E.toInt())
         setActionsEnabled(false)
     }
 

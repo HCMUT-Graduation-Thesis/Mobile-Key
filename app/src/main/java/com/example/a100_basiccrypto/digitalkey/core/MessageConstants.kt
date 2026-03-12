@@ -51,7 +51,10 @@ object MessageConstants {
     // --- GLOBAL STATUS & ERRORS ---
     const val MSG_GLOBAL_SUCCESS     = 0x90.toByte()
     const val MSG_ERR_GENERAL        = 0xE0.toByte()
+    const val MSG_ERR_REPLAY_ATTACK  = 0xE1.toByte()
     const val MSG_ERR_AUTH_FAIL      = 0xE2.toByte()
+    const val MSG_ERR_DESYNC         = 0xE3.toByte()
     const val MSG_ERR_INVALID_CLASS  = 0xE7.toByte()
     const val MSG_ERR_PERMISSION     = 0xE8.toByte()
+    const val MSG_ERR_TRANSPORT_NOT_ALLOWED = 0xE9.toByte()
 }

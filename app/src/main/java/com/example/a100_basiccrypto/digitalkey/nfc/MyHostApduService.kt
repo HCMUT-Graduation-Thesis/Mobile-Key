@@ -7,7 +7,12 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.example.a100_basiccrypto.digitalkey.core.LogicalFrame
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_ADMIN
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_ENGINE_OP
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_FAST_ACTION
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_FRIEND_PAIRING
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_OWNER_PAIRING
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_TELEMETRY
 import com.example.a100_basiccrypto.digitalkey.core.TransportType
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.digitalkey.crypto.DilithiumIdentityCryptoImpl
@@ -22,6 +27,7 @@ import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_UNKNOWN_CMD
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.TRANSACTION_TIMEOUT_MS
 import com.example.a100_basiccrypto.digitalkey.storage.PasswordManager
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
+import com.example.a100_basiccrypto.digitalkey.transactions.FastTransaction
 import com.example.a100_basiccrypto.digitalkey.transactions.OwnerPairingTransaction
 import com.example.a100_basiccrypto.digitalkey.transactions.TransactionRouter
 
@@ -30,6 +36,10 @@ class MyHostApduService : HostApduService() {
     companion object {
         private const val TAG = "NfcDigitalKey"
         const val LOG_ACTION = "com.example.a100_basiccrypto.LOG_ACTION"
+        
+        // Gatekeeper flag for Pairing
+        @Volatile
+        var isPairingModeEnabled: Boolean = false
     }
 
     private val chainingManager = NfcChainingManager()
@@ -43,7 +53,14 @@ class MyHostApduService : HostApduService() {
             passwordProvider = { PasswordManager.getPassword(applicationContext) },
             onLog = { sendLogToGui(it) }
         )
-        TransactionRouter(pairingHandler)
+        val fastHandler = FastTransaction(
+            storageManager = storageManager,
+            onLog = { sendLogToGui(it) }
+        )
+        TransactionRouter(
+            pairingHandler = pairingHandler,
+            fastHandler = fastHandler
+        )
     }
 
     private val timeoutHandler = Handler(Looper.getMainLooper())
@@ -60,63 +77,62 @@ class MyHostApduService : HostApduService() {
     override fun processCommandApdu(commandApdu: ByteArray?, extras: Bundle?): ByteArray {
         if (commandApdu == null || commandApdu.size < 2) return SW_INTERNAL_ERROR
 
-        val hexCommand = commandApdu.toHex()
         val cla = commandApdu[0]
         val ins = commandApdu[1]
         
-        val claHex = "%02X".format(cla)
-        val insHex = "%02X".format(ins)
-        val p1Hex = if (commandApdu.size > 2) "%02X".format(commandApdu[2]) else "--"
-        val p2Hex = if (commandApdu.size > 3) "%02X".format(commandApdu[3]) else "--"
-        
-        Log.d(TAG, "RX: CLA=$claHex, INS=$insHex, P1=$p1Hex, P2=$p2Hex, Full=$hexCommand")
+        // 1. Security Check: Only allow Pairing commands if explicitly enabled by UI
+        if (cla == CLASS_OWNER_PAIRING || cla == 0x80.toByte()) {
+            if (!isPairingModeEnabled) {
+                Log.w(TAG, "Pairing Blocked: Mode not enabled by User.")
+                return SW_UNKNOWN_CMD // Or 0x6985 (Conditions not satisfied)
+            }
+        }
 
-        if (commandApdu.size >= 2 && cla == CLA_ISO && ins == 0xA4.toByte()) {
+        // 2. Handle SELECT AID
+        if (cla == CLA_ISO && ins == 0xA4.toByte()) {
             resetSession()
-            sendLogToGui("Phase 1: Connected.")
+            sendLogToGui("System: Reader Connected.")
             return SW_SUCCESS
         }
 
-        if (cla != CLA_ISO && cla != CLA_PROPRIETARY && cla != CLASS_OWNER_PAIRING && cla != 0x80.toByte()) return SW_UNKNOWN_CMD
+        // 3. Validate supported classes
+        val isAllowedClass = cla == CLA_ISO || 
+                            cla == CLA_PROPRIETARY || 
+                            cla == CLASS_OWNER_PAIRING || 
+                            cla == CLASS_FAST_ACTION || 
+                            cla == CLASS_ENGINE_OP || 
+                            cla == CLASS_TELEMETRY || 
+                            cla == CLASS_ADMIN || 
+                            cla == CLASS_FRIEND_PAIRING ||
+                            cla == 0x80.toByte()
+
+        if (!isAllowedClass) return SW_UNKNOWN_CMD
         
         resetTimeoutTimer()
 
         if (ins == INS_GET_NEXT_CHUNK && commandApdu.size >= 3) {
             val chunkIndex = commandApdu[2].toInt() and 0xFF
-            val chunk = chainingManager.getNextOutgoingChunk(chunkIndex)
-            Log.d(TAG, "TX Chunk #$chunkIndex: ${chunk.toHex()}")
-            return chunk
+            return chainingManager.getNextOutgoingChunk(chunkIndex)
         }
 
         val fullPayload = chainingManager.handleIncomingFragment(commandApdu)
         
         return if (fullPayload != null) {
-            // Reconstruct a LogicalFrame from the APDU headers and reassembled data
             val inputFrame = LogicalFrame(cla, ins, fullPayload)
-            
-            Log.d(TAG, "Routing Logic Frame: CLASS=${"%02X".format(inputFrame.msgClass)}, INS=${"%02X".format(inputFrame.msgId)}, Data size=${inputFrame.payload.size}")
             val responseFrame = router.route(inputFrame, TransportType.NFC)
             val result = responseFrame.payload
             
-            Log.d(TAG, "TX Raw Payload: ${result.toHex()}")
-
             if (result.size > MAX_APDU_PAYLOAD_SIZE) {
                 chainingManager.setOutgoingBuffer(result)
-                val firstChunk = chainingManager.getNextOutgoingChunk(0)
-                Log.d(TAG, "TX Chunk #0: ${firstChunk.toHex()}")
-                firstChunk
+                chainingManager.getNextOutgoingChunk(0)
             } else {
-                // Return as is if it's an error code (2 bytes >= 0x60), otherwise append 9000
-                val finalResponse = if (result.size == 2 && (result[0].toInt() and 0xFF) >= 0x60) {
+                if (result.size == 2 && (result[0].toInt() and 0xFF) >= 0x60) {
                     result
                 } else {
                     result + SW_SUCCESS
                 }
-                Log.d(TAG, "TX Final Response: ${finalResponse.toHex()}")
-                finalResponse
             }
         } else {
-            Log.d(TAG, "Chaining: Waiting for more fragments...")
             SW_HAS_MORE_DATA
         }
     }
@@ -136,7 +152,7 @@ class MyHostApduService : HostApduService() {
     private fun handleTimeout() {
         chainingManager.clear()
         router.resetAll()
-        sendLogToGui("Transaction Timeout")
+        sendLogToGui("Session Timeout")
     }
 
     override fun onDeactivated(reason: Int) {
