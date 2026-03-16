@@ -14,7 +14,6 @@ import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_FRIEN
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_OWNER_PAIRING
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_TELEMETRY
 import com.example.a100_basiccrypto.digitalkey.core.TransportType
-import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.digitalkey.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.CLA_ISO
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.CLA_PROPRIETARY
@@ -29,6 +28,7 @@ import com.example.a100_basiccrypto.digitalkey.storage.PasswordManager
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.digitalkey.transactions.FastTransaction
 import com.example.a100_basiccrypto.digitalkey.transactions.OwnerPairingTransaction
+import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransaction
 import com.example.a100_basiccrypto.digitalkey.transactions.TransactionRouter
 
 class MyHostApduService : HostApduService() {
@@ -37,7 +37,6 @@ class MyHostApduService : HostApduService() {
         private const val TAG = "NfcDigitalKey"
         const val LOG_ACTION = "com.example.a100_basiccrypto.LOG_ACTION"
         
-        // Gatekeeper flag for Pairing
         @Volatile
         var isPairingModeEnabled: Boolean = false
     }
@@ -57,9 +56,16 @@ class MyHostApduService : HostApduService() {
             storageManager = storageManager,
             onLog = { sendLogToGui(it) }
         )
+        val standardHandler = StandardTransaction(
+            identityCrypto = identityCrypto,
+            storageManager = storageManager,
+            passwordProvider = { PasswordManager.getPassword(applicationContext) },
+            onLog = { sendLogToGui(it) }
+        )
         TransactionRouter(
             pairingHandler = pairingHandler,
-            fastHandler = fastHandler
+            fastHandler = fastHandler,
+            standardHandler = standardHandler
         )
     }
 
@@ -80,7 +86,6 @@ class MyHostApduService : HostApduService() {
         val cla = commandApdu[0]
         val ins = commandApdu[1]
         
-        // 1. Security Check: Only allow Pairing commands if explicitly enabled by UI
         if (cla == CLASS_OWNER_PAIRING || cla == 0x80.toByte()) {
             if (!isPairingModeEnabled) {
                 Log.w(TAG, "Pairing Blocked: Mode not enabled by User.")
@@ -88,21 +93,17 @@ class MyHostApduService : HostApduService() {
             }
         }
 
-        // 2. Handle SELECT AID
         if (cla == CLA_ISO && ins == 0xA4.toByte()) {
             resetSession()
             sendLogToGui("System: Reader Connected.")
             return SW_SUCCESS
         }
 
-        // 3. Handle GET_NEXT_CHUNK
-        // Now using 0xFF, so it will NEVER collide with business INS codes (0x01, 0x02, etc.)
         if (ins == INS_GET_NEXT_CHUNK) {
             val chunkIndex = if (commandApdu.size >= 3) commandApdu[2].toInt() and 0xFF else 0
             return chainingManager.getNextOutgoingChunk(chunkIndex)
         }
 
-        // 4. Validate supported classes
         val isAllowedClass = cla == CLA_ISO || 
                             cla == CLA_PROPRIETARY || 
                             cla == CLASS_OWNER_PAIRING || 
