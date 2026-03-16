@@ -13,6 +13,7 @@ data class DigitalKeyRecord(
 
     // 2. Cryptographic & Security Data
     var devicePublicKey: ByteArray? = null,
+    var devicePrivateKey: ByteArray? = null, // Unique Private Key per vehicle for privacy
     var vehiclePublicKey: ByteArray? = null,
     var fastAuthKey: ByteArray? = null,
     var immobilizerToken: ByteArray? = null,

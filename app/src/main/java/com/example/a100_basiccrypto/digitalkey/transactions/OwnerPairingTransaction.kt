@@ -26,7 +26,7 @@ import java.security.spec.ECGenParameterSpec
 
 /**
  * Standard Owner Pairing Implementation with Debug Logging.
- * Updated to receive KeyID from Reader in Phase 3.
+ * Updated to save both Public and Private Identity Keys per record.
  */
 class OwnerPairingTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -102,8 +102,6 @@ class OwnerPairingTransaction(
         return try {
             val decrypted2b = CryptoUtils.decryptAesGcm(payload, sessionKey)
             
-            // Per spec: First 16 bytes is Nonce, remainder is HCE PK if needed for Reader's KeyID calc.
-            // But since this is HCE side, we just verify nonce and send back HCE PK.
             onLog("Phase 2.b: Nonce verified")
             
             val hcePubKey = identityCrypto.getPublicKey()
@@ -121,25 +119,23 @@ class OwnerPairingTransaction(
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
             
-            Log.d("DEBUG_PAIRING", "Phase 3 Decrypted Data Size: ${decryptedData.size}")
             onLog("Phase 3: Data Received (${decryptedData.size} bytes)")
             
             val buffer = ByteBuffer.wrap(decryptedData)
             val record = DigitalKeyRecord()
 
-            // 1. Vehicle Public Key (Fixed 1952 bytes)
+            // 1. Vehicle Public Key (Fixed 1952 bytes for Dilithium3)
             if (buffer.remaining() >= 1952) {
                 val vehiclePK = ByteArray(1952)
                 buffer.get(vehiclePK)
                 record.vehiclePublicKey = vehiclePK
             }
 
-            // 2. KeyID (Fixed 8 bytes) - NEW: Received from Reader
+            // 2. KeyID (Fixed 8 bytes)
             if (buffer.remaining() >= 8) {
                 val kid = ByteArray(8)
                 buffer.get(kid)
                 record.keyID = kid
-                Log.d("DEBUG_PAIRING", "Received KeyID from Reader: ${kid.toHex()}")
             }
 
             // 3. ModuleID (16) + SlotID (1)
@@ -162,14 +158,14 @@ class OwnerPairingTransaction(
                 record.validityEnd = buffer.long
             }
 
-            // 6. Immobilizer Token (Fixed 64 bytes)
+            // 6. Immobilizer Token (64 bytes)
             if (buffer.remaining() >= 64) {
                 val token = ByteArray(64)
                 buffer.get(token)
                 record.immobilizerToken = token
             }
 
-            // 7. Metadata JSON (Remaining bytes)
+            // 7. Metadata JSON
             if (buffer.hasRemaining()) {
                 val remaining = ByteArray(buffer.remaining())
                 buffer.get(remaining)
@@ -181,20 +177,24 @@ class OwnerPairingTransaction(
                         record.friendlyName = record.carMetadata?.modelName ?: "My Vehicle"
                     }
                 } catch (e: Exception) {
-                    Log.e("DEBUG_PAIRING", "Metadata parse failed: ${e.message}")
+                    Log.e("Pairing", "Metadata parse failed")
                 }
             }
 
             val salt = passwordProvider().toByteArray()
             record.fastAuthKey = CryptoUtils.deriveSessionKey(sessionKey, salt, FAST_AUTH_TAG.toByteArray(), 32)
+            
+            // CRITICAL: Save both keys for this specific record (Unique per Vehicle)
             record.devicePublicKey = identityCrypto.getPublicKey()
+            record.devicePrivateKey = identityCrypto.getPrivateKey()
+            
             record.keyState = KeyState.PROVISIONING
             
             pendingRecord = record
             storageManager.saveDigitalKey(record)
-            onLog("Phase 3 Complete. KeyID (Synced): ${record.keyID?.toHex()}")
+            onLog("Phase 3 Complete. Identity KeyPair saved for KeyID: ${record.keyID?.toHex()}")
             
-            // Response to Reader (Confirmation)
+            // Response to Reader (Confirmation with Public Key)
             CryptoUtils.encryptAesGcm(record.devicePublicKey!!, sessionKey)
         } catch (e: Exception) {
             Log.e("Pairing", "Error Phase 3: ${e.message}")
