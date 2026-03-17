@@ -84,8 +84,6 @@ class HomeActivity : AppCompatActivity() {
             holder.tvStatus.text = "Status: ${item.keyState.name}"
             holder.tvPlate.text = "Plate: ${item.carMetadata?.licensePlate ?: "--"}"
             
-            // Hiển thị KeyID và ModuleID dưới dạng Hex để đối chiếu với Reader
-            // KeyID cũng là ByteArray nên dùng .toHex()
             holder.tvKeyId.text = "KeyID: ${item.keyID?.toHex() ?: "--"}"
             holder.tvModuleId.text = "ModuleID: ${item.moduleID?.toHex() ?: "--"}"
             

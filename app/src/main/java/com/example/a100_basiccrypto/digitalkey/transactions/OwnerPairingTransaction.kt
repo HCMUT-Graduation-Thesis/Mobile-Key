@@ -24,16 +24,16 @@ import java.security.KeyPairGenerator
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 
-/**
- * Standard Owner Pairing Implementation with Debug Logging.
- * Updated to save both Public and Private Identity Keys per record.
- */
 class OwnerPairingTransaction(
     private val identityCrypto: IIdentityCrypto,
     private val storageManager: IKeyStorageManager,
     private val passwordProvider: () -> String,
     private val onLog: (String) -> Unit
 ) : ITransactionHandler {
+
+    companion object {
+        private const val TAG = "OwnerPairing"
+    }
 
     private var currentSessionKey: ByteArray? = null
     private var ephemeralKeyPair: KeyPair? = null
@@ -92,7 +92,7 @@ class OwnerPairingTransaction(
             
             byteArrayOf(0x04.toByte()) + x + y 
         } catch (e: Exception) {
-            Log.e("Pairing", "Error Phase 2a: ${e.message}")
+            Log.e(TAG, "Error Phase 2a: ${e.message}")
             SW_INTERNAL_ERROR
         }
     }
@@ -104,12 +104,14 @@ class OwnerPairingTransaction(
             
             onLog("Phase 2.b: Nonce verified")
             
+            // Return "original" Public Key (Full X.509)
             val hcePubKey = identityCrypto.getPublicKey()
+            Log.d(TAG, "Phase 2.b: Sending App Identity Public Key to Reader, size: ${hcePubKey.size} bytes")
             val response = decrypted2b.sliceArray(0 until 16) + hcePubKey
             
             CryptoUtils.encryptAesGcm(response, sessionKey)
         } catch (e: Exception) {
-            Log.e("Pairing", "Error Phase 2b: ${e.message}")
+            Log.e(TAG, "Error Phase 2b: ${e.message}")
             SW_DECRYPTION_FAILED
         }
     }
@@ -118,24 +120,71 @@ class OwnerPairingTransaction(
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            
             onLog("Phase 3: Data Received (${decryptedData.size} bytes)")
             
             val buffer = ByteBuffer.wrap(decryptedData)
             val record = DigitalKeyRecord()
 
-            // 1. Vehicle Public Key (Fixed 1952 bytes for Dilithium3)
-            if (buffer.remaining() >= 1952) {
-                val vehiclePK = ByteArray(1952)
-                buffer.get(vehiclePK)
-                record.vehiclePublicKey = vehiclePK
+            // Read "original" Vehicle Public Key with ASN.1 DER length parsing.
+            // Payload = [VehiclePK (Variable)] + [KeyID:8] + [ModuleID:16] + [SlotID:1] + [Counter:4] + [Perms:4] + [Start:8] + [End:8] + [Token:64] + [Metadata...]
+            
+            val fixedFieldsSize = 113
+            Log.d(TAG, "Phase 3: Total Decrypted Payload Size: ${decryptedData.size} bytes")
+            
+            if (buffer.remaining() > fixedFieldsSize) {
+                // Peek at the first bytes to determine if it's X.509 (DER) or Raw
+                val currentPos = buffer.position()
+                val firstByte = buffer.get(currentPos)
+                
+                var actualPkSize = 1952 // Default fallback for Raw Dilithium3
+                
+                if (firstByte == 0x30.toByte()) { // 0x30 is the ASN.1 SEQUENCE tag (X.509 starts with this)
+                    val lenByte1 = buffer.get(currentPos + 1).toInt() and 0xFF
+                    actualPkSize = when {
+                        lenByte1 == 0x82 -> {
+                            // Long form, 2 bytes length
+                            val b2 = buffer.get(currentPos + 2).toInt() and 0xFF
+                            val b3 = buffer.get(currentPos + 3).toInt() and 0xFF
+                            ((b2 shl 8) or b3) + 4 // +4 for Tag(1) + LenHeader(3)
+                        }
+                        lenByte1 == 0x81 -> {
+                            // Long form, 1 byte length
+                            (buffer.get(currentPos + 2).toInt() and 0xFF) + 3
+                        }
+                        lenByte1 < 0x80 -> {
+                            // Short form
+                            lenByte1 + 2
+                        }
+                        else -> 1952
+                    }
+                    Log.d(TAG, "Phase 3: Detected X.509 Public Key header. Parsed size: $actualPkSize bytes")
+                } else {
+                    Log.d(TAG, "Phase 3: No X.509 header found. Using default Raw size: 1952 bytes")
+                }
+
+                // Extract exactly the amount of bytes needed for the Public Key
+                if (buffer.remaining() >= actualPkSize) {
+                    val vehiclePK = ByteArray(actualPkSize)
+                    buffer.get(vehiclePK)
+                    record.vehiclePublicKey = vehiclePK
+                    Log.d(TAG, "Vehicle PK extracted: ${vehiclePK.size} bytes")
+                } else {
+                    Log.e(TAG, "Phase 3 Error: Buffer underflow for PK. Expected $actualPkSize but only ${buffer.remaining()} left.")
+                    val available = buffer.remaining()
+                    val fallbackPK = ByteArray(available)
+                    buffer.get(fallbackPK)
+                    record.vehiclePublicKey = fallbackPK
+                }
+            } else {
+                Log.w(TAG, "Warning Phase 3: Buffer remaining (${buffer.remaining()}) is not enough for fixed fields ($fixedFieldsSize)")
             }
 
-            // 2. KeyID (Fixed 8 bytes)
+            // 2. KeyID (8 bytes)
             if (buffer.remaining() >= 8) {
                 val kid = ByteArray(8)
                 buffer.get(kid)
                 record.keyID = kid
+                Log.d(TAG, "KeyID extracted: ${kid.toHex()}")
             }
 
             // 3. ModuleID (16) + SlotID (1)
@@ -144,18 +193,21 @@ class OwnerPairingTransaction(
                 buffer.get(mid)
                 record.moduleID = mid
                 record.slotID = buffer.get()
+                Log.d(TAG, "ModuleID extracted: ${mid.toHex()}, SlotID: ${record.slotID}")
             }
 
             // 4. Counter (4) + Permissions (4)
             if (buffer.remaining() >= 8) {
                 record.transactionCounter = buffer.int
                 record.permissions = buffer.int
+                Log.d(TAG, "Counter: ${record.transactionCounter}, Permissions: ${record.permissions}")
             }
 
             // 5. Validity Start (8) + End (8)
             if (buffer.remaining() >= 16) {
                 record.validityStart = buffer.long
                 record.validityEnd = buffer.long
+                Log.d(TAG, "Validity: ${record.validityStart} to ${record.validityEnd}")
             }
 
             // 6. Immobilizer Token (64 bytes)
@@ -163,41 +215,45 @@ class OwnerPairingTransaction(
                 val token = ByteArray(64)
                 buffer.get(token)
                 record.immobilizerToken = token
+                Log.d(TAG, "Immobilizer Token extracted (64 bytes)")
             }
 
-            // 7. Metadata JSON
+            // 7. Metadata JSON (Remaining part)
             if (buffer.hasRemaining()) {
-                val remaining = ByteArray(buffer.remaining())
+                val remainingCount = buffer.remaining()
+                val remaining = ByteArray(remainingCount)
                 buffer.get(remaining)
                 val metadataStr = String(remaining, Charsets.UTF_8).trim { it <= ' ' || it == '\u0000' }
-                
+                Log.d(TAG, "Metadata raw string size: $remainingCount bytes")
                 try {
                     if (metadataStr.isNotEmpty()) {
                         record.carMetadata = gson.fromJson(metadataStr, CarMetadata::class.java)
                         record.friendlyName = record.carMetadata?.modelName ?: "My Vehicle"
                     }
                 } catch (e: Exception) {
-                    Log.e("Pairing", "Metadata parse failed")
+                    Log.e(TAG, "Metadata parse failed: ${e.message}")
                 }
             }
 
             val salt = passwordProvider().toByteArray()
             record.fastAuthKey = CryptoUtils.deriveSessionKey(sessionKey, salt, FAST_AUTH_TAG.toByteArray(), 32)
             
-            // CRITICAL: Save both keys for this specific record (Unique per Vehicle)
+            // IMPORTANT: Save ORIGINAL Public/Private Key (Full encoded bytes)
             record.devicePublicKey = identityCrypto.getPublicKey()
             record.devicePrivateKey = identityCrypto.getPrivateKey()
+            Log.d(TAG, "Saving Record: Device PK size: ${record.devicePublicKey?.size}, Device SK size: ${record.devicePrivateKey?.size}")
             
             record.keyState = KeyState.PROVISIONING
-            
             pendingRecord = record
             storageManager.saveDigitalKey(record)
-            onLog("Phase 3 Complete. Identity KeyPair saved for KeyID: ${record.keyID?.toHex()}")
             
-            // Response to Reader (Confirmation with Public Key)
+            onLog("Phase 3 Complete. Full Identity Keys saved.")
+            
+            // Respond to Reader with the App's original Public Key
             CryptoUtils.encryptAesGcm(record.devicePublicKey!!, sessionKey)
         } catch (e: Exception) {
-            Log.e("Pairing", "Error Phase 3: ${e.message}")
+            Log.e(TAG, "Error Phase 3: ${e.message}")
+            Log.e(TAG, "Phase 3 Exception Details: ", e)
             SW_DECRYPTION_FAILED
         }
     }
@@ -211,17 +267,20 @@ class OwnerPairingTransaction(
                 if (recordToActivate != null) {
                     recordToActivate.keyState = KeyState.ACTIVE
                     storageManager.saveDigitalKey(recordToActivate)
-                    onLog("Phase 4: Pairing Complete! Status: ACTIVE")
+                    onLog("Phase 4: Pairing Complete! Key is ACTIVE")
                     isComplete = true
                     ByteArray(0)
                 } else {
+                    Log.e(TAG, "Error Phase 4: No pending record to activate")
                     SW_DECRYPTION_FAILED
                 }
             } else {
+                Log.e(TAG, "Error Phase 4: Invalid commitment signal")
                 SW_DECRYPTION_FAILED
             }
         } catch (e: Exception) {
-            Log.e("Pairing", "Error Phase 4: ${e.message}")
+            Log.e(TAG, "Error Phase 4: ${e.message}")
+            Log.e(TAG, "Phase 4 Exception Details: ", e)
             SW_DECRYPTION_FAILED
         }
     }

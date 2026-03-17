@@ -34,19 +34,33 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Vehicle Name"
+                android:textSize="18sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/tv_detail_plate"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Plate: --" />
+                android:text="Plate: --"
+                android:layout_marginTop="4dp" />
 
             <TextView
                 android:id="@+id/tv_detail_status"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Status: ACTIVE" />
+                android:text="Status: ACTIVE"
+                android:layout_marginTop="4dp" />
+
+            <TextView
+                android:id="@+id/tv_detail_fastkey"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="FastKey: --"
+                android:layout_marginTop="8dp"
+                android:fontFamily="monospace"
+                android:textColor="#E91E63"
+                android:textStyle="bold"
+                android:textSize="12sp" />
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 

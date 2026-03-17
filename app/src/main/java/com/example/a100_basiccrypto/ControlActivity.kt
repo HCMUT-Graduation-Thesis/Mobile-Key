@@ -13,6 +13,7 @@ import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_LOCK
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_START_ENGINE
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_UNLOCK
+import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 
 class ControlActivity : AppCompatActivity() {
@@ -21,6 +22,7 @@ class ControlActivity : AppCompatActivity() {
     private lateinit var tvName: TextView
     private lateinit var tvPlate: TextView
     private lateinit var tvStatus: TextView
+    private lateinit var tvFastKey: TextView
     private lateinit var btnClearLog: Button
     
     private val storageManager by lazy { SecureKeyStorageManager(this) }
@@ -31,6 +33,8 @@ class ControlActivity : AppCompatActivity() {
             val message = intent?.getStringExtra("log_message")
             if (message != null) {
                 updateLog(message)
+                // Refresh key data when a log comes in (it might be a successful standard transaction)
+                refreshKeyData()
             }
         }
     }
@@ -43,6 +47,7 @@ class ControlActivity : AppCompatActivity() {
         tvName = findViewById(R.id.tv_detail_name)
         tvPlate = findViewById(R.id.tv_detail_plate)
         tvStatus = findViewById(R.id.tv_detail_status)
+        tvFastKey = findViewById(R.id.tv_detail_fastkey)
         btnClearLog = findViewById(R.id.btn_clear_control_log)
 
         val keyId = intent.getByteArrayExtra("KEY_ID")
@@ -68,11 +73,20 @@ class ControlActivity : AppCompatActivity() {
         registerReceiver(nfcReceiver, filter, RECEIVER_EXPORTED)
     }
 
+    private fun refreshKeyData() {
+        val keyId = currentKey?.keyID ?: return
+        currentKey = storageManager.getAllKeys().find { it.keyID?.contentEquals(keyId) == true }
+        runOnUiThread { displayKeyInfo() }
+    }
+
     private fun displayKeyInfo() {
         currentKey?.let {
             tvName.text = it.friendlyName
             tvPlate.text = "Plate: ${it.carMetadata?.licensePlate ?: "--"}"
             tvStatus.text = "Status: ${it.keyState.name}"
+            
+            val fastKeyHex = it.fastAuthKey?.toHex()?.take(8) ?: "--"
+            tvFastKey.text = "FastKey (Prefix): $fastKeyHex..."
         }
     }
 

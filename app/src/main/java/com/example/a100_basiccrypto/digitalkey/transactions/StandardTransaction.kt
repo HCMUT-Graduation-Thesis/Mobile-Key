@@ -27,7 +27,6 @@ import java.security.spec.ECGenParameterSpec
 
 /**
  * Standard Transaction Implementation (Admin Flow).
- * Matches Reader implementation: [ModuleID(16) + VehicleSig(3309) + ReaderChallenge(16)] = 3341 bytes.
  */
 class StandardTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -77,16 +76,6 @@ class StandardTransaction(
 
     override fun isTransactionComplete(): Boolean = isComplete
 
-    private fun logLargeString(tag: String, message: String) {
-        val maxLogSize = 3000
-        for (i in 0..message.length / maxLogSize) {
-            val start = i * maxLogSize
-            var end = (i + 1) * maxLogSize
-            if (end > message.length) end = message.length
-            Log.d(tag, "Part $i: " + message.substring(start, end))
-        }
-    }
-
     private fun handleAuthInit(payload: ByteArray): ByteArray {
         return try {
             onLog("STD: Phase 1 - Auth Init")
@@ -108,11 +97,6 @@ class StandardTransaction(
 
             appNonce = ByteArray(16).apply { SecureRandom().nextBytes(this) }
             
-            // Log AppNonce at the end of Phase 1 as requested
-            Log.i("CryptoAudit", "==== PHASE 1 END ====")
-            Log.i("CryptoAudit", "App Nonce Generated: ${appNonce?.toHex()}")
-            Log.i("CryptoAudit", "=====================")
-            
             val ecPubKey = keyPair.public as ECPublicKey
             
             onLog("STD: Secure Channel Established.")
@@ -128,11 +112,9 @@ class StandardTransaction(
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            onLog("Decrypted Payload: ${decrypted.size} bytes")
-            
             val buffer = ByteBuffer.wrap(decrypted)
 
-            // Structure: ModuleID(16) + VehicleSig(3309) + ReaderChallenge(16) = 3341
+            // Structure: ModuleID(16) + VehicleSig(3309) + ReaderChallenge(16) = 3341 bytes
             if (buffer.remaining() < 3341) {
                 Log.e("StandardTx", "Payload too short: ${buffer.remaining()}")
                 return byteArrayOf(MSG_ERR_GENERAL)
@@ -145,41 +127,29 @@ class StandardTransaction(
             val contextNonce = appNonce ?: return byteArrayOf(MSG_ERR_GENERAL)
             
             val record = storageManager.getAllKeys().find { it.moduleID.contentEquals(moduleId) }
-                ?: return byteArrayOf(MSG_ERR_AUTH_FAIL).also { onLog("Error: Record Missing") }
+                ?: return byteArrayOf(MSG_ERR_AUTH_FAIL).also { 
+                    onLog("Error: Record Missing for ModuleID: ${moduleId.toHex()}")
+                }
 
+            // Verification using FULL ORIGINAL Public Key
             val vehiclePK = record.vehiclePublicKey ?: return byteArrayOf(MSG_ERR_AUTH_FAIL)
-
-            // --- DETAILED AUDIT LOGS ---
-            Log.i("CryptoAudit", "==== PHASE 2: VERIFY CAR ====")
-            Log.i("CryptoAudit", "ModuleID: ${moduleId.toHex()}")
-            Log.i("CryptoAudit", "App Nonce (Context): ${contextNonce.toHex()}")
-            logLargeString("CryptoAudit", "Vehicle Public Key: ${vehiclePK.toHex()}")
-            logLargeString("CryptoAudit", "Vehicle Signature: ${vehicleSig.toHex()}")
-            Log.i("CryptoAudit", "Reader Challenge (to be signed): ${readerChallenge.toHex()}")
-            Log.i("CryptoAudit", "=============================")
-
-            // Verification - Dilithium3 verification with context
-            // Note: If Reader uses AppNonce as context, it must be passed here.
-            // Current user feedback: "Reader also doesn't use context". 
-            // So we use empty/default context.
             val isValid = identityCrypto.verify(contextNonce, vehicleSig, vehiclePK)
             if (!isValid) {
-                onLog("Error: PQC Signature Invalid!")
+                onLog("Error: Vehicle Signature Invalid!")
                 return byteArrayOf(MSG_ERR_AUTH_FAIL)
             }
 
-            onLog("Vehicle Authenticated (PQC Valid).")
+            onLog("Vehicle Authenticated.")
             activeRecord = record
             isCarVerified = true
 
-            // MUTUAL AUTH: Sign the reader's challenge immediately
+            // MUTUAL AUTH: Sign the reader's challenge using ORIGINAL FULL Private Key
             val deviceSK = record.devicePrivateKey ?: return byteArrayOf(MSG_ERR_GENERAL)
             val appSig = identityCrypto.sign(readerChallenge, deviceSK)
             isDeviceVerified = true
             
-            onLog("Device Signature generated and sent.")
+            onLog("Device Signature generated.")
             
-            // Response: KeyID(8) + AppSignature(3309)
             CryptoUtils.encryptAesGcm(record.keyID!! + appSig, sessionKey)
         } catch (e: Exception) {
             Log.e("StandardTx", "VerifyCar Crash", e)
@@ -192,11 +162,14 @@ class StandardTransaction(
         return try {
             val challenge = CryptoUtils.decryptAesGcm(payload, sessionKey)
             val record = activeRecord ?: return byteArrayOf(MSG_ERR_AUTH_FAIL)
+            
             val deviceSK = record.devicePrivateKey ?: return byteArrayOf(MSG_ERR_GENERAL)
             val appSig = identityCrypto.sign(challenge, deviceSK)
             isDeviceVerified = true
+            
             CryptoUtils.encryptAesGcm(record.keyID!! + appSig, sessionKey)
         } catch (e: Exception) {
+            Log.e("StandardTx", "VerifyDevice Crash", e)
             byteArrayOf(MSG_ERR_GENERAL)
         }
     }
