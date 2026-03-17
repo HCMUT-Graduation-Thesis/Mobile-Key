@@ -31,14 +31,14 @@ object MessageConstants {
 
     // --- CLASS 0x40: Standard Transaction / Admin Phases (INS) ---
     const val AUTH_INIT      = 0x11.toByte() // Phase 1: Key Exchange
-    const val VERIFY_CAR     = 0x13.toByte() // Phase 2: Vehicle Auth
-    const val VERIFY_DEVICE  = 0x15.toByte() // Phase 3: Device Auth
-    const val SYNC_DATA      = 0x19.toByte() // Phase 4: Data Sync & Recovery
-    const val COMMIT_ACTION  = 0x17.toByte() // Phase 5: Final Execution
-    // Administrative Command IDs (inside Phase 5)
-    const val REVOKE_OWNER  = 0x01.toByte()
-    const val FACTORY_RESET = 0x02.toByte()
-    const val KEY_SYNC_ONLY = 0x03.toByte() // Used if no specific admin action is needed
+    const val MUTUAL_VERIFY  = 0x13.toByte() // Phase 2: Mutual Verify (Vehicle Auth & Device Sign)
+    const val SYNC_DATA      = 0x15.toByte() // Phase 3: Data Sync & Recovery
+    const val COMMIT_ACTION  = 0x17.toByte() // Phase 4 & 5: Admin Command & Final Commit
+    
+    // Administrative Command IDs (inside Phase 4 payload)
+    const val REVOKE_OWNER    = 0x01.toByte()
+    const val FACTORY_RESET   = 0x02.toByte()
+    const val UPDATE_FIRMWARE = 0x03.toByte()
 
     // --- CLASS 0x50: Owner Provisioning Phases (INS) ---
     const val PHASE_PAIRING_REQ      = 0x11.toByte()

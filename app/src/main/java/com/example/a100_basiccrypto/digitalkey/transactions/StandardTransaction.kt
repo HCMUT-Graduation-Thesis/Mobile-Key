@@ -8,10 +8,9 @@ import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.COMMIT_ACTI
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.FACTORY_RESET
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_ERR_AUTH_FAIL
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_ERR_GENERAL
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MUTUAL_VERIFY
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.REVOKE_OWNER
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.SYNC_DATA
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.VERIFY_CAR
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.VERIFY_DEVICE
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.normalize
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
@@ -27,6 +26,7 @@ import java.security.spec.ECGenParameterSpec
 
 /**
  * Standard Transaction Implementation (Admin Flow).
+ * Compliant with Specification v1.2.0.
  */
 class StandardTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -48,11 +48,10 @@ class StandardTransaction(
     private val DILITHIUM3_SIG_SIZE = 3309
 
     override fun processCommand(frame: LogicalFrame): ByteArray {
-        Log.d("StandardTx", "Incoming: INS=${"%02X".format(frame.msgId)}, Size=${frame.payload.size}")
+        Log.d("StandardTx", "Incoming: INS=${"%02X".format(frame.msgId)}")
         return when (frame.msgId) {
             AUTH_INIT -> handleAuthInit(frame.payload)
-            VERIFY_CAR -> handleVerifyCar(frame.payload)
-            VERIFY_DEVICE -> handleVerifyDevice(frame.payload)
+            MUTUAL_VERIFY -> handleMutualVerify(frame.payload)
             SYNC_DATA -> ifFullAuth { handleSyncData(frame.payload) }
             COMMIT_ACTION -> ifFullAuth { handleCommitAction(frame.payload) }
             else -> byteArrayOf(MSG_ERR_GENERAL)
@@ -71,14 +70,14 @@ class StandardTransaction(
         isCarVerified = false
         isDeviceVerified = false
         isComplete = false
-        Log.d("StandardTx", "State Reset")
+        Log.d("StandardTx", "Session State Cleared")
     }
 
     override fun isTransactionComplete(): Boolean = isComplete
 
     private fun handleAuthInit(payload: ByteArray): ByteArray {
         return try {
-            onLog("STD: Phase 1 - Auth Init")
+            onLog("STD: Phase 1 - Auth Init (Secure Channel)")
             val startIndex = payload.indexOf(0x04.toByte())
             if (startIndex == -1 || payload.size - startIndex < 65) return byteArrayOf(MSG_ERR_GENERAL)
 
@@ -95,11 +94,12 @@ class StandardTransaction(
             val salt = passwordProvider().toByteArray()
             currentSessionKey = CryptoUtils.deriveSessionKey(sharedSecret, salt, STD_HKDF_INFO.toByteArray(), 32)
 
+            // App Challenge for Phase 2
             appNonce = ByteArray(16).apply { SecureRandom().nextBytes(this) }
             
             val ecPubKey = keyPair.public as ECPublicKey
+            onLog("STD: Session Key derived.")
             
-            onLog("STD: Secure Channel Established.")
             byteArrayOf(0x04.toByte()) + ecPubKey.w.affineX.toByteArray().normalize(32) + 
                     ecPubKey.w.affineY.toByteArray().normalize(32) + appNonce!!
         } catch (e: Exception) {
@@ -108,68 +108,43 @@ class StandardTransaction(
         }
     }
 
-    private fun handleVerifyCar(payload: ByteArray): ByteArray {
+    private fun handleMutualVerify(payload: ByteArray): ByteArray {
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
             val buffer = ByteBuffer.wrap(decrypted)
 
             // Structure: ModuleID(16) + VehicleSig(3309) + ReaderChallenge(16) = 3341 bytes
-            if (buffer.remaining() < 3341) {
-                Log.e("StandardTx", "Payload too short: ${buffer.remaining()}")
-                return byteArrayOf(MSG_ERR_GENERAL)
-            }
+            if (buffer.remaining() < 3341) return byteArrayOf(MSG_ERR_GENERAL)
 
             val moduleId = ByteArray(16).also { buffer.get(it) }
             val vehicleSig = ByteArray(DILITHIUM3_SIG_SIZE).also { buffer.get(it) }
             val readerChallenge = ByteArray(16).also { buffer.get(it) }
 
             val contextNonce = appNonce ?: return byteArrayOf(MSG_ERR_GENERAL)
-            
             val record = storageManager.getAllKeys().find { it.moduleID.contentEquals(moduleId) }
-                ?: return byteArrayOf(MSG_ERR_AUTH_FAIL).also { 
-                    onLog("Error: Record Missing for ModuleID: ${moduleId.toHex()}")
-                }
+                ?: return byteArrayOf(MSG_ERR_AUTH_FAIL).also { onLog("Error: ModuleID not found.") }
 
-            // Verification using FULL ORIGINAL Public Key
+            // 1. Verify Reader (Vehicle)
             val vehiclePK = record.vehiclePublicKey ?: return byteArrayOf(MSG_ERR_AUTH_FAIL)
-            val isValid = identityCrypto.verify(contextNonce, vehicleSig, vehiclePK)
-            if (!isValid) {
-                onLog("Error: Vehicle Signature Invalid!")
+            val isVehicleValid = identityCrypto.verify(contextNonce, vehicleSig, vehiclePK)
+            if (!isVehicleValid) {
+                onLog("Error: Vehicle PQC Signature Invalid!")
                 return byteArrayOf(MSG_ERR_AUTH_FAIL)
             }
-
-            onLog("Vehicle Authenticated.")
-            activeRecord = record
             isCarVerified = true
+            activeRecord = record
 
-            // MUTUAL AUTH: Sign the reader's challenge using ORIGINAL FULL Private Key
+            // 2. Sign for Device (App)
+            onLog("STD: Phase 2 - Vehicle Verified. Signing challenge...")
             val deviceSK = record.devicePrivateKey ?: return byteArrayOf(MSG_ERR_GENERAL)
             val appSig = identityCrypto.sign(readerChallenge, deviceSK)
             isDeviceVerified = true
             
-            onLog("Device Signature generated.")
-            
+            // Response: KeyID(8) + AppSignature(3309)
             CryptoUtils.encryptAesGcm(record.keyID!! + appSig, sessionKey)
         } catch (e: Exception) {
-            Log.e("StandardTx", "VerifyCar Crash", e)
-            byteArrayOf(MSG_ERR_GENERAL)
-        }
-    }
-
-    private fun handleVerifyDevice(payload: ByteArray): ByteArray {
-        val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
-        return try {
-            val challenge = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            val record = activeRecord ?: return byteArrayOf(MSG_ERR_AUTH_FAIL)
-            
-            val deviceSK = record.devicePrivateKey ?: return byteArrayOf(MSG_ERR_GENERAL)
-            val appSig = identityCrypto.sign(challenge, deviceSK)
-            isDeviceVerified = true
-            
-            CryptoUtils.encryptAesGcm(record.keyID!! + appSig, sessionKey)
-        } catch (e: Exception) {
-            Log.e("StandardTx", "VerifyDevice Crash", e)
+            Log.e("StandardTx", "MutualVerify Crash", e)
             byteArrayOf(MSG_ERR_GENERAL)
         }
     }
@@ -177,13 +152,13 @@ class StandardTransaction(
     private fun handleSyncData(payload: ByteArray): ByteArray {
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
-            onLog("STD: Phase 4 - Data Sync")
+            onLog("STD: Phase 3 - Sync Data (Fast Key Update)")
             val newFastKey = ByteArray(32).apply { SecureRandom().nextBytes(this) }
             activeRecord?.let {
                 it.fastAuthKey = newFastKey
-                it.transactionCounter = 0
+                it.transactionCounter = 0 // Reset counter per spec
                 storageManager.saveDigitalKey(it)
-                onLog("FastAuthKey updated.")
+                onLog("Success: FastAuthKey rotated & Counter reset.")
             }
             CryptoUtils.encryptAesGcm(newFastKey, sessionKey)
         } catch (e: Exception) {
@@ -195,22 +170,26 @@ class StandardTransaction(
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            if (decrypted.isEmpty()) return byteArrayOf(MSG_ERR_GENERAL)
-            val adminCmd = decrypted[0]
-            when (adminCmd) {
-                REVOKE_OWNER -> {
-                    activeRecord?.let { storageManager.deleteKey(it.keyID!!) }
-                    onLog("ADMIN: Key Revoked.")
+            if (decrypted.isNotEmpty()) {
+                val adminCmd = decrypted[0]
+                onLog("STD: Phase 4 - Admin Command: ${"%02X".format(adminCmd)}")
+                when (adminCmd) {
+                    REVOKE_OWNER -> {
+                        activeRecord?.let { storageManager.deleteKey(it.keyID!!) }
+                        onLog("ADMIN: Key revoked and deleted.")
+                    }
+                    FACTORY_RESET -> {
+                        storageManager.clearAll()
+                        onLog("ADMIN: All keys cleared.")
+                    }
                 }
-                FACTORY_RESET -> {
-                    storageManager.clearAll()
-                    onLog("ADMIN: Reset.")
-                }
-                else -> onLog("STD: Committed.")
+            } else {
+                onLog("STD: Phase 5 - Final Commit.")
             }
             isComplete = true
             byteArrayOf(0x90.toByte(), 0x00.toByte())
         } catch (e: Exception) {
+            Log.e("StandardTx", "Commit Crash", e)
             byteArrayOf(MSG_ERR_GENERAL)
         }
     }
