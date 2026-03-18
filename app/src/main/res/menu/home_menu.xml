@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item
+        android:id="@+id/action_simulate_push"
+        android:title="Simulate Push"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_clear_mock"
+        android:title="Clear Mock Server"
+        app:showAsAction="never" />
+</menu>

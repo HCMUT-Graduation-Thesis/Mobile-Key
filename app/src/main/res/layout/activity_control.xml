@@ -1,135 +1,186 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp"
     android:background="#F0F2F5"
     android:fitsSystemWindows="true">
 
-    <TextView
-        android:id="@+id/tv_control_title"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Vehicle Control"
-        android:textSize="22sp"
-        android:textStyle="bold" />
-
-    <androidx.cardview.widget.CardView
+    <com.google.android.material.appbar.AppBarLayout
+        android:id="@+id/appbar_control"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:layout_marginBottom="16dp"
-        app:cardCornerRadius="8dp">
+        android:background="@android:color/transparent"
+        app:elevation="0dp"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar_control"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            app:navigationIcon="@android:drawable/ic_menu_revert"
+            app:title="Key Control"
+            app:titleTextColor="#1A1A1A" />
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toBottomOf="@id/appbar_control"
+        app:layout_constraintBottom_toBottomOf="parent">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="20dp">
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="4dp"
+                app:cardBackgroundColor="@android:color/white">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="20dp">
+
+                    <TextView
+                        android:id="@+id/tv_detail_name"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Vehicle Name"
+                        android:textSize="22sp"
+                        android:textStyle="bold"
+                        android:textColor="#1A1A1A" />
+
+                    <TextView
+                        android:id="@+id/tv_detail_plate"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="Plate: --"
+                        android:textSize="16sp"
+                        android:textColor="#666666" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/tv_detail_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="ACTIVE"
+                        app:chipBackgroundColor="#E3F2FD"
+                        app:chipStrokeWidth="0dp"
+                        android:textColor="#1976D2"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tv_detail_fastkey"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="FastKey (Prefix): --"
+                        android:textSize="12sp"
+                        android:fontFamily="monospace"
+                        android:textColor="#999999" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <GridLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:columnCount="2"
+                android:rowCount="2">
+
+                <Button
+                    android:id="@+id/btn_control_unlock"
+                    android:layout_width="0dp"
+                    android:layout_height="80dp"
+                    android:layout_columnWeight="1"
+                    android:layout_margin="8dp"
+                    android:text="UNLOCK"
+                    app:icon="@android:drawable/ic_lock_lock" />
+
+                <Button
+                    android:id="@+id/btn_control_lock"
+                    android:layout_width="0dp"
+                    android:layout_height="80dp"
+                    android:layout_columnWeight="1"
+                    android:layout_margin="8dp"
+                    android:text="LOCK"
+                    android:backgroundTint="#455A64"
+                    app:icon="@android:drawable/ic_lock_idle_lock" />
+
+                <Button
+                    android:id="@+id/btn_control_start"
+                    android:layout_width="0dp"
+                    android:layout_height="80dp"
+                    android:layout_columnWeight="1"
+                    android:layout_margin="8dp"
+                    android:text="START"
+                    android:backgroundTint="#4CAF50"
+                    app:icon="@android:drawable/ic_media_play" />
+
+                <Button
+                    android:id="@+id/btn_control_share"
+                    android:layout_width="0dp"
+                    android:layout_height="80dp"
+                    android:layout_columnWeight="1"
+                    android:layout_margin="8dp"
+                    android:text="SHARE"
+                    android:backgroundTint="#FF9800"
+                    app:icon="@android:drawable/ic_menu_share" />
+
+            </GridLayout>
 
             <TextView
-                android:id="@+id/tv_detail_name"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Vehicle Name"
-                android:textSize="18sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tv_detail_plate"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Plate: --"
-                android:layout_marginTop="4dp" />
-
-            <TextView
-                android:id="@+id/tv_detail_status"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Status: ACTIVE"
-                android:layout_marginTop="4dp" />
-
-            <TextView
-                android:id="@+id/tv_detail_fastkey"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="FastKey: --"
-                android:layout_marginTop="8dp"
-                android:fontFamily="monospace"
-                android:textColor="#E91E63"
+                android:layout_marginTop="32dp"
+                android:text="Transaction Logs"
                 android:textStyle="bold"
-                android:textSize="12sp" />
+                android:textColor="#1A1A1A" />
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:cardCornerRadius="12dp"
+                app:strokeWidth="1dp"
+                app:strokeColor="#DDDDDD">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="12dp">
+
+                    <TextView
+                        android:id="@+id/tv_control_log"
+                        android:layout_width="match_parent"
+                        android:layout_height="120dp"
+                        android:background="#FAFAFA"
+                        android:padding="8dp"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:scrollbars="vertical" />
+
+                    <Button
+                        android:id="@+id/btn_clear_control_log"
+                        style="?attr/borderlessButtonStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="end"
+                        android:text="Clear Log"
+                        android:textSize="12sp"
+                        android:textColor="#F44336" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
         </LinearLayout>
-    </androidx.cardview.widget.CardView>
-
-    <GridLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:columnCount="2"
-        android:rowCount="2"
-        android:alignmentMode="alignMargins">
-
-        <Button
-            android:id="@+id/btn_control_unlock"
-            android:layout_width="0dp"
-            android:layout_columnWeight="1"
-            android:text="Unlock" />
-
-        <Button
-            android:id="@+id/btn_control_lock"
-            android:layout_width="0dp"
-            android:layout_columnWeight="1"
-            android:text="Lock" />
-
-        <Button
-            android:id="@+id/btn_control_start"
-            android:layout_width="match_parent"
-            android:layout_rowWeight="1"
-            android:layout_columnSpan="2"
-            android:text="Engine Start" />
-    </GridLayout>
-
-    <RelativeLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Transaction Log:"
-            android:textStyle="bold"
-            android:layout_centerVertical="true"/>
-
-        <Button
-            android:id="@+id/btn_clear_control_log"
-            android:layout_width="wrap_content"
-            android:layout_height="32dp"
-            android:layout_alignParentEnd="true"
-            android:backgroundTint="#777777"
-            android:text="Clear"
-            android:textSize="10sp"
-            android:paddingHorizontal="8dp" />
-    </RelativeLayout>
-
-    <ScrollView
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="#1E1E1E"
-        android:layout_marginTop="8dp"
-        android:padding="8dp">
-
-        <TextView
-            android:id="@+id/tv_control_log"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:text="Ready..."
-            android:textColor="#00FF00"
-            android:textSize="12sp" />
     </ScrollView>
-
-</LinearLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>

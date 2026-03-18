@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.android.application)
-    // alias(libs.plugins.kotlin.android) // Remove or comment this line as it might be applied elsewhere
 }
 
 android {
@@ -32,6 +31,10 @@ android {
     }
 }
 
+kotlin {
+    jvmToolchain(11)
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
@@ -39,7 +42,11 @@ dependencies {
     implementation(libs.androidx.activity)
     implementation(libs.androidx.constraintlayout)
     
-    // Bouncy Castle for PQC (Dilithium)
+    // Lifecycle
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    
+    // Bouncy Castle
     implementation(libs.bouncycastle.prov)
     implementation(libs.bouncycastle.pqc)
     
