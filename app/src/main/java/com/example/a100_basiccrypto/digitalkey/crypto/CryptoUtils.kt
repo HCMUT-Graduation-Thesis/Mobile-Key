@@ -1,6 +1,7 @@
 package com.example.a100_basiccrypto.digitalkey.crypto
 
 import java.math.BigInteger
+import java.nio.ByteBuffer
 import java.security.*
 import java.security.spec.*
 import javax.crypto.Cipher
@@ -15,6 +16,7 @@ object CryptoUtils {
     private const val EC_ALGORITHM = "EC"
     private const val ECDH_ALGORITHM = "ECDH"
     private const val HMAC_ALGORITHM = "HmacSHA256"
+    private const val SHA256_ALGORITHM = "SHA-256"
     private const val AES_GCM_ALGORITHM = "AES/GCM/NoPadding"
     private const val GCM_TAG_LENGTH = 128
     private const val GCM_IV_LENGTH = 12
@@ -33,6 +35,11 @@ object CryptoUtils {
 
     fun ByteArray.toHex(): String {
         return joinToString("") { "%02x".format(it) }.uppercase()
+    }
+
+    fun sha256(data: ByteArray): ByteArray {
+        val md = MessageDigest.getInstance(SHA256_ALGORITHM)
+        return md.digest(data)
     }
 
     fun getPrivateKeyFromHex(hexPriv: String): PrivateKey {

@@ -33,7 +33,12 @@ data class DigitalKeyRecord(
     var keyState: KeyState = KeyState.PROVISIONING,
     var syncStatus: SyncStatus = SyncStatus.PENDING_UPLOAD,
     var friendlyName: String = "",
-    var carMetadata: CarMetadata? = null
+    var carMetadata: CarMetadata? = null,
+
+    // 6. Sharing & Attestation Data (New)
+    var attestationPackage: ByteArray? = null, // The signed blob for Friend Pairing
+    var invitationCodeHash: ByteArray? = null, // SHA-256 of the invitation code
+    var invitationCode: String? = null         // Plain code (Stored only on Owner device for sharing)
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
