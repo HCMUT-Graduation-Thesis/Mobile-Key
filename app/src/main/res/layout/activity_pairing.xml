@@ -1,74 +1,149 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp"
-    android:background="#F0F2F5"
+    android:background="@color/black"
     android:fitsSystemWindows="true">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Owner Pairing"
-        android:textSize="22sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="16dp"/>
-
-    <EditText
-        android:id="@+id/et_pairing_password"
+    <!-- Header Toolbar -->
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar_pairing"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="Enter Pairing Password"
-        android:inputType="textPassword"
-        android:text="12345678"
-        android:layout_marginBottom="8dp"/>
-
-    <Button
-        android:id="@+id/btn_start_pairing"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Set Password &amp; Wait for NFC"/>
-
-    <RelativeLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:layout_marginBottom="8dp">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Pairing Progress Log:"
-            android:textStyle="bold"
-            android:layout_centerVertical="true"/>
-
-        <Button
-            android:id="@+id/btn_clear_pairing_log"
-            android:layout_width="wrap_content"
-            android:layout_height="32dp"
-            android:layout_alignParentEnd="true"
-            android:backgroundTint="#777777"
-            android:text="Clear"
-            android:textSize="10sp"
-            android:paddingHorizontal="8dp" />
-    </RelativeLayout>
+        android:layout_height="?attr/actionBarSize"
+        android:background="@color/black"
+        app:navigationIcon="@android:drawable/ic_menu_revert"
+        app:navigationIconTint="@color/white"
+        app:title="Owner Pairing"
+        app:titleTextColor="@color/white"
+        app:layout_constraintTop_toTopOf="parent" />
 
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="#1E1E1E"
-        android:padding="8dp">
+        app:layout_constraintTop_toBottomOf="@id/toolbar_pairing"
+        app:layout_constraintBottom_toTopOf="@id/ll_pairing_log_container">
 
-        <TextView
-            android:id="@+id/tv_pairing_log"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:text=""
-            android:textColor="#00FF00"
-            android:textSize="12sp" />
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <ImageView
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:layout_gravity="center"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="24dp"
+                android:src="@android:drawable/ic_dialog_dialer"
+                app:tint="@color/primary_blue" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Pairing Configuration"
+                android:textColor="@color/white"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Enter the pairing password provided with your vehicle module to establish owner authority."
+                android:textColor="@color/gray_text"
+                android:textSize="14sp" />
+
+            <!-- Password Input -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/til_pairing_password"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="32dp"
+                android:hint="Pairing Password"
+                app:boxStrokeColor="@color/primary_blue"
+                app:hintTextColor="@color/primary_blue"
+                app:passwordToggleEnabled="true"
+                app:passwordToggleTint="@color/gray_text">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/et_pairing_password"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="textPassword"
+                    android:text="12345678"
+                    android:textColor="@color/white" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Start Button -->
+            <Button
+                android:id="@+id/btn_start_pairing"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="32dp"
+                android:backgroundTint="@color/primary_blue"
+                android:text="INITIATE PAIRING"
+                android:textAllCaps="true"
+                android:textStyle="bold"
+                app:cornerRadius="12dp" />
+
+        </LinearLayout>
     </ScrollView>
 
-</LinearLayout>
+    <!-- Bottom Console Log (Professional Style) -->
+    <LinearLayout
+        android:id="@+id/ll_pairing_log_container"
+        android:layout_width="match_parent"
+        android:layout_height="180dp"
+        android:background="#121212"
+        android:orientation="vertical"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <RelativeLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="8dp"
+            android:background="#1A1A1A">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="TERMINAL LOG"
+                android:textColor="@color/gray_text"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/btn_clear_pairing_log"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_alignParentEnd="true"
+                android:text="CLEAR"
+                android:textColor="@color/primary_blue"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:clickable="true"
+                android:focusable="true"/>
+        </RelativeLayout>
+
+        <androidx.core.widget.NestedScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="12dp">
+
+            <TextView
+                android:id="@+id/tv_pairing_log"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:text="> System Ready. Awaiting User Action..."
+                android:textColor="@color/success_green"
+                android:textSize="11sp" />
+        </androidx.core.widget.NestedScrollView>
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -28,6 +28,10 @@
         <activity android:name=".PairingActivity" android:exported="false" />
         <activity android:name=".ControlActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="false" />
+        <activity android:name=".SettingsActivity" android:exported="false" />
+        <activity android:name=".EKeyManagerActivity" android:exported="false" />
+        <activity android:name=".ShareConfigActivity" android:exported="false" />
+        <activity android:name=".NotificationActivity" android:exported="false" />
 
         <service
             android:name=".digitalkey.nfc.MyHostApduService"

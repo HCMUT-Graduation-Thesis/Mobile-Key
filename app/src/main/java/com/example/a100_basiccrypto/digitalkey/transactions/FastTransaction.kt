@@ -6,6 +6,7 @@ import com.example.a100_basiccrypto.digitalkey.core.LogicalFrame
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_LOCK
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_UNLOCK
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_START_ENGINE
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_STOP_ENGINE
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_GET_STATUS
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_ERR_AUTH_FAIL
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_ERR_DESYNC
@@ -77,6 +78,7 @@ class FastTransaction(
                 INS_UNLOCK -> handleUnlock(record.friendlyName)
                 INS_LOCK -> handleLock(record.friendlyName)
                 INS_START_ENGINE -> handleStartEngine(dataBuffer, record.immobilizerToken)
+                INS_STOP_ENGINE -> handleStopEngine(record.friendlyName)
                 else -> MSG_ERR_GENERAL
             }
 
@@ -91,12 +93,12 @@ class FastTransaction(
             // 7. Prepare Response for Reader (Phase 2 & 3 Support)
             // Payload: [INS (1b)] + [Counter (4b)] + [Status (1b)]
             val responsePayload = ByteBuffer.allocate(6).apply {
-                put(frame.msgId)          // Trả lại mã lệnh để Reader check Phase 3
-                putInt(receivedCounter)    // Trả lại Counter để Reader check Phase 2 (Anti-Replay)
-                put(MSG_GLOBAL_SUCCESS)    // Trạng thái thành công
+                put(frame.msgId)          // Return instruction code for Reader's Phase 3 check
+                putInt(receivedCounter)    // Return Counter for Reader's Phase 2 check (Anti-Replay)
+                put(MSG_GLOBAL_SUCCESS)    // Success status
             }.array()
 
-            // Mã hóa phản hồi với IV mới
+            // Encrypt response with new IV
             CryptoUtils.encryptAesGcm(responsePayload, fastAuthKey)
 
         } catch (e: Exception) {
@@ -113,6 +115,11 @@ class FastTransaction(
 
     private fun handleLock(name: String): Byte {
         onLog("Vehicle [$name]: Lock authorized")
+        return MSG_GLOBAL_SUCCESS
+    }
+
+    private fun handleStopEngine(name: String): Byte {
+        onLog("Vehicle [$name]: Stop engine authorized")
         return MSG_GLOBAL_SUCCESS
     }
 

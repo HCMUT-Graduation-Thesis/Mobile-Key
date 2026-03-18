@@ -13,6 +13,11 @@ import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_FAST_
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_FRIEND_PAIRING
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_OWNER_PAIRING
 import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_TELEMETRY
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_LOCK
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_START_ENGINE
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_STOP_ENGINE
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_UNLOCK
+import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_GLOBAL_SUCCESS
 import com.example.a100_basiccrypto.digitalkey.core.TransportType
 import com.example.a100_basiccrypto.digitalkey.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.CLA_ISO
@@ -36,6 +41,7 @@ class MyHostApduService : HostApduService() {
     companion object {
         private const val TAG = "NfcDigitalKey"
         const val LOG_ACTION = "com.example.a100_basiccrypto.LOG_ACTION"
+        const val ACTION_NFC_RESULT = "com.example.a100_basiccrypto.NFC_RESULT"
         
         @Volatile
         var isPairingModeEnabled: Boolean = false
@@ -75,6 +81,15 @@ class MyHostApduService : HostApduService() {
     private fun sendLogToGui(message: String) {
         val intent = Intent(LOG_ACTION).apply {
             putExtra("log_message", message)
+            setPackage(packageName)
+        }
+        sendBroadcast(intent)
+    }
+
+    private fun broadcastResultToActivity(actionName: String, isSuccess: Boolean) {
+        val intent = Intent(ACTION_NFC_RESULT).apply {
+            putExtra("action_name", actionName)
+            putExtra("is_success", isSuccess)
             setPackage(packageName)
         }
         sendBroadcast(intent)
@@ -125,6 +140,23 @@ class MyHostApduService : HostApduService() {
             val responseFrame = router.route(inputFrame, TransportType.NFC)
             val result = responseFrame.payload
             
+            // Notification logic for ControlActivity if it's a control command
+            val actionName = when {
+                cla == CLASS_FAST_ACTION && ins == INS_UNLOCK -> "UNLOCK"
+                cla == CLASS_FAST_ACTION && ins == INS_LOCK -> "LOCK"
+                cla == CLASS_ENGINE_OP && ins == INS_START_ENGINE -> "START ENGINE"
+                cla == CLASS_ENGINE_OP && ins == INS_STOP_ENGINE -> "STOP ENGINE"
+                else -> null
+            }
+
+            if (actionName != null) {
+                // In FastTransaction, the result is ENCRYPTED. 
+                // We should check if router returned an error code (1 byte) or encrypted data (multiple bytes)
+                // If encrypted, it means success in the business logic phase 1.
+                val isSuccess = result.size > 2 // Encrypted result will be larger than a single error byte
+                broadcastResultToActivity(actionName, isSuccess)
+            }
+
             if (result.size > MAX_APDU_PAYLOAD_SIZE) {
                 chainingManager.setOutgoingBuffer(result)
                 chainingManager.getNextOutgoingChunk(0)

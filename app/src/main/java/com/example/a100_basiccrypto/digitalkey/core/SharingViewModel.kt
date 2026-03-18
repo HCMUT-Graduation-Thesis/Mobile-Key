@@ -18,13 +18,16 @@ class SharingViewModel(
     private val _uiState = MutableStateFlow<SharingUiState>(SharingUiState.Idle)
     val uiState: StateFlow<SharingUiState> = _uiState
 
-    // Flow for listening to incoming invitations from Mock Server
     val incomingInvitations = MockKeyServer.invitationFlow
 
     fun shareKey(
         ownerRecord: DigitalKeyRecord,
         permissions: Int,
-        validityDays: Int
+        validityDays: Int,
+        usageLimit: Int = 0,
+        daysOfWeek: Int = 0,
+        startTimeMinutes: Int = -1,
+        endTimeMinutes: Int = -1
     ) {
         viewModelScope.launch {
             _uiState.value = SharingUiState.Loading
@@ -32,7 +35,11 @@ class SharingViewModel(
                 ownerRecord,
                 Role.FRIEND,
                 permissions,
-                validityDays
+                validityDays,
+                usageLimit,
+                daysOfWeek,
+                startTimeMinutes,
+                endTimeMinutes
             )
             if (updatedRecord != null) {
                 _uiState.value = SharingUiState.ShareSuccess(
@@ -51,19 +58,6 @@ class SharingViewModel(
                 _uiState.value = SharingUiState.ReceivedInvitation(record)
             }
         }
-    }
-
-    fun simulatePush() {
-        viewModelScope.launch {
-            val ap = MockKeyServer.downloadAP()
-            if (ap != null) {
-                processInvitation(ap)
-            }
-        }
-    }
-
-    fun clearMockServer() {
-        MockKeyServer.reset()
     }
 
     fun resetState() {
