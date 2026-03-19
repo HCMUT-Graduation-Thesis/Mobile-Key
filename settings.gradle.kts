@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "100_BasicCrypto"
 include(":app")
+include(":shared-core")

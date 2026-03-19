@@ -30,7 +30,7 @@ class SecureKeyStorageManager(context: Context) : IKeyStorageManager {
     )
 
     override fun saveDigitalKey(record: DigitalKeyRecord) {
-        val keyID = record.keyID?.toHex() ?: "DEFAULT_KEY"
+        val keyID = record.core.keyID?.toHex() ?: "DEFAULT_KEY"
         val json = gson.toJson(record)
         
         sharedPreferences.edit().apply {
@@ -82,7 +82,7 @@ class SecureKeyStorageManager(context: Context) : IKeyStorageManager {
     override fun updateTransactionCounter(keyID: ByteArray, counter: Int) {
         val record = getDigitalKey(keyID)
         record?.let {
-            it.transactionCounter = counter
+            it.core.transactionCounter = counter
             saveDigitalKey(it)
         }
     }

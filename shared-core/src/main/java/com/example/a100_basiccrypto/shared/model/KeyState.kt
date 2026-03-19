@@ -1,0 +1,14 @@
+package com.example.a100_basiccrypto.shared.model
+
+/**
+ * Lifecycle states of a digital key.
+ */
+enum class KeyState(val value: Byte) {
+    PROVISIONING(0x00), // During pairing process
+    ACTIVE(0x01),       // Ready for use
+    SUSPENDED(0x02),    // Temporarily disabled
+    REVOKED(0x03),      // Permanently disabled/removed
+    EXPIRED(0x04),      // Validity period ended
+    PENDING(0x05),      // Waiting for Friend to activate
+    LOCKED(0x06)        // Fast Transaction locked due to counter desync. Requires Standard Recovery.
+}

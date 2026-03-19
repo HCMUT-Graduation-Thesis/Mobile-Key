@@ -4,6 +4,11 @@ import android.util.Log
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils
 import com.example.a100_basiccrypto.digitalkey.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
+import com.example.a100_basiccrypto.shared.command.MessageConstants
+import com.example.a100_basiccrypto.shared.command.SharingConstants
+import com.example.a100_basiccrypto.shared.model.Role
+import com.example.a100_basiccrypto.shared.model.KeyState
+import com.example.a100_basiccrypto.shared.model.CoreDigitalKey
 import java.nio.ByteBuffer
 import kotlin.random.Random
 
@@ -44,7 +49,7 @@ class SharingManager(
             // 3. Build Metadata Payload V2 (68 bytes)
             val payload = ByteBuffer.allocate(SharingConstants.METADATA_SIZE).apply {
                 put(SharingConstants.AP_VERSION_V2)              // Offset 0
-                put(ownerRecord.keyID?.sliceArray(0 until 8) ?: ByteArray(8)) // Offset 1
+                put(ownerRecord.core.keyID?.sliceArray(0 until 8) ?: ByteArray(8)) // Offset 1
                 put(invCodeHash)                                 // Offset 9
                 put(role.value)                                  // Offset 41
                 putInt(permissions)                              // Offset 42
@@ -68,20 +73,21 @@ class SharingManager(
 
             // 5. Create PENDING record for Owner to track
             val pendingRecord = DigitalKeyRecord().apply {
-                this.keyID = CryptoUtils.sha256(ap).sliceArray(0 until 16) // Temp ID
-                this.parentKeyID = ownerRecord.keyID?.sliceArray(0 until 8)
-                this.keyState = KeyState.PENDING
+                core.keyID = CryptoUtils.sha256(ap).sliceArray(0 until 16) // Temp ID
+                core.parentKeyID = ownerRecord.core.keyID?.sliceArray(0 until 8)
+                core.keyState = KeyState.PENDING
+                core.role = role
+                core.permissions = permissions
+                core.usageLimit = usageLimit
+                core.daysOfWeek = daysOfWeek
+                core.startTimeMinutes = startTimeMinutes
+                core.endTimeMinutes = endTimeMinutes
+                core.carMetadata = ownerRecord.core.carMetadata
+                
                 this.invitationCode = invitationCode
                 this.invitationCodeHash = invCodeHash
                 this.attestationPackage = ap
-                this.role = role
-                this.permissions = permissions
-                this.usageLimit = usageLimit
-                this.daysOfWeek = daysOfWeek
-                this.startTimeMinutes = startTimeMinutes
-                this.endTimeMinutes = endTimeMinutes
                 this.friendlyName = if(friendlyName.isNotEmpty()) friendlyName else "Guest Key (Pending)"
-                this.carMetadata = ownerRecord.carMetadata
             }
             
             if (MockKeyServer.uploadAP(ap)) {
@@ -124,26 +130,24 @@ class SharingManager(
             }
 
             val newRecord = DigitalKeyRecord().apply {
-                this.keyID = CryptoUtils.sha256(ap).sliceArray(0 until 16)
-                this.keyState = KeyState.PROVISIONING 
+                core.keyID = CryptoUtils.sha256(ap).sliceArray(0 until 16)
+                core.keyState = KeyState.PROVISIONING 
+                core.parentKeyID = parentKeyID
+                core.role = if (roleValue == Role.OWNER.value) Role.OWNER else Role.FRIEND
+                core.permissions = permissions
+                core.validityStart = validFrom
+                core.validityEnd = validTo
+                core.usageLimit = usageLimit
+                core.daysOfWeek = daysOfWeek
+                core.startTimeMinutes = startM
+                core.endTimeMinutes = endM
+                
                 this.attestationPackage = ap
                 this.invitationCodeHash = invCodeHash
-                this.parentKeyID = parentKeyID
-                this.role = if (roleValue == Role.OWNER.value) Role.OWNER else Role.FRIEND
-                this.permissions = permissions
-                this.validityStart = validFrom
-                this.validityEnd = validTo
-                
-                // New Fields
-                this.usageLimit = usageLimit
-                this.daysOfWeek = daysOfWeek
-                this.startTimeMinutes = startM
-                this.endTimeMinutes = endM
                 
                 val hexID = parentKeyID.joinToString("") { "%02x".format(it) }.uppercase()
                 this.friendlyName = "Shared Key from $hexID"
             }
-            // storageManager.saveDigitalKey(newRecord) // REMOVED: Save only after code verification
             return newRecord
         } catch (e: Exception) {
             Log.e(TAG, "Error processing invitation: ${e.message}")
@@ -155,7 +159,7 @@ class SharingManager(
      * Call this ONLY after the user has successfully entered the Invitation Code.
      */
     fun finalizeProvisioning(record: DigitalKeyRecord) {
-        record.keyState = KeyState.ACTIVE
+        record.core.keyState = KeyState.ACTIVE
         storageManager.saveDigitalKey(record)
     }
 }

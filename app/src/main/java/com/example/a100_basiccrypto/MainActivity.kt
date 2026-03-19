@@ -10,10 +10,10 @@ import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import com.example.a100_basiccrypto.digitalkey.core.KeyState
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_LOCK
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_START_ENGINE
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_UNLOCK
+import com.example.a100_basiccrypto.shared.model.KeyState
+import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_LOCK
+import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_START_ENGINE
+import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_UNLOCK
 import com.example.a100_basiccrypto.digitalkey.storage.PasswordManager
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 
@@ -77,7 +77,7 @@ class MainActivity : AppCompatActivity() {
 
         // Load existing password
         etPairingPassword.setText(PasswordManager.getPassword(this))
-        
+
         refreshKeyStateUI()
 
         // Register Receiver for NFC logs
@@ -108,19 +108,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun performAction(ins: Byte, actionName: String) {
-        val latestKey = storageManager.getAllKeys().lastOrNull { it.keyState == KeyState.ACTIVE }
-        
+        val latestKey = storageManager.getAllKeys().lastOrNull { it.core.keyState == KeyState.ACTIVE }
+
         if (latestKey != null) {
             // 1. Simulate Transaction logic
-            val nextCounter = latestKey.transactionCounter + 1
-            storageManager.updateTransactionCounter(latestKey.keyID!!, nextCounter)
-            
+            val nextCounter = latestKey.core.transactionCounter + 1
+            storageManager.updateTransactionCounter(latestKey.core.keyID!!, nextCounter)
+
             // 2. Update UI
             updateLog("Standard Tx: Executing $actionName...")
             updateLog("Success: ${latestKey.friendlyName}, Counter: $nextCounter")
-            
+
             Toast.makeText(this, "$actionName Success", Toast.LENGTH_SHORT).show()
-            
+
             // Re-sync UI
             refreshKeyStateUI()
         } else {
@@ -135,21 +135,21 @@ class MainActivity : AppCompatActivity() {
 
         if (latestKey != null) {
             tvKeyName.text = "Vehicle: ${latestKey.friendlyName.ifEmpty { "Digital Key" }}"
-            tvKeyState.text = "Status: ${latestKey.keyState.name}"
+            tvKeyState.text = "Status: ${latestKey.core.keyState.name}"
             tvAccountId.text = "Linked Account: ${latestKey.accountID ?: "Device Local"}"
             
-            latestKey.carMetadata?.let {
+            latestKey.core.carMetadata?.let {
                 tvMetadataBrand.text = "Brand: ${it.brandName} ${it.modelName}"
                 tvMetadataPlate.text = "Plate: ${it.licensePlate}"
                 tvMetadataColor.text = "Color: ${it.color}"
             }
 
-            val color = when (latestKey.keyState.name) {
-                "ACTIVE" -> {
+            val color = when (latestKey.core.keyState) {
+                KeyState.ACTIVE -> {
                     setActionsEnabled(true)
                     0xFF4CAF50.toInt()
                 }
-                "PROVISIONING" -> {
+                KeyState.PROVISIONING -> {
                     setActionsEnabled(false)
                     0xFFFFC107.toInt()
                 }

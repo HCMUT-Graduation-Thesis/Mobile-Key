@@ -2,20 +2,20 @@ package com.example.a100_basiccrypto.digitalkey.transactions
 
 import android.util.Log
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
-import com.example.a100_basiccrypto.digitalkey.core.LogicalFrame
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.AUTH_INIT
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.COMMIT_ACTION
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.FACTORY_RESET
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_ERR_AUTH_FAIL
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_ERR_GENERAL
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MUTUAL_VERIFY
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.REVOKE_OWNER
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.SYNC_DATA
+import com.example.a100_basiccrypto.shared.link.LogicalFrame
+import com.example.a100_basiccrypto.shared.command.MessageConstants.AUTH_INIT
+import com.example.a100_basiccrypto.shared.command.MessageConstants.COMMIT_ACTION
+import com.example.a100_basiccrypto.shared.command.MessageConstants.FACTORY_RESET
+import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_AUTH_FAIL
+import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_GENERAL
+import com.example.a100_basiccrypto.shared.command.MessageConstants.MUTUAL_VERIFY
+import com.example.a100_basiccrypto.shared.command.MessageConstants.REVOKE_OWNER
+import com.example.a100_basiccrypto.shared.command.MessageConstants.SYNC_DATA
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.normalize
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.digitalkey.crypto.IIdentityCrypto
-import com.example.a100_basiccrypto.digitalkey.nfc.NfcConstants.SW_DECRYPTION_FAILED
+import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_DECRYPTION_FAILED
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import java.nio.ByteBuffer
 import java.security.KeyPair
@@ -26,7 +26,6 @@ import java.security.spec.ECGenParameterSpec
 
 /**
  * Standard Transaction Implementation (Admin Flow).
- * Compliant with Specification v1.2.0.
  */
 class StandardTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -114,7 +113,6 @@ class StandardTransaction(
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
             val buffer = ByteBuffer.wrap(decrypted)
 
-            // Structure: ModuleID(16) + VehicleSig(3309) + ReaderChallenge(16) = 3341 bytes
             if (buffer.remaining() < 3341) return byteArrayOf(MSG_ERR_GENERAL)
 
             val moduleId = ByteArray(16).also { buffer.get(it) }
@@ -122,11 +120,11 @@ class StandardTransaction(
             val readerChallenge = ByteArray(16).also { buffer.get(it) }
 
             val contextNonce = appNonce ?: return byteArrayOf(MSG_ERR_GENERAL)
-            val record = storageManager.getAllKeys().find { it.moduleID.contentEquals(moduleId) }
+            val record = storageManager.getAllKeys().find { it.core.moduleID?.contentEquals(moduleId) == true }
                 ?: return byteArrayOf(MSG_ERR_AUTH_FAIL).also { onLog("Error: ModuleID not found.") }
 
             // 1. Verify Reader (Vehicle)
-            val vehiclePK = record.vehiclePublicKey ?: return byteArrayOf(MSG_ERR_AUTH_FAIL)
+            val vehiclePK = record.core.vehiclePublicKey ?: return byteArrayOf(MSG_ERR_AUTH_FAIL)
             val isVehicleValid = identityCrypto.verify(contextNonce, vehicleSig, vehiclePK)
             if (!isVehicleValid) {
                 onLog("Error: Vehicle PQC Signature Invalid!")
@@ -142,7 +140,7 @@ class StandardTransaction(
             isDeviceVerified = true
             
             // Response: KeyID(8) + AppSignature(3309)
-            CryptoUtils.encryptAesGcm(record.keyID!! + appSig, sessionKey)
+            CryptoUtils.encryptAesGcm((record.core.keyID ?: ByteArray(8)) + appSig, sessionKey)
         } catch (e: Exception) {
             Log.e("StandardTx", "MutualVerify Crash", e)
             byteArrayOf(MSG_ERR_GENERAL)
@@ -155,8 +153,8 @@ class StandardTransaction(
             onLog("STD: Phase 3 - Sync Data (Fast Key Update)")
             val newFastKey = ByteArray(32).apply { SecureRandom().nextBytes(this) }
             activeRecord?.let {
-                it.fastAuthKey = newFastKey
-                it.transactionCounter = 0 // Reset counter per spec
+                it.core.fastAuthKey = newFastKey
+                it.core.transactionCounter = 0 // Reset counter per spec
                 storageManager.saveDigitalKey(it)
                 onLog("Success: FastAuthKey rotated & Counter reset.")
             }
@@ -175,7 +173,7 @@ class StandardTransaction(
                 onLog("STD: Phase 4 - Admin Command: ${"%02X".format(adminCmd)}")
                 when (adminCmd) {
                     REVOKE_OWNER -> {
-                        activeRecord?.let { storageManager.deleteKey(it.keyID!!) }
+                        activeRecord?.let { storageManager.deleteKey(it.core.keyID!!) }
                         onLog("ADMIN: Key revoked and deleted.")
                     }
                     FACTORY_RESET -> {

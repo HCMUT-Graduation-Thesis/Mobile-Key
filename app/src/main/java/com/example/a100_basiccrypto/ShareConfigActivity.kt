@@ -17,6 +17,8 @@ import androidx.lifecycle.lifecycleScope
 import com.example.a100_basiccrypto.digitalkey.core.*
 import com.example.a100_basiccrypto.digitalkey.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
+import com.example.a100_basiccrypto.shared.model.Role
+import com.example.a100_basiccrypto.shared.command.SharingConstants
 import com.google.android.material.tabs.TabLayout
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -137,9 +139,9 @@ class ShareConfigActivity : AppCompatActivity() {
         findViewById<View>(R.id.btn_send_ekey).setOnClickListener {
             val allKeys = storageManager.getAllKeys()
             val ownerRecord = if (ownerKeyId != null) {
-                allKeys.find { it.keyID.contentEquals(ownerKeyId) }
+                allKeys.find { it.core.keyID?.contentEquals(ownerKeyId) == true }
             } else {
-                allKeys.find { it.role == Role.OWNER }
+                allKeys.find { it.core.role == Role.OWNER }
             }
 
             if (ownerRecord == null) {

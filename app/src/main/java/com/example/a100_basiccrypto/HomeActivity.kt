@@ -21,6 +21,9 @@ import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.digitalkey.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
+import com.example.a100_basiccrypto.shared.model.KeyState
+import com.example.a100_basiccrypto.shared.model.Role
+import com.example.a100_basiccrypto.shared.command.SharingConstants
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.flow.launchIn
@@ -37,7 +40,7 @@ class HomeActivity : AppCompatActivity() {
 
     private val keyAdapter = KeyAdapter { record ->
         val intent = Intent(this, ControlActivity::class.java)
-        intent.putExtra("KEY_ID", record.keyID)
+        intent.putExtra("KEY_ID", record.core.keyID)
         startActivity(intent)
     }
 
@@ -159,9 +162,9 @@ class HomeActivity : AppCompatActivity() {
                 return@launchWhenStarted
             }
             
-            view.findViewById<TextView>(R.id.tv_invitation_detail_owner).text = "Owner ID: ${tempRecord.parentKeyID?.toHex()?.take(8) ?: "Unknown"}"
-            view.findViewById<TextView>(R.id.tv_invitation_detail_perms).text = "Permissions: ${getPermissionsString(tempRecord.permissions)}"
-            view.findViewById<TextView>(R.id.tv_invitation_detail_validity).text = "Expires: ${if (tempRecord.validityEnd == 0L) "Never" else java.util.Date(tempRecord.validityEnd * 1000).toString()}"
+            view.findViewById<TextView>(R.id.tv_invitation_detail_owner).text = "Owner ID: ${tempRecord.core.parentKeyID?.toHex()?.take(8) ?: "Unknown"}"
+            view.findViewById<TextView>(R.id.tv_invitation_detail_perms).text = "Permissions: ${getPermissionsString(tempRecord.core.permissions)}"
+            view.findViewById<TextView>(R.id.tv_invitation_detail_validity).text = "Expires: ${if (tempRecord.core.validityEnd == 0L) "Never" else java.util.Date(tempRecord.core.validityEnd * 1000).toString()}"
 
             view.findViewById<Button>(R.id.btn_accept_invitation).setOnClickListener {
                 val enteredCode = view.findViewById<TextInputEditText>(R.id.et_invitation_code).text.toString()
@@ -196,7 +199,7 @@ class HomeActivity : AppCompatActivity() {
 
     private fun refreshList() {
         val keys = storageManager.getAllKeys()
-        val activeKeys = keys.filter { it.keyState != KeyState.PENDING }
+        val activeKeys = keys.filter { it.core.keyState != KeyState.PENDING }
         keyAdapter.submitList(activeKeys)
     }
 
@@ -219,11 +222,11 @@ class HomeActivity : AppCompatActivity() {
             val item = items[position]
             val context = holder.itemView.context
             
-            holder.tvName.text = if (item.friendlyName.isNotEmpty()) item.friendlyName else (item.carMetadata?.modelName ?: "Unknown Vehicle")
-            holder.tvPlate.text = item.carMetadata?.licensePlate ?: "No Plate Info"
-            holder.tvRole.text = item.role.name
+            holder.tvName.text = if (item.friendlyName.isNotEmpty()) item.friendlyName else (item.core.carMetadata?.modelName ?: "Unknown Vehicle")
+            holder.tvPlate.text = item.core.carMetadata?.licensePlate ?: "No Plate Info"
+            holder.tvRole.text = item.core.role.name
             
-            if (item.role == Role.FRIEND) {
+            if (item.core.role == Role.FRIEND) {
                 holder.tvRole.setBackgroundResource(R.drawable.shape_badge_gray_outline)
                 holder.tvRole.setTextColor(context.getColor(R.color.gray_text))
             } else {

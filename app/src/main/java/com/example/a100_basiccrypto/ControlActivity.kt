@@ -16,10 +16,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_LOCK
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_STOP_ENGINE
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.INS_UNLOCK
-import com.example.a100_basiccrypto.digitalkey.core.SharingConstants
+import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_LOCK
+import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_STOP_ENGINE
+import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_UNLOCK
+import com.example.a100_basiccrypto.shared.command.SharingConstants
 import com.example.a100_basiccrypto.digitalkey.core.SharingViewModel
 import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.digitalkey.crypto.DilithiumIdentityCryptoImpl
@@ -71,7 +71,7 @@ class ControlActivity : AppCompatActivity() {
         loadingOverlay = findViewById(R.id.loading_overlay)
 
         val keyId = intent.getByteArrayExtra("KEY_ID")
-        currentKey = storageManager.getAllKeys().find { it.keyID?.contentEquals(keyId) == true }
+        currentKey = storageManager.getAllKeys().find { it.core.keyID?.contentEquals(keyId) == true }
 
         if (currentKey == null) {
             finish()
@@ -93,13 +93,13 @@ class ControlActivity : AppCompatActivity() {
         // Navigation Menus
         findViewById<View>(R.id.btn_ekeys).setOnClickListener { 
             val intent = Intent(this, EKeyManagerActivity::class.java)
-            intent.putExtra("KEY_ID", currentKey?.keyID)
+            intent.putExtra("KEY_ID", currentKey?.core?.keyID)
             startActivity(intent)
         }
         
         findViewById<View>(R.id.btn_settings).setOnClickListener { 
             val intent = Intent(this, SettingsActivity::class.java)
-            intent.putExtra("KEY_ID", currentKey?.keyID)
+            intent.putExtra("KEY_ID", currentKey?.core?.keyID)
             startActivity(intent)
         }
 
@@ -160,9 +160,9 @@ class ControlActivity : AppCompatActivity() {
 
     private fun displayKeyInfo() {
         currentKey?.let {
-            tvName.text = if (it.friendlyName.isNotEmpty()) it.friendlyName else (it.carMetadata?.modelName ?: "Digital Key")
-            tvPlate.text = it.carMetadata?.licensePlate ?: "NO PLATE"
-            tvConnectionStatus.text = "Connected (${it.role})"
+            tvName.text = if (it.friendlyName.isNotEmpty()) it.friendlyName else (it.core.carMetadata?.modelName ?: "Digital Key")
+            tvPlate.text = it.core.carMetadata?.licensePlate ?: "NO PLATE"
+            tvConnectionStatus.text = "Connected (${it.core.role})"
             viewStatusDot.setBackgroundResource(R.drawable.shape_dot_green)
         }
     }

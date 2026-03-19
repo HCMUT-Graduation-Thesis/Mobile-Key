@@ -1,6 +1,6 @@
 package com.example.a100_basiccrypto.digitalkey.transactions
 
-import com.example.a100_basiccrypto.digitalkey.core.LogicalFrame
+import com.example.a100_basiccrypto.shared.link.LogicalFrame
 
 /**
  * Common interface for all transaction handlers using Logical Frames.

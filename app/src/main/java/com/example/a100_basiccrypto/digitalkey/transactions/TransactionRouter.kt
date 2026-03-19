@@ -1,20 +1,19 @@
 package com.example.a100_basiccrypto.digitalkey.transactions
 
-import com.example.a100_basiccrypto.digitalkey.core.LogicalFrame
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_ADMIN
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_ENGINE_OP
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_FAST_ACTION
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_FRIEND_PAIRING
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_OWNER_PAIRING
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.CLASS_TELEMETRY
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_ERR_GENERAL
-import com.example.a100_basiccrypto.digitalkey.core.MessageConstants.MSG_ERR_INVALID_CLASS
-import com.example.a100_basiccrypto.digitalkey.core.TransportPolicyManager
-import com.example.a100_basiccrypto.digitalkey.core.TransportType
+import com.example.a100_basiccrypto.shared.link.LogicalFrame
+import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_ADMIN
+import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_ENGINE_OP
+import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_FAST_ACTION
+import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_FRIEND_PAIRING
+import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_OWNER_PAIRING
+import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_TELEMETRY
+import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_GENERAL
+import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_INVALID_CLASS
+import com.example.a100_basiccrypto.shared.policy.TransportPolicyManager
+import com.example.a100_basiccrypto.shared.policy.TransportType
 
 /**
  * Central router for all digital key transactions.
- * Routes CLASS_ADMIN (0x40) to StandardTransaction.
  */
 class TransactionRouter(
     private val pairingHandler: ITransactionHandler,

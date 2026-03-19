@@ -15,6 +15,8 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.a100_basiccrypto.digitalkey.core.*
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
+import com.example.a100_basiccrypto.shared.model.KeyState
+import com.example.a100_basiccrypto.shared.model.Role
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -53,7 +55,7 @@ class EKeyManagerActivity : AppCompatActivity() {
         val allKeys = storageManager.getAllKeys()
         // Filter keys that belong to this Owner key
         val sharedEKeys = allKeys.filter { 
-            it.parentKeyID != null && it.parentKeyID!!.contentEquals(currentKeyId?.sliceArray(0 until 8)) 
+            it.core.parentKeyID != null && it.core.parentKeyID!!.contentEquals(currentKeyId?.sliceArray(0 until 8))
         }
         
         rvEKeys.adapter = EKeyAdapter(sharedEKeys) { record ->
@@ -75,8 +77,8 @@ class EKeyManagerActivity : AppCompatActivity() {
                 // Check if any of our pending keys match this AP
                 val allKeys = storageManager.getAllKeys()
                 allKeys.forEach { key ->
-                    if (key.keyState == KeyState.PENDING && key.attestationPackage.contentEquals(activatedAp)) {
-                        key.keyState = KeyState.ACTIVE
+                    if (key.core.keyState == KeyState.PENDING && key.attestationPackage.contentEquals(activatedAp)) {
+                        key.core.keyState = KeyState.ACTIVE
                         storageManager.saveDigitalKey(key)
                         runOnUiThread {
                             refreshRecyclerView()
@@ -89,15 +91,15 @@ class EKeyManagerActivity : AppCompatActivity() {
     }
 
     private fun showEKeyDetailDialog(record: DigitalKeyRecord) {
-        val statusStr = when(record.keyState) {
+        val statusStr = when(record.core.keyState) {
             KeyState.PENDING -> "PENDING (Code: ${record.invitationCode})"
             KeyState.ACTIVE -> "ACTIVE"
-            else -> record.keyState.name
+            else -> record.core.keyState.name
         }
 
         AlertDialog.Builder(this)
             .setTitle("eKey Details")
-            .setMessage("Friendly Name: ${record.friendlyName}\nStatus: $statusStr\nRole: ${record.role}\nUsage: ${if(record.usageLimit == 0) "Unlimited" else record.usageLimit.toString()}")
+            .setMessage("Friendly Name: ${record.friendlyName}\nStatus: $statusStr\nRole: ${record.core.role}\nUsage: ${if(record.core.usageLimit == 0) "Unlimited" else record.core.usageLimit.toString()}")
             .setPositiveButton("Edit Name") { _, _ ->
                 Toast.makeText(this, "Edit feature coming soon", Toast.LENGTH_SHORT).show()
             }
@@ -113,7 +115,7 @@ class EKeyManagerActivity : AppCompatActivity() {
             .setTitle("Revoke Access")
             .setMessage("Are you sure you want to revoke access for ${record.friendlyName}?")
             .setPositiveButton("Revoke") { _, _ ->
-                storageManager.deleteKey(record.keyID!!)
+                storageManager.deleteKey(record.core.keyID!!)
                 refreshRecyclerView()
                 Toast.makeText(this, "Key Revoked", Toast.LENGTH_SHORT).show()
             }
@@ -147,10 +149,10 @@ class EKeyManagerActivity : AppCompatActivity() {
             val context = holder.itemView.context
             holder.tvName.text = item.friendlyName.ifEmpty { "Guest Key" }
             
-            val statusText = if (item.keyState == KeyState.PENDING) "PENDING [${item.invitationCode}]" else "ACTIVE"
-            holder.tvType.text = "${if (item.usageLimit == 1) "One-Time" else "Normal"} | $statusText"
+            val statusText = if (item.core.keyState == KeyState.PENDING) "PENDING [${item.invitationCode}]" else "ACTIVE"
+            holder.tvType.text = "${if (item.core.usageLimit == 1) "One-Time" else "Normal"} | $statusText"
             
-            if (item.keyState == KeyState.PENDING) {
+            if (item.core.keyState == KeyState.PENDING) {
                 holder.tvName.setTextColor(context.getColor(R.color.gray_text))
             } else {
                 holder.tvName.setTextColor(context.getColor(R.color.white))
