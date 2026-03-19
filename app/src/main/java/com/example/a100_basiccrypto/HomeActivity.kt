@@ -30,8 +30,6 @@ class HomeActivity : AppCompatActivity() {
 
     private lateinit var rvKeys: RecyclerView
     private lateinit var tvConsoleLog: TextView
-    private lateinit var cvInvitationBanner: View
-    private lateinit var btnViewInvitation: Button
     private lateinit var tvNotificationBadge: TextView
     
     private val storageManager by lazy { SecureKeyStorageManager(this) }
@@ -60,14 +58,8 @@ class HomeActivity : AppCompatActivity() {
         rvKeys.layoutManager = LinearLayoutManager(this)
         rvKeys.adapter = keyAdapter
 
-        cvInvitationBanner = findViewById(R.id.cv_invitation_banner)
-        btnViewInvitation = findViewById(R.id.btn_view_invitation)
-
-        btnViewInvitation.setOnClickListener {
-            showReceiveInvitationDialog()
-        }
-
         observeViewModel()
+        observePendingInvitations()
     }
 
     private fun setupHeader() {
@@ -109,12 +101,11 @@ class HomeActivity : AppCompatActivity() {
 
     private fun observeViewModel() {
         sharingViewModel.incomingInvitations
-            .onEach { 
+            .onEach { ap ->
                 runOnUiThread { 
-                    cvInvitationBanner.visibility = View.VISIBLE 
                     tvNotificationBadge.visibility = View.VISIBLE
                     tvNotificationBadge.text = "1"
-                    NotificationStore.addNotification("Share Key", "A new digital key has been shared with you.")
+                    NotificationStore.addNotification("Share Key", "A new digital key has been shared with you.", ap)
                     updateConsole("New invitation received from server")
                 }
             }
@@ -125,8 +116,8 @@ class HomeActivity : AppCompatActivity() {
                 when (state) {
                     is SharingViewModel.SharingUiState.ReceivedInvitation -> {
                         refreshList()
-                        cvInvitationBanner.visibility = View.GONE
                         tvNotificationBadge.visibility = View.GONE
+                        NotificationStore.setPendingInvitation(null)
                         sharingViewModel.resetState()
                         updateConsole("Key provisioned successfully")
                     }
@@ -140,37 +131,51 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
+    private fun observePendingInvitations() {
+        NotificationStore.pendingInvitation
+            .onEach { ap ->
+                if (ap != null) {
+                    runOnUiThread {
+                        showReceiveInvitationDialog(ap)
+                    }
+                }
+            }
+            .launchIn(lifecycleScope)
+    }
+
     private fun updateConsole(message: String) {
         tvConsoleLog.text = "> $message"
     }
 
-    private fun showReceiveInvitationDialog() {
+    private fun showReceiveInvitationDialog(ap: ByteArray) {
         lifecycleScope.launchWhenStarted {
-            val ap = MockKeyServer.downloadAP()
-            if (ap == null) {
-                Toast.makeText(this@HomeActivity, "No invitation found", Toast.LENGTH_SHORT).show()
-                return@launchWhenStarted
-            }
-
             val dialog = BottomSheetDialog(this@HomeActivity)
             val view = LayoutInflater.from(this@HomeActivity).inflate(R.layout.dialog_receive_invitation, null)
             dialog.setContentView(view)
 
             val tempRecord = SharingManager(DilithiumIdentityCryptoImpl(), storageManager).processIncomingInvitation(ap)
+            if (tempRecord == null) {
+                Toast.makeText(this@HomeActivity, "Invalid invitation data", Toast.LENGTH_SHORT).show()
+                return@launchWhenStarted
+            }
             
-            view.findViewById<TextView>(R.id.tv_invitation_detail_owner).text = "Owner ID: ${tempRecord?.parentKeyID?.toHex()?.take(8) ?: "Unknown"}"
-            view.findViewById<TextView>(R.id.tv_invitation_detail_perms).text = "Permissions: ${getPermissionsString(tempRecord?.permissions ?: 0)}"
-            view.findViewById<TextView>(R.id.tv_invitation_detail_validity).text = "Expires: ${if (tempRecord?.validityEnd == 0L) "Never" else java.util.Date(tempRecord!!.validityEnd * 1000).toString()}"
+            view.findViewById<TextView>(R.id.tv_invitation_detail_owner).text = "Owner ID: ${tempRecord.parentKeyID?.toHex()?.take(8) ?: "Unknown"}"
+            view.findViewById<TextView>(R.id.tv_invitation_detail_perms).text = "Permissions: ${getPermissionsString(tempRecord.permissions)}"
+            view.findViewById<TextView>(R.id.tv_invitation_detail_validity).text = "Expires: ${if (tempRecord.validityEnd == 0L) "Never" else java.util.Date(tempRecord.validityEnd * 1000).toString()}"
 
             view.findViewById<Button>(R.id.btn_accept_invitation).setOnClickListener {
                 val enteredCode = view.findViewById<TextInputEditText>(R.id.et_invitation_code).text.toString()
                 val enteredHash = CryptoUtils.sha256(enteredCode.toByteArray())
-                if (enteredHash.contentEquals(tempRecord?.invitationCodeHash)) {
+                if (enteredHash.contentEquals(tempRecord.invitationCodeHash)) {
+                    SharingManager(DilithiumIdentityCryptoImpl(), storageManager).finalizeProvisioning(tempRecord)
                     sharingViewModel.processInvitation(ap)
                     dialog.dismiss()
                 } else {
                     Toast.makeText(this@HomeActivity, "Invalid Invitation Code", Toast.LENGTH_SHORT).show()
                 }
+            }
+            dialog.setOnDismissListener {
+                NotificationStore.setPendingInvitation(null)
             }
             dialog.show()
         }
@@ -191,7 +196,8 @@ class HomeActivity : AppCompatActivity() {
 
     private fun refreshList() {
         val keys = storageManager.getAllKeys()
-        keyAdapter.submitList(keys)
+        val activeKeys = keys.filter { it.keyState != KeyState.PENDING }
+        keyAdapter.submitList(activeKeys)
     }
 
     class KeyAdapter(private val onClick: (DigitalKeyRecord) -> Unit) :
@@ -213,12 +219,10 @@ class HomeActivity : AppCompatActivity() {
             val item = items[position]
             val context = holder.itemView.context
             
-            // Map Backend Data to UI
             holder.tvName.text = if (item.friendlyName.isNotEmpty()) item.friendlyName else (item.carMetadata?.modelName ?: "Unknown Vehicle")
             holder.tvPlate.text = item.carMetadata?.licensePlate ?: "No Plate Info"
             holder.tvRole.text = item.role.name
             
-            // UI Feedback for Role
             if (item.role == Role.FRIEND) {
                 holder.tvRole.setBackgroundResource(R.drawable.shape_badge_gray_outline)
                 holder.tvRole.setTextColor(context.getColor(R.color.gray_text))

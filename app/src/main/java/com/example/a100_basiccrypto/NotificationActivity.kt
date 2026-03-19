@@ -17,7 +17,13 @@ class NotificationActivity : AppCompatActivity() {
 
     private lateinit var rvNotifications: RecyclerView
     private lateinit var tvEmpty: TextView
-    private val adapter = NotificationAdapter()
+    private val adapter = NotificationAdapter { item ->
+        // When notification is clicked, set the pending AP and go back to Home
+        if (item.ap != null) {
+            NotificationStore.setPendingInvitation(item.ap)
+        }
+        finish()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,7 +63,8 @@ class NotificationActivity : AppCompatActivity() {
             .launchIn(lifecycleScope)
     }
 
-    class NotificationAdapter : RecyclerView.Adapter<NotificationAdapter.ViewHolder>() {
+    class NotificationAdapter(private val onClick: (NotificationStore.NotificationItem) -> Unit) : 
+        RecyclerView.Adapter<NotificationAdapter.ViewHolder>() {
 
         private var items = listOf<NotificationStore.NotificationItem>()
 
@@ -67,22 +74,22 @@ class NotificationActivity : AppCompatActivity() {
         }
 
         class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
-            val tvTitle: TextView = view.findViewById(android.R.id.text1)
-            val tvMessage: TextView = view.findViewById(android.R.id.text2)
+            val tvTitle: TextView = view.findViewById(R.id.tv_notification_title)
+            val tvMessage: TextView = view.findViewById(R.id.tv_notification_message)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
             val view = LayoutInflater.from(parent.context)
-                .inflate(android.R.layout.simple_list_item_2, parent, false)
+                .inflate(R.layout.item_notification, parent, false)
             return ViewHolder(view)
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val item = items[position]
             holder.tvTitle.text = item.title
-            holder.tvTitle.setTextColor(holder.itemView.context.getColor(R.color.primary_blue))
             holder.tvMessage.text = item.message
-            holder.tvMessage.setTextColor(holder.itemView.context.getColor(R.color.white))
+            
+            holder.itemView.setOnClickListener { onClick(item) }
         }
 
         override fun getItemCount() = items.size

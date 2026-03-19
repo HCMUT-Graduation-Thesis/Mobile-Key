@@ -55,6 +55,8 @@ class SharingViewModel(
         viewModelScope.launch {
             val record = sharingManager.processIncomingInvitation(ap)
             if (record != null) {
+                // Mock: After friend accepts, notify the server/owner
+                MockKeyServer.notifyActivation(ap)
                 _uiState.value = SharingUiState.ReceivedInvitation(record)
             }
         }

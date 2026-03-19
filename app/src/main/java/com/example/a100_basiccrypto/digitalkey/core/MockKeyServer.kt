@@ -15,9 +15,13 @@ object MockKeyServer {
     // Simulates a database of pending invitations on the server
     private var pendingAP: ByteArray? = null
     
-    // Simulates Push Notification flow
+    // Simulates Push Notification flow for Incoming Invitations
     private val _invitationFlow = MutableSharedFlow<ByteArray>(replay = 0)
     val invitationFlow = _invitationFlow.asSharedFlow()
+
+    // Simulates Push Notification flow for Activation Success (Back to Owner)
+    private val _activationFlow = MutableSharedFlow<ByteArray>(replay = 0)
+    val activationFlow = _activationFlow.asSharedFlow()
 
     /**
      * Owner calls this to "upload" the Attestation Package to the server.
@@ -28,7 +32,6 @@ object MockKeyServer {
         pendingAP = ap
         
         // In a real scenario, Server sends Push to Friend. 
-        // Here we just emit to the flow so the same app can "receive" it if listening.
         _invitationFlow.emit(ap)
         return true
     }
@@ -39,9 +42,17 @@ object MockKeyServer {
     suspend fun downloadAP(): ByteArray? {
         Log.d(TAG, "Checking for invitations on Mock Server...")
         delay(500)
-        val data = pendingAP
-        // pendingAP = null // Clear after download in real logic
-        return data
+        return pendingAP
+    }
+
+    /**
+     * Friend calls this after successful Pairing/Activation at the Vehicle.
+     * This notifies the Owner that the key is now Active.
+     */
+    suspend fun notifyActivation(ap: ByteArray) {
+        Log.d(TAG, "Notifying Owner of Key Activation...")
+        delay(500)
+        _activationFlow.emit(ap)
     }
 
     /**

@@ -8,5 +8,6 @@ enum class KeyState(val value: Byte) {
     ACTIVE(0x01),       // Ready for use
     SUSPENDED(0x02),    // Temporarily disabled
     REVOKED(0x03),      // Permanently disabled/removed
-    EXPIRED(0x04)       // Validity period ended
+    EXPIRED(0x04),       // Validity period ended
+    PENDING(0x05)      // Waiting for Friend to activate
 }

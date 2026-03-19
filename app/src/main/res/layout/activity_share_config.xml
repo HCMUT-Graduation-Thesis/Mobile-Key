@@ -245,16 +245,17 @@
                         android:layout_marginTop="16dp"
                         android:layout_marginBottom="8dp"/>
                     <GridLayout
+                        android:id="@+id/grid_days"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:columnCount="4">
-                        <CheckBox android:text="Mon" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
-                        <CheckBox android:text="Tue" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
-                        <CheckBox android:text="Wed" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
-                        <CheckBox android:text="Thu" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
-                        <CheckBox android:text="Fri" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
-                        <CheckBox android:text="Sat" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
-                        <CheckBox android:text="Sun" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
+                        <CheckBox android:id="@+id/cb_mon" android:text="Mon" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
+                        <CheckBox android:id="@+id/cb_tue" android:text="Tue" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
+                        <CheckBox android:id="@+id/cb_wed" android:text="Wed" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
+                        <CheckBox android:id="@+id/cb_thu" android:text="Thu" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
+                        <CheckBox android:id="@+id/cb_fri" android:text="Fri" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
+                        <CheckBox android:id="@+id/cb_sat" android:text="Sat" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
+                        <CheckBox android:id="@+id/cb_sun" android:text="Sun" android:textColor="@color/white" app:buttonTint="@color/primary_blue" />
                     </GridLayout>
                     <com.google.android.material.textfield.TextInputLayout
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"

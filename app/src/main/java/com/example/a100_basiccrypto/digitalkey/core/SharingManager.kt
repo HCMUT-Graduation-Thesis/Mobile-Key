@@ -29,7 +29,8 @@ class SharingManager(
         usageLimit: Int = 0,
         daysOfWeek: Int = 0,
         startTimeMinutes: Int = -1,
-        endTimeMinutes: Int = -1
+        endTimeMinutes: Int = -1,
+        friendlyName: String = ""
     ): DigitalKeyRecord? {
         return try {
             // 1. Generate 6-digit invitation code
@@ -65,19 +66,27 @@ class SharingManager(
 
             val ap = payload + signature
 
-            // 5. Update Owner's temporary record
-            ownerRecord.invitationCode = invitationCode
-            ownerRecord.attestationPackage = ap
-            
-            // Sync fields for reference on Owner device
-            ownerRecord.usageLimit = usageLimit
-            ownerRecord.daysOfWeek = daysOfWeek
-            ownerRecord.startTimeMinutes = startTimeMinutes
-            ownerRecord.endTimeMinutes = endTimeMinutes
+            // 5. Create PENDING record for Owner to track
+            val pendingRecord = DigitalKeyRecord().apply {
+                this.keyID = CryptoUtils.sha256(ap).sliceArray(0 until 16) // Temp ID
+                this.parentKeyID = ownerRecord.keyID?.sliceArray(0 until 8)
+                this.keyState = KeyState.PENDING
+                this.invitationCode = invitationCode
+                this.invitationCodeHash = invCodeHash
+                this.attestationPackage = ap
+                this.role = role
+                this.permissions = permissions
+                this.usageLimit = usageLimit
+                this.daysOfWeek = daysOfWeek
+                this.startTimeMinutes = startTimeMinutes
+                this.endTimeMinutes = endTimeMinutes
+                this.friendlyName = if(friendlyName.isNotEmpty()) friendlyName else "Guest Key (Pending)"
+                this.carMetadata = ownerRecord.carMetadata
+            }
             
             if (MockKeyServer.uploadAP(ap)) {
-                storageManager.saveDigitalKey(ownerRecord)
-                ownerRecord
+                storageManager.saveDigitalKey(pendingRecord)
+                pendingRecord
             } else null
         } catch (e: Exception) {
             Log.e(TAG, "Error creating invitation: ${e.message}")
@@ -87,6 +96,7 @@ class SharingManager(
 
     /**
      * FRIEND SIDE: Processes an incoming AP V2.
+     * Note: This only PARSES the AP, it does NOT save it to storage yet.
      */
     fun processIncomingInvitation(ap: ByteArray): DigitalKeyRecord? {
         return try {
@@ -114,6 +124,7 @@ class SharingManager(
             }
 
             val newRecord = DigitalKeyRecord().apply {
+                this.keyID = CryptoUtils.sha256(ap).sliceArray(0 until 16)
                 this.keyState = KeyState.PROVISIONING 
                 this.attestationPackage = ap
                 this.invitationCodeHash = invCodeHash
@@ -132,12 +143,19 @@ class SharingManager(
                 val hexID = parentKeyID.joinToString("") { "%02x".format(it) }.uppercase()
                 this.friendlyName = "Shared Key from $hexID"
             }
-
-            storageManager.saveDigitalKey(newRecord)
-            newRecord
+            // storageManager.saveDigitalKey(newRecord) // REMOVED: Save only after code verification
+            return newRecord
         } catch (e: Exception) {
             Log.e(TAG, "Error processing invitation: ${e.message}")
             null
         }
+    }
+
+    /**
+     * Call this ONLY after the user has successfully entered the Invitation Code.
+     */
+    fun finalizeProvisioning(record: DigitalKeyRecord) {
+        record.keyState = KeyState.ACTIVE
+        storageManager.saveDigitalKey(record)
     }
 }
