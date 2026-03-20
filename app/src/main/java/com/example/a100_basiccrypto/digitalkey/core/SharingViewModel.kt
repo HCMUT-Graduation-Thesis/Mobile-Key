@@ -2,7 +2,7 @@ package com.example.a100_basiccrypto.digitalkey.core
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.a100_basiccrypto.digitalkey.crypto.IIdentityCrypto
+import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.Role
 import kotlinx.coroutines.flow.MutableStateFlow

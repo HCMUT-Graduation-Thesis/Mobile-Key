@@ -6,7 +6,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
-import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -17,9 +16,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.a100_basiccrypto.digitalkey.core.*
-import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils
-import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
-import com.example.a100_basiccrypto.digitalkey.crypto.DilithiumIdentityCryptoImpl
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.Role
@@ -28,6 +27,7 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 
 class HomeActivity : AppCompatActivity() {
 
@@ -49,6 +49,7 @@ class HomeActivity : AppCompatActivity() {
 
         sharingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                @Suppress("UNCHECKED_CAST")
                 return SharingViewModel(DilithiumIdentityCryptoImpl(), storageManager) as T
             }
         })[SharingViewModel::class.java]
@@ -110,7 +111,7 @@ class HomeActivity : AppCompatActivity() {
             }
             .launchIn(lifecycleScope)
 
-        lifecycleScope.launchWhenStarted {
+        lifecycleScope.launch {
             sharingViewModel.uiState.collect { state ->
                 when (state) {
                     is SharingViewModel.SharingUiState.ReceivedInvitation -> {
@@ -141,7 +142,7 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private fun showReceiveInvitationDialog(ap: ByteArray) {
-        lifecycleScope.launchWhenStarted {
+        lifecycleScope.launch {
             val dialog = BottomSheetDialog(this@HomeActivity)
             val view = LayoutInflater.from(this@HomeActivity).inflate(R.layout.dialog_receive_invitation, null)
             dialog.setContentView(view)
@@ -149,7 +150,7 @@ class HomeActivity : AppCompatActivity() {
             val tempRecord = SharingManager(DilithiumIdentityCryptoImpl(), storageManager).processIncomingInvitation(ap)
             if (tempRecord == null) {
                 Toast.makeText(this@HomeActivity, "Invalid invitation data", Toast.LENGTH_SHORT).show()
-                return@launchWhenStarted
+                return@launch
             }
             
             view.findViewById<TextView>(R.id.tv_invitation_detail_owner).text = "Owner ID: ${tempRecord.core.parentKeyID?.toHex()?.take(8) ?: "Unknown"}"

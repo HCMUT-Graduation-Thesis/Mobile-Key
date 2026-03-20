@@ -10,10 +10,10 @@ import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_DATA_S
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_KEY_EXCHANGE
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_PAIRING_REQ
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_VERIFY_NONCE
-import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils
-import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.normalize
-import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
-import com.example.a100_basiccrypto.digitalkey.crypto.IIdentityCrypto
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.normalize
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_DECRYPTION_FAILED
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_INTERNAL_ERROR
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager

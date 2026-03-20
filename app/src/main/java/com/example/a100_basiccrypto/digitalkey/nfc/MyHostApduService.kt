@@ -19,7 +19,7 @@ import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_STOP_ENG
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_UNLOCK
 import com.example.a100_basiccrypto.shared.command.MessageConstants.FINAL_COMMIT
 import com.example.a100_basiccrypto.shared.policy.TransportType
-import com.example.a100_basiccrypto.digitalkey.crypto.DilithiumIdentityCryptoImpl
+import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.CLA_ISO
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.CLA_PROPRIETARY
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.INS_GET_NEXT_CHUNK

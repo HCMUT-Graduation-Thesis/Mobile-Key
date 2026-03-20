@@ -16,10 +16,10 @@ import com.example.a100_basiccrypto.shared.command.MessageConstants.STD_MSG_SYNC
 import com.example.a100_basiccrypto.shared.command.MessageConstants.STD_EXEC_SUCCESS
 import com.example.a100_basiccrypto.shared.command.MessageConstants.STD_COMMIT_MARKER
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_UNLOCK
-import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils
-import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.normalize
-import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
-import com.example.a100_basiccrypto.digitalkey.crypto.IIdentityCrypto
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.normalize
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_DECRYPTION_FAILED
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_SUCCESS
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager

@@ -15,7 +15,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.lifecycle.lifecycleScope
 import com.example.a100_basiccrypto.digitalkey.core.*
-import com.example.a100_basiccrypto.digitalkey.crypto.DilithiumIdentityCryptoImpl
+import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.Role
 import com.example.a100_basiccrypto.shared.command.SharingConstants

@@ -1,8 +1,8 @@
 package com.example.a100_basiccrypto.digitalkey.core
 
 import android.util.Log
-import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils
-import com.example.a100_basiccrypto.digitalkey.crypto.IIdentityCrypto
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
+import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import com.example.a100_basiccrypto.shared.command.MessageConstants
 import com.example.a100_basiccrypto.shared.command.SharingConstants

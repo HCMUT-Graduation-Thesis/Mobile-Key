@@ -13,7 +13,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.digitalkey.core.SharingViewModel
-import com.example.a100_basiccrypto.digitalkey.crypto.DilithiumIdentityCryptoImpl
+import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.launch

@@ -13,4 +13,8 @@ java {
 
 dependencies {
     implementation(kotlin("stdlib"))
+
+    // Bouncy Castle for ML-DSA (Dilithium)
+    implementation(libs.bouncycastle.prov)
+    implementation(libs.bouncycastle.pqc)
 }
