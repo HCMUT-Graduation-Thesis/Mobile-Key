@@ -18,6 +18,10 @@ import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.launch
 
+/**
+ * ControlActivity manages the individual key details and sharing features.
+ * UI Feedback for NFC transactions is handled globally by GlobalDialogController.
+ */
 class ControlActivity : AppCompatActivity() {
 
     private lateinit var tvName: TextView
@@ -37,17 +41,13 @@ class ControlActivity : AppCompatActivity() {
 
         sharingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                @Suppress("UNCHECKED_CAST")
                 return SharingViewModel(DilithiumIdentityCryptoImpl(), storageManager) as T
             }
         })[SharingViewModel::class.java]
 
+        initViews()
         setupToolbar()
-        
-        tvName = findViewById(R.id.tv_detail_name)
-        tvPlate = findViewById(R.id.tv_detail_plate)
-        tvConnectionStatus = findViewById(R.id.tv_connection_status)
-        viewStatusDot = findViewById(R.id.view_status_dot)
-        loadingOverlay = findViewById(R.id.loading_overlay)
 
         val keyId = intent.getByteArrayExtra("KEY_ID")
         currentKey = storageManager.getAllKeys().find { it.core.keyID?.contentEquals(keyId) == true }
@@ -58,13 +58,34 @@ class ControlActivity : AppCompatActivity() {
         }
 
         displayKeyInfo()
+        setupActionListeners()
+        observeViewModel()
+    }
 
-        // Controls
-        findViewById<View>(R.id.btn_control_unlock).setOnClickListener { /* Logic handled globally */ }
-        findViewById<View>(R.id.btn_control_lock).setOnClickListener { /* Logic handled globally */ }
-        findViewById<View>(R.id.btn_control_start).setOnClickListener { /* Logic handled globally */ }
-        
-        findViewById<View>(R.id.btn_control_trunk).setOnClickListener { /* Logic handled globally */ }
+    private fun initViews() {
+        tvName = findViewById(R.id.tv_detail_name)
+        tvPlate = findViewById(R.id.tv_detail_plate)
+        tvConnectionStatus = findViewById(R.id.tv_connection_status)
+        viewStatusDot = findViewById(R.id.view_status_dot)
+        loadingOverlay = findViewById(R.id.loading_overlay)
+    }
+
+    private fun setupToolbar() {
+        val toolbar = findViewById<Toolbar>(R.id.toolbar_control)
+        toolbar.setNavigationOnClickListener { finish() }
+    }
+
+    private fun setupActionListeners() {
+        // These buttons can be used to show help or trigger specific wireless discovery
+        val actionClick = View.OnClickListener {
+            // In HCE mode, the user just needs to tap the phone to the reader.
+            // We can show a small hint or just let the GlobalDialog handle the NFC event.
+        }
+
+        findViewById<View>(R.id.btn_control_unlock).setOnClickListener(actionClick)
+        findViewById<View>(R.id.btn_control_lock).setOnClickListener(actionClick)
+        findViewById<View>(R.id.btn_control_start).setOnClickListener(actionClick)
+        findViewById<View>(R.id.btn_control_trunk).setOnClickListener(actionClick)
 
         findViewById<View>(R.id.btn_ekeys).setOnClickListener { 
             val intent = Intent(this, EKeyManagerActivity::class.java)
@@ -77,13 +98,6 @@ class ControlActivity : AppCompatActivity() {
             intent.putExtra("KEY_ID", currentKey?.core?.keyID)
             startActivity(intent)
         }
-
-        observeViewModel()
-    }
-
-    private fun setupToolbar() {
-        val toolbar = findViewById<Toolbar>(R.id.toolbar_control)
-        toolbar.setNavigationOnClickListener { finish() }
     }
 
     private fun observeViewModel() {
@@ -116,7 +130,7 @@ class ControlActivity : AppCompatActivity() {
 
     private fun displayKeyInfo() {
         currentKey?.let {
-            tvName.text = if (it.friendlyName.isNotEmpty()) it.friendlyName else (it.core.carMetadata?.modelName ?: "Digital Key")
+            tvName.text = it.friendlyName.ifEmpty { it.core.carMetadata?.modelName ?: "Digital Key" }
             tvPlate.text = it.core.carMetadata?.licensePlate ?: "NO PLATE"
             tvConnectionStatus.text = "Connected (${it.core.role})"
             viewStatusDot.setBackgroundResource(R.drawable.shape_dot_green)

@@ -82,7 +82,8 @@ class EKeyManagerActivity : AppCompatActivity() {
                         storageManager.saveDigitalKey(key)
                         runOnUiThread {
                             refreshRecyclerView()
-                            Toast.makeText(this@EKeyManagerActivity, "Key for '${key.friendlyName}' activated!", Toast.LENGTH_SHORT).show()
+                            // Global notification could be used here instead of Toast
+                            GlobalDialogController.showActionResult(this@EKeyManagerActivity, "EKEY ACTIVATION", true)
                         }
                     }
                 }
@@ -117,7 +118,7 @@ class EKeyManagerActivity : AppCompatActivity() {
             .setPositiveButton("Revoke") { _, _ ->
                 storageManager.deleteKey(record.core.keyID!!)
                 refreshRecyclerView()
-                Toast.makeText(this, "Key Revoked", Toast.LENGTH_SHORT).show()
+                GlobalDialogController.showActionResult(this, "REVOKE ACCESS", true)
             }
             .setNegativeButton("Cancel", null)
             .create().apply {
