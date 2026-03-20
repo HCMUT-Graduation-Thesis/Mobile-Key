@@ -1,7 +1,7 @@
 package com.example.a100_basiccrypto.shared.command
 
 /**
- * UNIFIED LOGICAL COMMAND SET V2.1
+ * UNIFIED LOGICAL COMMAND SET V2.2
  * Transport Agnostic Format: [CLASS (1b)] [INS (1b)] [LENGTH (2b)] [DATA (Nb)]
  */
 object MessageConstants {
@@ -15,7 +15,7 @@ object MessageConstants {
     const val CLASS_FRIEND_PAIRING   = 0x60.toByte() // Friend Provisioning Flow
 
     // --- CLASS 0x10: Basic Access (INS) ---
-    const val FAST_COMMIT            = 0xFF.toByte() // Phase 3: Final confirmation from Reader to HCE to commit transaction counter
+    const val FAST_COMMIT            = 0xFE.toByte() // Phase 3: Final confirmation from Reader to HCE to commit transaction counter
     const val INS_UNLOCK             = 0x01.toByte()
     const val INS_LOCK               = 0x02.toByte()
     const val INS_OPEN_TRUNK         = 0x03.toByte()

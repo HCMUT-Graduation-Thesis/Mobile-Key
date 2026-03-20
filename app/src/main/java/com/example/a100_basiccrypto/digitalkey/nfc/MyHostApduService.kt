@@ -160,6 +160,8 @@ class MyHostApduService : HostApduService() {
                 chainingManager.setOutgoingBuffer(result)
                 chainingManager.getNextOutgoingChunk(0)
             } else {
+                // Fix: Ensure every APDU response ends with 90 00 (SW_SUCCESS) or an error code
+                // Only skip appending if the result is ALREADY an error code (2 bytes and >= 0x60 in first byte)
                 if (result.size == 2 && (result[0].toInt() and 0xFF) >= 0x60) {
                     result
                 } else {

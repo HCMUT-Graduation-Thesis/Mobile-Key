@@ -2,13 +2,14 @@ package com.example.a100_basiccrypto.digitalkey.crypto
 
 import android.util.Log
 import org.bouncycastle.jce.provider.BouncyCastleProvider
-import org.bouncycastle.pqc.jcajce.spec.DilithiumParameterSpec
+import org.bouncycastle.jcajce.spec.MLDSAParameterSpec
 import java.security.*
 import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 
 /**
- * Implementation of Dilithium Crypto using the BouncyCastle provider instance directly.
+ * Implementation of ML-DSA (Standardized Dilithium) Crypto 
+ * using the BouncyCastle provider instance directly.
  */
 class DilithiumIdentityCryptoImpl : IIdentityCrypto {
 
@@ -17,12 +18,16 @@ class DilithiumIdentityCryptoImpl : IIdentityCrypto {
 
     init {
         try {
-            val kpg = KeyPairGenerator.getInstance("Dilithium", bcProvider)
-            kpg.initialize(DilithiumParameterSpec.dilithium3, SecureRandom())
+            // Sử dụng "ML-DSA" thay cho "Dilithium"
+            val kpg = KeyPairGenerator.getInstance("ML-DSA", bcProvider)
+            
+            // dilithium3 tương ứng với ml_dsa_65 theo chuẩn FIPS 204
+            kpg.initialize(MLDSAParameterSpec.ml_dsa_65, SecureRandom())
+
             keyPair = kpg.generateKeyPair()
         } catch (e: Exception) {
             Log.e("DilithiumCrypto", "Init failed: ${e.message}")
-            throw RuntimeException("Failed to initialize Dilithium KeyPairGenerator", e)
+            throw RuntimeException("Failed to initialize ML-DSA KeyPairGenerator", e)
         }
     }
 
@@ -36,10 +41,10 @@ class DilithiumIdentityCryptoImpl : IIdentityCrypto {
 
     override fun sign(data: ByteArray, privateKeyBytes: ByteArray): ByteArray {
         return try {
-            val kf = KeyFactory.getInstance("Dilithium", bcProvider)
+            val kf = KeyFactory.getInstance("ML-DSA", bcProvider)
             val privateKey = kf.generatePrivate(PKCS8EncodedKeySpec(privateKeyBytes))
 
-            val signer = Signature.getInstance("Dilithium", bcProvider)
+            val signer = Signature.getInstance("ML-DSA", bcProvider)
             signer.initSign(privateKey)
             signer.update(data)
             signer.sign()
@@ -51,10 +56,10 @@ class DilithiumIdentityCryptoImpl : IIdentityCrypto {
 
     override fun verify(data: ByteArray, signature: ByteArray, publicKeyBytes: ByteArray): Boolean {
         return try {
-            val kf = KeyFactory.getInstance("Dilithium", bcProvider)
+            val kf = KeyFactory.getInstance("ML-DSA", bcProvider)
             val publicKey = kf.generatePublic(X509EncodedKeySpec(publicKeyBytes))
 
-            val verifier = Signature.getInstance("Dilithium", bcProvider)
+            val verifier = Signature.getInstance("ML-DSA", bcProvider)
             verifier.initVerify(publicKey)
             verifier.update(data)
             verifier.verify(signature)
