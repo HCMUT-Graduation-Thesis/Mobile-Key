@@ -97,25 +97,33 @@ class MyHostApduService : HostApduService() {
     override fun processCommandApdu(commandApdu: ByteArray?, extras: Bundle?): ByteArray {
         if (commandApdu == null || commandApdu.size < 2) return SW_INTERNAL_ERROR
 
+        Log.d(TAG, "RX: ${toHexString(commandApdu)}")
+
         val cla = commandApdu[0]
         val ins = commandApdu[1]
         
         if (cla == CLASS_OWNER_PAIRING || cla == 0x80.toByte()) {
             if (!isPairingModeEnabled) {
                 Log.w(TAG, "Pairing Blocked: Mode not enabled by User.")
-                return SW_UNKNOWN_CMD 
+                val resp = SW_UNKNOWN_CMD
+                Log.d(TAG, "TX: ${toHexString(resp)}")
+                return resp
             }
         }
 
         if (cla == CLA_ISO && ins == 0xA4.toByte()) {
             resetSession()
             sendLogToGui("System: Reader Connected.")
-            return SW_SUCCESS
+            val resp = SW_SUCCESS
+            Log.d(TAG, "TX: ${toHexString(resp)}")
+            return resp
         }
 
         if (ins == INS_GET_NEXT_CHUNK) {
             val chunkIndex = if (commandApdu.size >= 3) commandApdu[2].toInt() and 0xFF else 0
-            return chainingManager.getNextOutgoingChunk(chunkIndex)
+            val resp = chainingManager.getNextOutgoingChunk(chunkIndex)
+            Log.d(TAG, "TX (chunk): ${toHexString(resp)}")
+            return resp
         }
 
         val isAllowedClass = cla == CLA_ISO || 
@@ -128,18 +136,21 @@ class MyHostApduService : HostApduService() {
                             cla == CLASS_FRIEND_PAIRING ||
                             cla == 0x80.toByte()
 
-        if (!isAllowedClass) return SW_UNKNOWN_CMD
+        if (!isAllowedClass) {
+            val resp = SW_UNKNOWN_CMD
+            Log.d(TAG, "TX: ${toHexString(resp)}")
+            return resp
+        }
         
         resetTimeoutTimer()
 
         val fullPayload = chainingManager.handleIncomingFragment(commandApdu)
         
-        return if (fullPayload != null) {
+        val response = if (fullPayload != null) {
             val inputFrame = LogicalFrame(cla, ins, fullPayload)
             val responseFrame = router.route(inputFrame, TransportType.NFC)
             val result = responseFrame.payload
             
-            // Notification logic for ControlActivity if it's a control command
             val actionName = when {
                 cla == CLASS_FAST_ACTION && ins == INS_UNLOCK -> "UNLOCK"
                 cla == CLASS_FAST_ACTION && ins == INS_LOCK -> "LOCK"
@@ -149,10 +160,7 @@ class MyHostApduService : HostApduService() {
             }
 
             if (actionName != null) {
-                // In FastTransaction, the result is ENCRYPTED. 
-                // We should check if router returned an error code (1 byte) or encrypted data (multiple bytes)
-                // If encrypted, it means success in the business logic phase 1.
-                val isSuccess = result.size > 2 // Encrypted result will be larger than a single error byte
+                val isSuccess = result.size > 2 
                 broadcastResultToActivity(actionName, isSuccess)
             }
 
@@ -160,8 +168,6 @@ class MyHostApduService : HostApduService() {
                 chainingManager.setOutgoingBuffer(result)
                 chainingManager.getNextOutgoingChunk(0)
             } else {
-                // Fix: Ensure every APDU response ends with 90 00 (SW_SUCCESS) or an error code
-                // Only skip appending if the result is ALREADY an error code (2 bytes and >= 0x60 in first byte)
                 if (result.size == 2 && (result[0].toInt() and 0xFF) >= 0x60) {
                     result
                 } else {
@@ -171,6 +177,13 @@ class MyHostApduService : HostApduService() {
         } else {
             SW_HAS_MORE_DATA
         }
+
+        Log.d(TAG, "TX: ${toHexString(response)}")
+        return response
+    }
+
+    private fun toHexString(bytes: ByteArray): String {
+        return bytes.joinToString("") { "%02X".format(it) }
     }
 
     private fun resetSession() {

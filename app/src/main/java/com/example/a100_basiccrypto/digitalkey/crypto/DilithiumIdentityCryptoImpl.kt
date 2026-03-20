@@ -18,10 +18,10 @@ class DilithiumIdentityCryptoImpl : IIdentityCrypto {
 
     init {
         try {
-            // Sử dụng "ML-DSA" thay cho "Dilithium"
+            // Use "ML-DSA" instead of "Dilithium" for standardization
             val kpg = KeyPairGenerator.getInstance("ML-DSA", bcProvider)
             
-            // dilithium3 tương ứng với ml_dsa_65 theo chuẩn FIPS 204
+            // dilithium3 corresponds to ml_dsa_65 as per FIPS 204
             kpg.initialize(MLDSAParameterSpec.ml_dsa_65, SecureRandom())
 
             keyPair = kpg.generateKeyPair()
