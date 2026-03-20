@@ -138,29 +138,7 @@
         android:paddingTop="8dp"
         android:clipToPadding="false"
         app:layout_constraintTop_toBottomOf="@id/toolbar_home"
-        app:layout_constraintBottom_toTopOf="@id/ll_log_container"
+        app:layout_constraintBottom_toBottomOf="parent"
         tools:listitem="@layout/item_digital_key" />
-
-    <!-- Footer: Console Log -->
-    <LinearLayout
-        android:id="@+id/ll_log_container"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="#121212"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="8dp"
-        app:layout_constraintBottom_toBottomOf="parent">
-
-        <TextView
-            android:id="@+id/tv_home_console_log"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:text="System Ready. Waiting for connection..."
-            android:textColor="@color/gray_text"
-            android:textSize="11sp"
-            android:fontFamily="monospace" />
-    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

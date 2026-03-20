@@ -33,9 +33,15 @@ object MessageConstants {
     // --- CLASS 0x40: Standard Transaction / Admin Phases (INS) ---
     const val AUTH_INIT      = 0x11.toByte() // Phase 1: Key Exchange
     const val MUTUAL_VERIFY  = 0x13.toByte() // Phase 2: Mutual Verify (Vehicle Auth & Device Sign)
-    const val SYNC_DATA      = 0x15.toByte() // Phase 3: Data Sync - Recovery - Admin Command
-    const val COMMIT_ACTION  = 0x17.toByte() // Phase 4: Final Commit
+    const val ACTION_SYNC    = 0x15.toByte() // Phase 3: Action & Recovery (Standard Flow)
+    const val FINAL_COMMIT   = 0x17.toByte() // Phase 4: Atomic Commit & Physical confirmation
     
+    // Standard Flow Payload Identifiers
+    const val STD_MSG_SYNC_OK   = 0x01.toByte()
+    const val STD_EXEC_SUCCESS  = 0x02.toByte()
+    const val STD_COMMIT_MARKER = 0xFE.toByte()
+    const val SYNC_REQUEST_TAG  = 0xAA.toByte() // Identifier for sync request in payload
+
     // Administrative Command IDs (inside Phase 4 payload)
     const val REVOKE_OWNER    = 0x01.toByte()
     const val FACTORY_RESET   = 0x02.toByte()

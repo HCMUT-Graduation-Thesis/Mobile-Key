@@ -19,6 +19,12 @@ interface IKeyStorageManager {
     fun getPendingSyncKeys(): List<DigitalKeyRecord>
 
     fun updateTransactionCounter(keyID: ByteArray, counter: Int)
+    
+    /**
+     * Atomic update for Fast Auth Key and Counter.
+     */
+    fun updateFastKeyAndCounter(keyID: ByteArray, newKey: ByteArray, counter: Int)
+
     fun deleteKey(keyID: ByteArray)
     fun clearAll()
 }

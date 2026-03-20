@@ -160,29 +160,4 @@
         android:text="Update Pairing Credentials"
         android:layout_marginBottom="16dp" />
 
-    <!-- Log Section -->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Activity Terminal"
-        android:textStyle="bold"
-        android:layout_marginBottom="4dp" />
-
-    <ScrollView
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="#1E1E1E"
-        android:padding="8dp">
-
-        <TextView
-            android:id="@+id/tv_log"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:text="Terminal Ready..."
-            android:textColor="#00FF00"
-            android:textSize="11sp" />
-    </ScrollView>
-
 </LinearLayout>

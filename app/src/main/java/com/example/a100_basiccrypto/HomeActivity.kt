@@ -32,7 +32,6 @@ import kotlinx.coroutines.flow.onEach
 class HomeActivity : AppCompatActivity() {
 
     private lateinit var rvKeys: RecyclerView
-    private lateinit var tvConsoleLog: TextView
     private lateinit var tvNotificationBadge: TextView
     
     private val storageManager by lazy { SecureKeyStorageManager(this) }
@@ -56,7 +55,6 @@ class HomeActivity : AppCompatActivity() {
 
         setupHeader()
         
-        tvConsoleLog = findViewById(R.id.tv_home_console_log)
         rvKeys = findViewById(R.id.rv_keys)
         rvKeys.layoutManager = LinearLayoutManager(this)
         rvKeys.adapter = keyAdapter
@@ -91,7 +89,6 @@ class HomeActivity : AppCompatActivity() {
             .setPositiveButton("Reset") { _, _ ->
                 storageManager.clearAll()
                 refreshList()
-                updateConsole("All keys cleared from storage")
                 Toast.makeText(this, "Storage Cleared", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Cancel", null)
@@ -109,7 +106,6 @@ class HomeActivity : AppCompatActivity() {
                     tvNotificationBadge.visibility = View.VISIBLE
                     tvNotificationBadge.text = "1"
                     NotificationStore.addNotification("Share Key", "A new digital key has been shared with you.", ap)
-                    updateConsole("New invitation received from server")
                 }
             }
             .launchIn(lifecycleScope)
@@ -122,11 +118,9 @@ class HomeActivity : AppCompatActivity() {
                         tvNotificationBadge.visibility = View.GONE
                         NotificationStore.setPendingInvitation(null)
                         sharingViewModel.resetState()
-                        updateConsole("Key provisioned successfully")
                     }
                     is SharingViewModel.SharingUiState.Error -> {
                         Toast.makeText(this@HomeActivity, state.message, Toast.LENGTH_LONG).show()
-                        updateConsole("Error: ${state.message}")
                     }
                     else -> {}
                 }
@@ -144,10 +138,6 @@ class HomeActivity : AppCompatActivity() {
                 }
             }
             .launchIn(lifecycleScope)
-    }
-
-    private fun updateConsole(message: String) {
-        tvConsoleLog.text = "> $message"
     }
 
     private fun showReceiveInvitationDialog(ap: ByteArray) {

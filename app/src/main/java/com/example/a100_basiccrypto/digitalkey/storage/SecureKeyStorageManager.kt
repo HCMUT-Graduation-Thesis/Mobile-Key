@@ -87,6 +87,15 @@ class SecureKeyStorageManager(context: Context) : IKeyStorageManager {
         }
     }
 
+    override fun updateFastKeyAndCounter(keyID: ByteArray, newKey: ByteArray, counter: Int) {
+        val record = getDigitalKey(keyID)
+        record?.let {
+            it.core.fastAuthKey = newKey
+            it.core.transactionCounter = counter
+            saveDigitalKey(it)
+        }
+    }
+
     override fun deleteKey(keyID: ByteArray) {
         val idStr = keyID.toHex()
         val currentKeys = getAllKeyIDs().toMutableSet()

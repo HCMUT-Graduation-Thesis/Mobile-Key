@@ -19,7 +19,6 @@ import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var tvLog: TextView
     private lateinit var tvKeyName: TextView
     private lateinit var tvKeyState: TextView
     private lateinit var tvAccountId: TextView
@@ -40,11 +39,7 @@ class MainActivity : AppCompatActivity() {
 
     private val nfcReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val message = intent?.getStringExtra("log_message")
-            if (message != null) {
-                updateLog(message)
-                runOnUiThread { refreshKeyStateUI() }
-            }
+            runOnUiThread { refreshKeyStateUI() }
         }
     }
 
@@ -64,14 +59,12 @@ class MainActivity : AppCompatActivity() {
             if (pairingPassword.isNotEmpty()) {
                 PasswordManager.setPassword(this, pairingPassword)
                 Toast.makeText(this, "Credentials Updated", Toast.LENGTH_SHORT).show()
-                updateLog("Pairing credentials updated in secure vault.")
             }
         }
 
         btnClearKeys.setOnClickListener {
             storageManager.clearAll()
             refreshKeyStateUI()
-            updateLog("All keys cleared. System reset.")
             Toast.makeText(this, "System Reset", Toast.LENGTH_SHORT).show()
         }
 
@@ -86,7 +79,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initViews() {
-        tvLog = findViewById(R.id.tv_log)
         tvKeyName = findViewById(R.id.tv_key_name)
         tvKeyState = findViewById(R.id.tv_key_state)
         tvAccountId = findViewById(R.id.tv_account_id)
@@ -115,16 +107,11 @@ class MainActivity : AppCompatActivity() {
             val nextCounter = latestKey.core.transactionCounter + 1
             storageManager.updateTransactionCounter(latestKey.core.keyID!!, nextCounter)
 
-            // 2. Update UI
-            updateLog("Standard Tx: Executing $actionName...")
-            updateLog("Success: ${latestKey.friendlyName}, Counter: $nextCounter")
-
             Toast.makeText(this, "$actionName Success", Toast.LENGTH_SHORT).show()
 
             // Re-sync UI
             refreshKeyStateUI()
         } else {
-            updateLog("Error: No ACTIVE key found to perform $actionName")
             Toast.makeText(this, "Action Denied: No Active Key", Toast.LENGTH_SHORT).show()
         }
     }
@@ -179,12 +166,6 @@ class MainActivity : AppCompatActivity() {
         tvMetadataColor.text = "Color: --"
         tvKeyState.setTextColor(0xFF9E9E9E.toInt())
         setActionsEnabled(false)
-    }
-
-    private fun updateLog(message: String) {
-        val currentText = tvLog.text.toString()
-        val newLog = "\n[TERMINAL] > $message\n$currentText"
-        tvLog.text = newLog
     }
 
     override fun onResume() {
