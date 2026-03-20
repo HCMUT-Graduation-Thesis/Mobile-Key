@@ -199,9 +199,9 @@ class OwnerPairingTransaction(
 
             // 6. Immobilizer Token (64 bytes)
             if (buffer.remaining() >= 64) {
-//                val token = ByteArray(64)
-//                buffer.get(token)
-//                record.core.immobilizerToken = token
+                val token = ByteArray(64)
+                buffer.get(token)
+                record.core.immobilizerToken = token
                 Log.d(TAG, "Immobilizer Token extracted (64 bytes)")
             }
 
