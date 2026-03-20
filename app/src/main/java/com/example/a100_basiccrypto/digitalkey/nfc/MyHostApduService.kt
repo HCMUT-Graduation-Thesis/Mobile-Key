@@ -17,6 +17,7 @@ import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_LOCK
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_START_ENGINE
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_STOP_ENGINE
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_UNLOCK
+import com.example.a100_basiccrypto.shared.command.MessageConstants.FINAL_COMMIT
 import com.example.a100_basiccrypto.shared.policy.TransportType
 import com.example.a100_basiccrypto.digitalkey.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.CLA_ISO
@@ -151,16 +152,25 @@ class MyHostApduService : HostApduService() {
             val responseFrame = router.route(inputFrame, TransportType.NFC)
             val result = responseFrame.payload
             
+            // Handle NFC Result Broadcasts
             val actionName = when {
                 cla == CLASS_FAST_ACTION && ins == INS_UNLOCK -> "UNLOCK"
                 cla == CLASS_FAST_ACTION && ins == INS_LOCK -> "LOCK"
                 cla == CLASS_ENGINE_OP && ins == INS_START_ENGINE -> "START ENGINE"
                 cla == CLASS_ENGINE_OP && ins == INS_STOP_ENGINE -> "STOP ENGINE"
+                cla == CLASS_ADMIN && ins == FINAL_COMMIT -> "RECOVERY & ACTION"
                 else -> null
             }
 
             if (actionName != null) {
-                val isSuccess = result.size > 2 
+                // Success detection: 
+                // For Fast Flow: encrypted result length > 2
+                // For Standard Flow Phase 4: result is exactly SW_SUCCESS (90 00)
+                val isSuccess = if (cla == CLASS_ADMIN) {
+                    result.contentEquals(SW_SUCCESS)
+                } else {
+                    result.size > 2
+                }
                 broadcastResultToActivity(actionName, isSuccess)
             }
 
