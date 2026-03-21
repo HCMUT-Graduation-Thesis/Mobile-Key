@@ -3,6 +3,7 @@ package com.example.a100_basiccrypto.digitalkey.core
 import com.example.a100_basiccrypto.shared.model.CoreDigitalKey
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.CarMetadata
+import com.example.a100_basiccrypto.shared.model.SyncStatus
 
 /**
  * DigitalKeyRecord is the App-specific data model for a digital key.

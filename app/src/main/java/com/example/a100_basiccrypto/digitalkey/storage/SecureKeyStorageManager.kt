@@ -4,8 +4,8 @@ import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
-import com.example.a100_basiccrypto.digitalkey.core.SyncStatus
-import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.shared.model.SyncStatus
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 

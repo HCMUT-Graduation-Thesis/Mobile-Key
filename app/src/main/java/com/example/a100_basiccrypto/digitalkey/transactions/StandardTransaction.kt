@@ -3,32 +3,26 @@ package com.example.a100_basiccrypto.digitalkey.transactions
 import android.util.Log
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
+import com.example.a100_basiccrypto.shared.link.ITransactionHandler
 import com.example.a100_basiccrypto.shared.command.MessageConstants.AUTH_INIT
 import com.example.a100_basiccrypto.shared.command.MessageConstants.ACTION_SYNC
 import com.example.a100_basiccrypto.shared.command.MessageConstants.FINAL_COMMIT
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MUTUAL_VERIFY
-import com.example.a100_basiccrypto.shared.command.MessageConstants.REVOKE_OWNER
-import com.example.a100_basiccrypto.shared.command.MessageConstants.FACTORY_RESET
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_AUTH_FAIL
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_GENERAL
-import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_GLOBAL_SUCCESS
 import com.example.a100_basiccrypto.shared.command.MessageConstants.STD_MSG_SYNC_OK
 import com.example.a100_basiccrypto.shared.command.MessageConstants.STD_EXEC_SUCCESS
 import com.example.a100_basiccrypto.shared.command.MessageConstants.STD_COMMIT_MARKER
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_UNLOCK
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
-import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.normalize
-import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.shared.crypto.HandshakeProtector
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_DECRYPTION_FAILED
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_SUCCESS
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import java.nio.ByteBuffer
 import java.security.KeyPair
-import java.security.KeyPairGenerator
 import java.security.SecureRandom
-import java.security.interfaces.ECPublicKey
-import java.security.spec.ECGenParameterSpec
 
 /**
  * Standard Transaction V1.3.0 Implementation.
@@ -56,7 +50,7 @@ class StandardTransaction(
     private var isComplete = false
 
     private val STD_HKDF_INFO = "STD_SESSION"
-    private val FAST_KEY_INFO = "FAST_KEY_REFRESH"
+    private val FAST_KEY_REFRESH = "FAST_KEY_REFRESH"
     private val DILITHIUM3_SIG_SIZE = 3309
 
     override fun processCommand(frame: LogicalFrame): ByteArray {
@@ -96,23 +90,28 @@ class StandardTransaction(
             if (startIndex == -1 || payload.size - startIndex < 65) return byteArrayOf(MSG_ERR_GENERAL)
 
             val vehiclePKBytes = payload.sliceArray(startIndex until startIndex + 65)
-            val vehicleEphemeralPK = CryptoUtils.getPublicKeyFromHex(vehiclePKBytes.toHex())
+            
+            // USE THE NEW HELPER: parseUncompressedPublicKey
+            val vehicleEphemeralPK = HandshakeProtector.parseUncompressedPublicKey(vehiclePKBytes)
 
-            val kpg = KeyPairGenerator.getInstance("EC").apply {
-                initialize(ECGenParameterSpec("secp256r1"))
-            }
-            ephemeralKeyPair = kpg.generateKeyPair()
+            // Use HandshakeProtector to generate ephemeral keys
+            ephemeralKeyPair = HandshakeProtector.generateEphemeralKeyPair()
 
-            sharedSecret = CryptoUtils.generateSharedSecret(ephemeralKeyPair!!.private, vehicleEphemeralPK)
+            // Calculate session key using HandshakeProtector
             val salt = passwordProvider().toByteArray()
-            currentSessionKey = CryptoUtils.deriveSessionKey(sharedSecret!!, salt, STD_HKDF_INFO.toByteArray(), 32)
+            currentSessionKey = HandshakeProtector.deriveSessionKey(
+                ephemeralKeyPair!!.private, vehicleEphemeralPK, salt, STD_HKDF_INFO
+            )
+
+            // Set sharedSecret for Phase 3 (Fast Key derivation)
+            sharedSecret = CryptoUtils.generateSharedSecret(ephemeralKeyPair!!.private, vehicleEphemeralPK)
 
             appNonce = ByteArray(16).apply { SecureRandom().nextBytes(this) }
             
-            val ecPubKey = ephemeralKeyPair!!.public as ECPublicKey
-            byteArrayOf(0x04.toByte()) + ecPubKey.w.affineX.toByteArray().normalize(32) + 
-                    ecPubKey.w.affineY.toByteArray().normalize(32) + appNonce!!
+            // Return uncompressed raw public key + nonce using HandshakeProtector
+            HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public) + appNonce!!
         } catch (e: Exception) {
+            Log.e("StandardTx", "AuthInit failed: ${e.message}")
             byteArrayOf(MSG_ERR_GENERAL)
         }
     }
@@ -162,7 +161,7 @@ class StandardTransaction(
             
             // 1. Derive new Fast Auth Key using HKDF (SharedSecret + ImmobilizerToken)
             val immotoken = record.core.immobilizerToken ?: return byteArrayOf(MSG_ERR_GENERAL)
-            stagedFastKey = CryptoUtils.deriveSessionKey(secret, immotoken, FAST_KEY_INFO.toByteArray(), 32)
+            stagedFastKey = CryptoUtils.deriveSessionKey(secret, immotoken, FAST_KEY_REFRESH.toByteArray(), 32)
             stagedCounter = 0
             
             onLog("STD: Action Req received. Proposing UNLOCK + Sync.")

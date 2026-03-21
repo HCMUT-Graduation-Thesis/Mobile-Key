@@ -10,6 +10,10 @@ import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+/**
+ * Low-level cryptographic utility object.
+ * Serves as the foundation for all security operations in the system.
+ */
 object CryptoUtils {
 
     private const val CURVE_NAME = "secp256r1"
@@ -20,6 +24,30 @@ object CryptoUtils {
     private const val AES_GCM_ALGORITHM = "AES/GCM/NoPadding"
     private const val GCM_TAG_LENGTH = 128
     private const val GCM_IV_LENGTH = 12
+
+    /**
+     * Generates a new EC KeyPair using the standard curve.
+     */
+    fun generateEcKeyPair(): KeyPair {
+        val kpg = KeyPairGenerator.getInstance(EC_ALGORITHM)
+        kpg.initialize(ECGenParameterSpec(CURVE_NAME))
+        return kpg.generateKeyPair()
+    }
+
+    /**
+     * Converts raw uncompressed bytes (65 bytes) to a PublicKey object.
+     */
+    fun getPublicKeyFromBytes(pubBytes: ByteArray): PublicKey {
+        if (pubBytes.size != 65 || pubBytes[0] != 0x04.toByte()) {
+            throw IllegalArgumentException("Invalid Uncompressed Public Key format")
+        }
+        val x = BigInteger(1, pubBytes.sliceArray(1..32))
+        val y = BigInteger(1, pubBytes.sliceArray(33..64))
+        val point = ECPoint(x, y)
+        val keySpec = ECPublicKeySpec(point, getParameterSpec())
+        val kf = KeyFactory.getInstance(EC_ALGORITHM)
+        return kf.generatePublic(keySpec)
+    }
 
     fun String.hexToBytes(): ByteArray {
         val len = length
@@ -50,16 +78,7 @@ object CryptoUtils {
     }
 
     fun getPublicKeyFromHex(hexPub: String): PublicKey {
-        val pubBytes = hexPub.hexToBytes()
-        if (pubBytes.size != 65 || pubBytes[0] != 0x04.toByte()) {
-            throw IllegalArgumentException("Invalid Uncompressed Public Key format")
-        }
-        val x = BigInteger(1, pubBytes.sliceArray(1..32))
-        val y = BigInteger(1, pubBytes.sliceArray(33..64))
-        val point = ECPoint(x, y)
-        val keySpec = ECPublicKeySpec(point, getParameterSpec())
-        val kf = KeyFactory.getInstance(EC_ALGORITHM)
-        return kf.generatePublic(keySpec)
+        return getPublicKeyFromBytes(hexPub.hexToBytes())
     }
 
     fun generateSharedSecret(privateKey: PrivateKey, publicKey: PublicKey): ByteArray {

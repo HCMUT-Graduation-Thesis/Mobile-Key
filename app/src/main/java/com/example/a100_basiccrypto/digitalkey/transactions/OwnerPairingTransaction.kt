@@ -5,14 +5,15 @@ import com.example.a100_basiccrypto.shared.model.CarMetadata
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
+import com.example.a100_basiccrypto.shared.link.ITransactionHandler
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_COMMIT
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_DATA_SYNC
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_KEY_EXCHANGE
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_PAIRING_REQ
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_VERIFY_NONCE
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
-import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.normalize
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.shared.crypto.HandshakeProtector
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_DECRYPTION_FAILED
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_INTERNAL_ERROR
@@ -20,9 +21,6 @@ import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import com.google.gson.Gson
 import java.nio.ByteBuffer
 import java.security.KeyPair
-import java.security.KeyPairGenerator
-import java.security.interfaces.ECPublicKey
-import java.security.spec.ECGenParameterSpec
 
 class OwnerPairingTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -71,26 +69,24 @@ class OwnerPairingTransaction(
 
     private fun handleExchangePubKey(payload: ByteArray): ByteArray {
         return try {
+            onLog("Phase 2.a: Key Exchange")
             val pubKeyReaderBytes = payload.sliceArray(0 until 65)
-            val pubKeyReader = CryptoUtils.getPublicKeyFromHex(pubKeyReaderBytes.toHex())
+            
+            // Use HandshakeProtector to parse the reader's public key
+            val pubKeyReader = HandshakeProtector.parseUncompressedPublicKey(pubKeyReaderBytes)
 
-            val kpg = KeyPairGenerator.getInstance("EC").apply {
-                initialize(ECGenParameterSpec("secp256r1"))
-            }
-            ephemeralKeyPair = kpg.generateKeyPair()
-
-            val sharedSecret = CryptoUtils.generateSharedSecret(ephemeralKeyPair!!.private, pubKeyReader)
+            // Use HandshakeProtector to generate session keys
+            ephemeralKeyPair = HandshakeProtector.generateEphemeralKeyPair()
             
             val salt = passwordProvider().toByteArray()
-            currentSessionKey = CryptoUtils.deriveSessionKey(sharedSecret, salt, HKDF_INFO.toByteArray(), 32)
+            currentSessionKey = HandshakeProtector.deriveSessionKey(
+                ephemeralKeyPair!!.private, pubKeyReader, salt, HKDF_INFO
+            )
 
             onLog("Phase 2.a: Session Key established")
             
-            val ecPubKey = ephemeralKeyPair!!.public as ECPublicKey
-            val x = ecPubKey.w.affineX.toByteArray().normalize(32)
-            val y = ecPubKey.w.affineY.toByteArray().normalize(32)
-            
-            byteArrayOf(0x04.toByte()) + x + y 
+            // Return uncompressed raw public key
+            HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public)
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 2a: ${e.message}")
             SW_INTERNAL_ERROR
@@ -221,6 +217,7 @@ class OwnerPairingTransaction(
                 }
             }
 
+            // Use the same HKDF logic through CryptoUtils
             val salt = passwordProvider().toByteArray()
             record.core.fastAuthKey = CryptoUtils.deriveSessionKey(sessionKey, salt, FAST_AUTH_TAG.toByteArray(), 32)
             

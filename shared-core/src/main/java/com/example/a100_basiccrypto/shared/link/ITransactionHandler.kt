@@ -1,15 +1,14 @@
-package com.example.a100_basiccrypto.digitalkey.transactions
-
-import com.example.a100_basiccrypto.shared.link.LogicalFrame
+package com.example.a100_basiccrypto.shared.link
 
 /**
- * Common interface for all transaction handlers using Logical Frames.
+ * Interface for all Transaction Responders (Slave/App side).
+ * Handles incoming logical frames and provides responses.
  */
 interface ITransactionHandler {
     /**
      * Processes an incoming logical frame.
      * @param frame The received frame [CLASS][INS][LEN][DATA]
-     * @return Response raw payload (The Router will wrap it back into a frame)
+     * @return Response raw payload
      */
     fun processCommand(frame: LogicalFrame): ByteArray
     

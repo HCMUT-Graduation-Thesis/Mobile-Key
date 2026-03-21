@@ -1,7 +1,7 @@
 package com.example.a100_basiccrypto.digitalkey.storage
 
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
-import com.example.a100_basiccrypto.digitalkey.core.SyncStatus
+import com.example.a100_basiccrypto.shared.model.SyncStatus
 
 /**
  * Interface for managing digital key storage.

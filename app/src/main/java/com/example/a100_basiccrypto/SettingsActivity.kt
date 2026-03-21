@@ -8,7 +8,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
-import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText

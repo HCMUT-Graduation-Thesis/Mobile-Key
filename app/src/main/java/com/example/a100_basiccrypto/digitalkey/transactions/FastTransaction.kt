@@ -3,6 +3,7 @@ package com.example.a100_basiccrypto.digitalkey.transactions
 import android.util.Log
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
+import com.example.a100_basiccrypto.shared.link.ITransactionHandler
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_LOCK
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_UNLOCK
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_START_ENGINE
@@ -13,7 +14,7 @@ import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_DESY
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_GENERAL
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_PERMISSION
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_GLOBAL_SUCCESS
-import com.example.a100_basiccrypto.digitalkey.crypto.CryptoUtils
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import java.nio.ByteBuffer

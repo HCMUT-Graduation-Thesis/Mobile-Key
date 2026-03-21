@@ -1,6 +1,5 @@
-package com.example.a100_basiccrypto.digitalkey.transactions
+package com.example.a100_basiccrypto.shared.link
 
-import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_ADMIN
 import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_ENGINE_OP
 import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_FAST_ACTION
@@ -14,6 +13,7 @@ import com.example.a100_basiccrypto.shared.policy.TransportType
 
 /**
  * Central router for all digital key transactions.
+ * Orchestrates commands between physical transport and logic handlers.
  */
 class TransactionRouter(
     private val pairingHandler: ITransactionHandler,
@@ -21,7 +21,11 @@ class TransactionRouter(
     private val standardHandler: ITransactionHandler? = null
 ) {
 
+    /**
+     * Routes an incoming frame to the appropriate handler based on its class.
+     */
     fun route(frame: LogicalFrame, transport: TransportType): LogicalFrame {
+        // Enforce transport policy
         if (!TransportPolicyManager.isTransportAllowed(frame.msgClass, transport)) {
             return LogicalFrame(frame.msgClass, frame.msgId, byteArrayOf(MSG_ERR_GENERAL))
         }
@@ -38,6 +42,7 @@ class TransactionRouter(
             }
             
             CLASS_FRIEND_PAIRING -> {
+                // Placeholder for future implementation
                 byteArrayOf(MSG_ERR_GENERAL)
             }
             
@@ -47,6 +52,9 @@ class TransactionRouter(
         return LogicalFrame(frame.msgClass, frame.msgId, responsePayload)
     }
     
+    /**
+     * Resets all internal handlers to clear session states.
+     */
     fun resetAll() {
         pairingHandler.resetTransaction()
         fastHandler?.resetTransaction()

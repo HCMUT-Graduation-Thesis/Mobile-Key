@@ -3,18 +3,18 @@ package com.example.a100_basiccrypto.digitalkey.nfc
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.MAX_APDU_PAYLOAD_SIZE
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_HAS_MORE_DATA
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_SUCCESS
-import java.io.ByteArrayOutputStream
+import com.example.a100_basiccrypto.shared.link.PayloadChainer
 
 /**
- * Handles APDU Command Chaining (fragmentation and reassembly).
+ * Android-specific wrapper for PayloadChainer, handling NFC APDU semantics.
+ * Used by HostApduService (HCE) to manage fragmented communication.
  */
 class NfcChainingManager {
 
-    private var rxBuffer: ByteArrayOutputStream? = null
-    private var txBuffer: ByteArray? = null
+    private val chainer = PayloadChainer(MAX_APDU_PAYLOAD_SIZE)
 
     /**
-     * Collects incoming fragments.
+     * Collects incoming fragments from Command APDUs.
      */
     fun handleIncomingFragment(apdu: ByteArray): ByteArray? {
         if (apdu.size < 5) return apdu 
@@ -25,43 +25,39 @@ class NfcChainingManager {
         
         if (apdu.size < 5 + lc) return apdu
 
-        if (chunkIndex == 0) rxBuffer = ByteArrayOutputStream()
-        rxBuffer?.write(apdu, 5, lc)
+        // If it's the first chunk, ensure the chainer is clean
+        if (chunkIndex == 0) chainer.reset()
 
-        return if (isLastChunk) {
-            val data = rxBuffer?.toByteArray()
-            rxBuffer = null
-            data
-        } else null
+        val payloadFragment = apdu.sliceArray(5 until 5 + lc)
+        return chainer.append(payloadFragment, isLastChunk)
     }
 
+    /**
+     * Sets the full data to be sent back to the Reader.
+     */
     fun setOutgoingBuffer(data: ByteArray) {
-        txBuffer = data
+        chainer.setOutgoingBuffer(data)
     }
 
+    /**
+     * Retrieves the next Response APDU chunk for the Reader.
+     */
     fun getNextOutgoingChunk(chunkIndex: Int): ByteArray {
-        val buffer = txBuffer ?: return byteArrayOf(0x6F.toByte(), 0x01.toByte())
-        val offset = chunkIndex * MAX_APDU_PAYLOAD_SIZE
+        val chunk = chainer.getChunk(chunkIndex) 
+            ?: return byteArrayOf(0x6F.toByte(), 0x01.toByte()) // Error: Not Found
 
-        if (offset >= buffer.size) {
-            txBuffer = null 
-            return byteArrayOf(0x6F.toByte(), 0x02.toByte())
-        }
-
-        val remaining = buffer.size - offset
-        val chunkSize = if (remaining < MAX_APDU_PAYLOAD_SIZE) remaining else MAX_APDU_PAYLOAD_SIZE
-        val chunk = buffer.sliceArray(offset until offset + chunkSize)
-
-        return if (offset + chunkSize < buffer.size) {
+        val hasMore = chainer.hasMoreChunks(chunkIndex)
+        
+        return if (hasMore) {
             chunk + SW_HAS_MORE_DATA
         } else {
-            txBuffer = null
-            chunk + SW_SUCCESS
+            val result = chunk + SW_SUCCESS
+            chainer.reset() // Clear after last chunk sent
+            result
         }
     }
     
     fun clear() {
-        rxBuffer = null
-        txBuffer = null
+        chainer.reset()
     }
 }
