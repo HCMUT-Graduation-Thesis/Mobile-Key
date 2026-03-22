@@ -18,7 +18,8 @@ import com.example.a100_basiccrypto.shared.policy.TransportType
 class TransactionRouter(
     private val pairingHandler: ITransactionHandler,
     private val fastHandler: ITransactionHandler? = null,
-    private val standardHandler: ITransactionHandler? = null
+    private val standardHandler: ITransactionHandler? = null,
+    private val friendPairingHandler: ITransactionHandler? = null
 ) {
 
     /**
@@ -42,8 +43,7 @@ class TransactionRouter(
             }
             
             CLASS_FRIEND_PAIRING -> {
-                // Placeholder for future implementation
-                byteArrayOf(MSG_ERR_GENERAL)
+                friendPairingHandler?.processCommand(frame) ?: byteArrayOf(MSG_ERR_GENERAL)
             }
             
             else -> byteArrayOf(MSG_ERR_INVALID_CLASS)
@@ -59,5 +59,6 @@ class TransactionRouter(
         pairingHandler.resetTransaction()
         fastHandler?.resetTransaction()
         standardHandler?.resetTransaction()
+        friendPairingHandler?.resetTransaction()
     }
 }

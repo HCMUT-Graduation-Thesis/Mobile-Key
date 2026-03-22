@@ -28,19 +28,24 @@ class SharingViewModel(
         usageLimit: Int = 0,
         daysOfWeek: Int = 0,
         startTimeMinutes: Int = -1,
-        endTimeMinutes: Int = -1
+        endTimeMinutes: Int = -1,
+        friendlyName: String = "",
+        recipient: String = ""
     ) {
         viewModelScope.launch {
             _uiState.value = SharingUiState.Loading
             val updatedRecord = sharingManager.createInvitation(
-                ownerRecord,
-                Role.FRIEND,
-                permissions,
-                validityDays,
-                usageLimit,
-                daysOfWeek,
-                startTimeMinutes,
-                endTimeMinutes
+                ownerRecord = ownerRecord,
+                role = Role.FRIEND,
+                permissions = permissions,
+                validityDays = validityDays,
+                usageLimit = usageLimit,
+                daysOfWeek = daysOfWeek,
+                startTimeMinutes = startTimeMinutes,
+                endTimeMinutes = endTimeMinutes,
+                friendlyName = friendlyName,
+                recipient = recipient,
+                senderName = "Owner Device" // In real app, get from User Profile
             )
             if (updatedRecord != null) {
                 _uiState.value = SharingUiState.ShareSuccess(
@@ -52,12 +57,12 @@ class SharingViewModel(
         }
     }
 
-    fun processInvitation(ap: ByteArray) {
+    fun processInvitation(invitation: ShareInvitation) {
         viewModelScope.launch {
-            val record = sharingManager.processIncomingInvitation(ap)
+            val record = sharingManager.processIncomingInvitation(invitation)
             if (record != null) {
                 // Mock: After friend accepts, notify the server/owner
-                MockKeyServer.notifyActivation(ap)
+                MockKeyServer.notifyActivation(invitation.ap)
                 _uiState.value = SharingUiState.ReceivedInvitation(record)
             }
         }

@@ -8,6 +8,7 @@ import android.os.Looper
 import android.util.Log
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.example.a100_basiccrypto.shared.link.TransactionRouter
+import com.example.a100_basiccrypto.shared.link.ITransactionHandler
 import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_ADMIN
 import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_ENGINE_OP
 import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_FAST_ACTION
@@ -45,6 +46,9 @@ class MyHostApduService : HostApduService() {
         
         @Volatile
         var isPairingModeEnabled: Boolean = false
+
+        @Volatile
+        var friendPairingHandler: ITransactionHandler? = null
     }
 
     private val chainingManager = NfcChainingManager()
@@ -71,7 +75,8 @@ class MyHostApduService : HostApduService() {
         TransactionRouter(
             pairingHandler = pairingHandler,
             fastHandler = fastHandler,
-            standardHandler = standardHandler
+            standardHandler = standardHandler,
+            friendPairingHandler = null
         )
     }
 
@@ -106,6 +111,14 @@ class MyHostApduService : HostApduService() {
         if (cla == CLASS_OWNER_PAIRING || cla == 0x80.toByte()) {
             if (!isPairingModeEnabled) {
                 Log.w(TAG, "Pairing Blocked: Mode not enabled by User.")
+                val resp = SW_UNKNOWN_CMD
+                Log.d(TAG, "TX: ${toHexString(resp)}")
+                return resp
+            }
+        }
+
+        if (cla == CLASS_FRIEND_PAIRING) {
+            if (friendPairingHandler == null) {
                 val resp = SW_UNKNOWN_CMD
                 Log.d(TAG, "TX: ${toHexString(resp)}")
                 return resp
@@ -149,30 +162,18 @@ class MyHostApduService : HostApduService() {
         
         val response = if (fullPayload != null) {
             val inputFrame = LogicalFrame(cla, ins, fullPayload)
-            val responseFrame = router.route(inputFrame, TransportType.NFC)
+            
+            val responseFrame = if (cla == CLASS_FRIEND_PAIRING) {
+                val resultPayload = friendPairingHandler?.processCommand(inputFrame) ?: byteArrayOf(0xE0.toByte())
+                LogicalFrame(cla, ins, resultPayload)
+            } else {
+                router.route(inputFrame, TransportType.NFC)
+            }
+            
             val result = responseFrame.payload
             
             // Handle NFC Result Broadcasts
-            val actionName = when {
-                cla == CLASS_FAST_ACTION && ins == INS_UNLOCK -> "UNLOCK"
-                cla == CLASS_FAST_ACTION && ins == INS_LOCK -> "LOCK"
-                cla == CLASS_ENGINE_OP && ins == INS_START_ENGINE -> "START ENGINE"
-                cla == CLASS_ENGINE_OP && ins == INS_STOP_ENGINE -> "STOP ENGINE"
-                cla == CLASS_ADMIN && ins == FINAL_COMMIT -> "RECOVERY & ACTION"
-                else -> null
-            }
-
-            if (actionName != null) {
-                // Success detection: 
-                // For Fast Flow: encrypted result length > 2
-                // For Standard Flow Phase 4: result is exactly SW_SUCCESS (90 00)
-                val isSuccess = if (cla == CLASS_ADMIN) {
-                    result.contentEquals(SW_SUCCESS)
-                } else {
-                    result.size > 2
-                }
-                broadcastResultToActivity(actionName, isSuccess)
-            }
+            handleActionBroadcasts(cla, ins, result)
 
             if (result.size > MAX_APDU_PAYLOAD_SIZE) {
                 chainingManager.setOutgoingBuffer(result)
@@ -190,6 +191,27 @@ class MyHostApduService : HostApduService() {
 
         Log.d(TAG, "TX: ${toHexString(response)}")
         return response
+    }
+
+    private fun handleActionBroadcasts(cla: Byte, ins: Byte, result: ByteArray) {
+        val actionName = when {
+            cla == CLASS_FAST_ACTION && ins == INS_UNLOCK -> "UNLOCK"
+            cla == CLASS_FAST_ACTION && ins == INS_LOCK -> "LOCK"
+            cla == CLASS_ENGINE_OP && ins == INS_START_ENGINE -> "START ENGINE"
+            cla == CLASS_ENGINE_OP && ins == INS_STOP_ENGINE -> "STOP ENGINE"
+            cla == CLASS_ADMIN && ins == FINAL_COMMIT -> "RECOVERY & ACTION"
+            cla == CLASS_FRIEND_PAIRING && ins == 0x17.toByte() -> "FRIEND PAIRING"
+            else -> null
+        }
+
+        if (actionName != null) {
+            val isSuccess = if (cla == CLASS_FRIEND_PAIRING || cla == CLASS_ADMIN) {
+                result.contentEquals(byteArrayOf(0x90.toByte())) || result.contentEquals(SW_SUCCESS)
+            } else {
+                result.size > 2
+            }
+            broadcastResultToActivity(actionName, isSuccess)
+        }
     }
 
     private fun toHexString(bytes: ByteArray): String {
@@ -211,6 +233,7 @@ class MyHostApduService : HostApduService() {
     private fun handleTimeout() {
         chainingManager.clear()
         router.resetAll()
+        friendPairingHandler = null
         sendLogToGui("Session Timeout")
     }
 

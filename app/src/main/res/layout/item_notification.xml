@@ -48,5 +48,15 @@
                 android:textColor="@color/white"
                 android:textSize="14sp" />
         </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_notification_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="USED"
+            android:textColor="@color/gray_text"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

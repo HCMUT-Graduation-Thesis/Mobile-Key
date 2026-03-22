@@ -6,7 +6,6 @@ package com.example.a100_basiccrypto.shared.command
 object SharingConstants {
     // --- AP STRUCTURE VERSION ---
     const val AP_VERSION_V1 = 0x01.toByte()
-    const val AP_VERSION_V2 = 0x02.toByte()
 
     // --- AP BINARY LAYOUT (Offsets) ---
     const val OFFSET_VERSION = 0

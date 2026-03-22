@@ -70,6 +70,12 @@ object CryptoUtils {
         return md.digest(data)
     }
 
+    fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
+        val mac = Mac.getInstance(HMAC_ALGORITHM)
+        mac.init(SecretKeySpec(key, HMAC_ALGORITHM))
+        return mac.doFinal(data)
+    }
+
     fun getPrivateKeyFromHex(hexPriv: String): PrivateKey {
         val privBytes = hexPriv.hexToBytes()
         val keySpec = ECPrivateKeySpec(BigInteger(1, privBytes), getParameterSpec())
@@ -89,14 +95,14 @@ object CryptoUtils {
     }
 
     fun deriveSessionKey(ikm: ByteArray, salt: ByteArray, info: ByteArray, length: Int): ByteArray {
-        val prk = hmac(salt, ikm)
+        val prk = hmacSha256(salt, ikm)
         val result = ByteArray(length)
         var lastT = ByteArray(0)
         var offset = 0
         var blockIndex = 1
         while (offset < length) {
             val input = lastT + info + byteArrayOf(blockIndex.toByte())
-            lastT = hmac(prk, input)
+            lastT = hmacSha256(prk, input)
             val bytesToCopy = minOf(lastT.size, length - offset)
             System.arraycopy(lastT, 0, result, offset, bytesToCopy)
             offset += bytesToCopy
@@ -105,10 +111,11 @@ object CryptoUtils {
         return result
     }
 
-    private fun hmac(key: ByteArray, data: ByteArray): ByteArray {
-        val mac = Mac.getInstance(HMAC_ALGORITHM)
-        mac.init(SecretKeySpec(key, HMAC_ALGORITHM))
-        return mac.doFinal(data)
+    /**
+     * Securely clears a byte array by filling it with zeros.
+     */
+    fun secureClear(data: ByteArray?) {
+        data?.fill(0)
     }
 
     private fun getParameterSpec(): ECParameterSpec {
@@ -127,6 +134,7 @@ object CryptoUtils {
     }
 
     fun decryptAesGcm(cipherData: ByteArray, sessionKey: ByteArray): ByteArray {
+        if (cipherData.size < GCM_IV_LENGTH) throw IllegalArgumentException("Ciphertext too short")
         val iv = cipherData.sliceArray(0 until GCM_IV_LENGTH)
         val ciphertext = cipherData.sliceArray(GCM_IV_LENGTH until cipherData.size)
         val cipher = Cipher.getInstance(AES_GCM_ALGORITHM)

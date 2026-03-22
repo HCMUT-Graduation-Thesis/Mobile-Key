@@ -1,5 +1,6 @@
 package com.example.a100_basiccrypto
 
+import android.graphics.Color
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -18,11 +19,11 @@ class NotificationActivity : AppCompatActivity() {
     private lateinit var rvNotifications: RecyclerView
     private lateinit var tvEmpty: TextView
     private val adapter = NotificationAdapter { item ->
-        // When notification is clicked, set the pending AP and go back to Home
-        if (item.ap != null) {
-            NotificationStore.setPendingInvitation(item.ap)
+        // Only allow clicking if NOT used
+        if (item.invitation != null && !item.isUsed) {
+            NotificationStore.setPendingInvitation(item.invitation)
+            finish()
         }
-        finish()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,6 +77,7 @@ class NotificationActivity : AppCompatActivity() {
         class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val tvTitle: TextView = view.findViewById(R.id.tv_notification_title)
             val tvMessage: TextView = view.findViewById(R.id.tv_notification_message)
+            val tvStatus: TextView = view.findViewById(R.id.tv_notification_status)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -88,6 +90,16 @@ class NotificationActivity : AppCompatActivity() {
             val item = items[position]
             holder.tvTitle.text = item.title
             holder.tvMessage.text = item.message
+            
+            if (item.isUsed) {
+                holder.tvStatus.visibility = View.VISIBLE
+                holder.tvStatus.text = "USED"
+                holder.tvStatus.setTextColor(Color.GRAY)
+                holder.itemView.alpha = 0.5f
+            } else {
+                holder.tvStatus.visibility = View.GONE
+                holder.itemView.alpha = 1.0f
+            }
             
             holder.itemView.setOnClickListener { onClick(item) }
         }

@@ -56,9 +56,9 @@ object MessageConstants {
 
     // --- CLASS 0x60: Friend Provisioning Phases (INS) ---
     const val PHASE_FRIEND_INIT      = 0x11.toByte()
-    const val PHASE_FRIEND_ECDH      = 0x13.toByte()
+    const val PHASE_FRIEND_KEM       = 0x13.toByte() // Kyber KEM Exchange
     const val PHASE_VERIFY_ATTEST    = 0x21.toByte() // Verify Owner's Attestation Package
-    const val PHASE_FRIEND_POP       = 0x23.toByte() // Proof of Possession (PQC Signature)
+    const val PHASE_FRIEND_POP       = 0x23.toByte() // Proof of Possession (ML-DSA Signature)
     const val PHASE_FRIEND_PROV      = 0x19.toByte() // Receive Token & SlotID
     const val PHASE_FRIEND_COMMIT    = 0x17.toByte()
 
@@ -71,4 +71,11 @@ object MessageConstants {
     const val MSG_ERR_INVALID_CLASS  = 0xE7.toByte()
     const val MSG_ERR_PERMISSION     = 0xE8.toByte()
     const val MSG_ERR_TRANSPORT_NOT_ALLOWED = 0xE9.toByte()
+
+    // --- FRIEND PAIRING SPECIFIC ERRORS (Logic Layer) ---
+    const val ERR_FRIEND_INVCODE_MISMATCH    = 0x71.toByte() // Sai mã 6 số (Invitation Code)
+    const val ERR_FRIEND_OWNER_SIG_INVALID   = 0x72.toByte() // Chữ ký Owner trên AP không hợp lệ
+    const val ERR_FRIEND_POP_FAILED          = 0x73.toByte() // Proof of Possession thất bại
+    const val ERR_FRIEND_EXPIRED_AP          = 0x74.toByte() // Gói AP đã hết hạn
+    const val ERR_FRIEND_SLOT_FULL           = 0x76.toByte() // Xe hết slot lưu chìa phụ
 }

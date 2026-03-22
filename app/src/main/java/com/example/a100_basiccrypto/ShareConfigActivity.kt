@@ -191,14 +191,24 @@ class ShareConfigActivity : AppCompatActivity() {
                 val permissions = SharingConstants.PERM_UNLOCK or SharingConstants.PERM_LOCK or SharingConstants.PERM_START
                 val friendlyName = etFriendlyName.text.toString().ifEmpty { "Key for $recipient" }
 
+                // Now using the updated sharingManager with recipient and friendlyName
                 val result = sharingManager.createInvitation(
-                    ownerRecord, Role.FRIEND, permissions, validityDays,
-                    usageLimit, daysOfWeek, startM, endM, friendlyName
+                    ownerRecord = ownerRecord,
+                    role = Role.FRIEND,
+                    permissions = permissions,
+                    validityDays = validityDays,
+                    usageLimit = usageLimit,
+                    daysOfWeek = daysOfWeek,
+                    startTimeMinutes = startM,
+                    endTimeMinutes = endM,
+                    friendlyName = friendlyName,
+                    recipient = recipient,
+                    senderName = "Owner's Phone"
                 )
 
                 if (result != null) {
                     Toast.makeText(this@ShareConfigActivity, 
-                        "Invitation sent! Code: ${result.invitationCode}",
+                        "Invitation sent to $recipient! Code: ${result.invitationCode}",
                         Toast.LENGTH_LONG).show()
                     finish()
                 } else {
