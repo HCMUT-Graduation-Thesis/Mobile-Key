@@ -3,6 +3,7 @@ package com.example.a100_basiccrypto.digitalkey.transactions
 import android.util.Log
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
+import com.example.a100_basiccrypto.shared.link.LogicalResponse
 import com.example.a100_basiccrypto.shared.link.ITransactionHandler
 import com.example.a100_basiccrypto.shared.command.MessageConstants.AUTH_INIT
 import com.example.a100_basiccrypto.shared.command.MessageConstants.ACTION_SYNC
@@ -10,6 +11,7 @@ import com.example.a100_basiccrypto.shared.command.MessageConstants.FINAL_COMMIT
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MUTUAL_VERIFY
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_AUTH_FAIL
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_GENERAL
+import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_GLOBAL_SUCCESS
 import com.example.a100_basiccrypto.shared.command.MessageConstants.STD_MSG_SYNC_OK
 import com.example.a100_basiccrypto.shared.command.MessageConstants.STD_EXEC_SUCCESS
 import com.example.a100_basiccrypto.shared.command.MessageConstants.STD_COMMIT_MARKER
@@ -60,7 +62,7 @@ class StandardTransaction(
         Log.d("StandardTx", "$label: [$hex...] (Size: ${data.size})")
     }
 
-    override fun processCommand(frame: LogicalFrame): ByteArray {
+    override fun processCommand(frame: LogicalFrame): LogicalResponse {
         return when (frame.msgId) {
             AUTH_INIT -> handleAuthInit(frame.payload)
             MUTUAL_VERIFY -> handleMutualVerify(frame.payload)
@@ -68,17 +70,17 @@ class StandardTransaction(
             FINAL_COMMIT -> ifFullAuth { handleFinalCommit(frame.payload) }
             else -> {
                 Log.w("StandardTx", "Unknown Command Received: ${frame.msgId}")
-                byteArrayOf(MSG_ERR_GENERAL)
+                LogicalResponse(MSG_ERR_GENERAL)
             }
         }
     }
 
-    private fun ifFullAuth(action: () -> ByteArray): ByteArray {
+    private fun ifFullAuth(action: () -> LogicalResponse): LogicalResponse {
         return if (isCarVerified && isDeviceVerified) {
             action()
         } else {
             Log.e("StandardTx", "Auth failed: CarVerified=$isCarVerified, DeviceVerified=$isDeviceVerified")
-            byteArrayOf(MSG_ERR_AUTH_FAIL)
+            LogicalResponse(MSG_ERR_AUTH_FAIL)
         }
     }
 
@@ -98,13 +100,13 @@ class StandardTransaction(
 
     override fun isTransactionComplete(): Boolean = isComplete
 
-    private fun handleAuthInit(payload: ByteArray): ByteArray {
+    private fun handleAuthInit(payload: ByteArray): LogicalResponse {
         return try {
             onLog("STD: Phase 1 - Key Exchange")
             val startIndex = payload.indexOf(0x04.toByte())
             if (startIndex == -1 || payload.size - startIndex < 65) {
                 Log.e("StandardTx", "AuthInit: Invalid Reader Public Key")
-                return byteArrayOf(MSG_ERR_GENERAL)
+                return LogicalResponse(MSG_ERR_GENERAL)
             }
 
             val vehiclePKBytes = payload.sliceArray(startIndex until startIndex + 65)
@@ -123,17 +125,18 @@ class StandardTransaction(
             logBytes("App PK (Identity)", identityCrypto.getPublicKey())
             logBytes("Generated AppNonce", appNonce)
             
-            HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public) + appNonce!!
+            val responseData = HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public) + appNonce!!
+            LogicalResponse(MSG_GLOBAL_SUCCESS, responseData)
         } catch (e: Exception) {
             Log.e("StandardTx", "AuthInit exception: ${e.message}")
-            byteArrayOf(MSG_ERR_GENERAL)
+            LogicalResponse(MSG_ERR_GENERAL)
         }
     }
 
-    private fun handleMutualVerify(payload: ByteArray): ByteArray {
+    private fun handleMutualVerify(payload: ByteArray): LogicalResponse {
         val sessionKey = currentSessionKey ?: run {
             Log.e("StandardTx", "MutualVerify: Session Key is null")
-            return SW_DECRYPTION_FAILED
+            return LogicalResponse(MSG_ERR_AUTH_FAIL)
         }
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
@@ -141,7 +144,7 @@ class StandardTransaction(
 
             if (buffer.remaining() < 16 + CryptoConstants.ML_DSA_65_SIG_SIZE + 16) {
                 Log.e("StandardTx", "MutualVerify: Payload too short. Remaining: ${buffer.remaining()}")
-                return byteArrayOf(MSG_ERR_GENERAL)
+                return LogicalResponse(MSG_ERR_GENERAL)
             }
 
             val moduleId = ByteArray(16).also { buffer.get(it) }
@@ -157,12 +160,12 @@ class StandardTransaction(
                 ?: run {
                     Log.e("StandardTx", "MutualVerify: ModuleID not found in storage")
                     onLog("Error: ModuleID not found.")
-                    return byteArrayOf(MSG_ERR_AUTH_FAIL)
+                    return LogicalResponse(MSG_ERR_AUTH_FAIL)
                 }
 
             val vehiclePK = record.core.vehiclePublicKey ?: run {
                 Log.e("StandardTx", "MutualVerify: Vehicle Public Key not found in record")
-                return byteArrayOf(MSG_ERR_AUTH_FAIL)
+                return LogicalResponse(MSG_ERR_AUTH_FAIL)
             }
             
             logBytes("Stored Vehicle PK", vehiclePK)
@@ -170,7 +173,7 @@ class StandardTransaction(
             if (!identityCrypto.verify(appNonce!!, vehicleSig, vehiclePK)) {
                 Log.e("StandardTx", "MutualVerify: Vehicle PQC Signature Verification FAILED")
                 onLog("Error: Vehicle PQC Sig Invalid")
-                return byteArrayOf(MSG_ERR_AUTH_FAIL)
+                return LogicalResponse(MSG_ERR_AUTH_FAIL)
             }
             
             isCarVerified = true
@@ -178,62 +181,64 @@ class StandardTransaction(
 
             val deviceSK = record.devicePrivateKey ?: run {
                 Log.e("StandardTx", "MutualVerify: Device Private Key is null")
-                return byteArrayOf(MSG_ERR_GENERAL)
+                return LogicalResponse(MSG_ERR_GENERAL)
             }
             
             val appSig = identityCrypto.sign(readerChallenge, deviceSK)
             if (appSig.isEmpty()) {
                 Log.e("StandardTx", "MutualVerify: Signing reader challenge FAILED (empty signature)")
-                return byteArrayOf(MSG_ERR_GENERAL)
+                return LogicalResponse(MSG_ERR_GENERAL)
             }
             
             logBytes("Generated App Sig", appSig)
             
             isDeviceVerified = true
             onLog("STD: Mutual Auth Success")
-            CryptoUtils.encryptAesGcm((record.core.keyID ?: ByteArray(8)) + appSig, sessionKey)
+            val encrypted = CryptoUtils.encryptAesGcm((record.core.keyID ?: ByteArray(8)) + appSig, sessionKey)
+            LogicalResponse(MSG_GLOBAL_SUCCESS, encrypted)
         } catch (e: Exception) {
             Log.e("StandardTx", "MutualVerify exception: ${e.message}")
             e.printStackTrace()
-            byteArrayOf(MSG_ERR_GENERAL)
+            LogicalResponse(MSG_ERR_GENERAL)
         }
     }
 
-    private fun handleActionSync(payload: ByteArray): ByteArray {
-        val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
-        val secret = sharedSecret ?: return byteArrayOf(MSG_ERR_GENERAL)
-        val record = activeRecord ?: return byteArrayOf(MSG_ERR_GENERAL)
+    private fun handleActionSync(payload: ByteArray): LogicalResponse {
+        val sessionKey = currentSessionKey ?: return LogicalResponse(MSG_ERR_AUTH_FAIL)
+        val secret = sharedSecret ?: return LogicalResponse(MSG_ERR_GENERAL)
+        val record = activeRecord ?: return LogicalResponse(MSG_ERR_GENERAL)
 
         return try {
             onLog("STD: Phase 3 - Derive Fast Key & Sync")
             
             val immotoken = record.core.immobilizerToken ?: run {
                 Log.e("StandardTx", "ActionSync: Immobilizer Token is null")
-                return byteArrayOf(MSG_ERR_GENERAL)
+                return LogicalResponse(MSG_ERR_GENERAL)
             }
             
             stagedFastKey = CryptoUtils.deriveSessionKey(secret, immotoken, CryptoConstants.FAST_KEY_REFRESH.toByteArray(), 32)
             stagedCounter = 0
             
             onLog("STD: Action Req received. Proposing UNLOCK + Sync.")
-            val response = byteArrayOf(STD_MSG_SYNC_OK, INS_UNLOCK)
-            CryptoUtils.encryptAesGcm(response, sessionKey)
+            val responseData = byteArrayOf(STD_MSG_SYNC_OK, INS_UNLOCK)
+            val encrypted = CryptoUtils.encryptAesGcm(responseData, sessionKey)
+            LogicalResponse(MSG_GLOBAL_SUCCESS, encrypted)
         } catch (e: Exception) {
             Log.e("StandardTx", "ActionSync exception: ${e.message}")
-            byteArrayOf(MSG_ERR_GENERAL)
+            LogicalResponse(MSG_ERR_GENERAL)
         }
     }
 
-    private fun handleFinalCommit(payload: ByteArray): ByteArray {
-        val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
-        val record = activeRecord ?: return byteArrayOf(MSG_ERR_GENERAL)
-        val newKey = stagedFastKey ?: return byteArrayOf(MSG_ERR_GENERAL)
+    private fun handleFinalCommit(payload: ByteArray): LogicalResponse {
+        val sessionKey = currentSessionKey ?: return LogicalResponse(MSG_ERR_AUTH_FAIL)
+        val record = activeRecord ?: return LogicalResponse(MSG_ERR_GENERAL)
+        val newKey = stagedFastKey ?: return LogicalResponse(MSG_ERR_GENERAL)
 
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
             if (decrypted.size < 2) {
                 Log.e("StandardTx", "FinalCommit: Payload too short (${decrypted.size})")
-                return byteArrayOf(MSG_ERR_GENERAL)
+                return LogicalResponse(MSG_ERR_GENERAL)
             }
 
             val execResult = decrypted[0]
@@ -244,15 +249,15 @@ class StandardTransaction(
                 storageManager.updateFastKeyAndCounter(record.core.keyID!!, newKey, stagedCounter)
                 isComplete = true
                 onLog("STD: Recovery Complete. Transaction Finalized.")
-                SW_SUCCESS
+                LogicalResponse(MSG_GLOBAL_SUCCESS)
             } else {
                 Log.e("StandardTx", "FinalCommit: Execution Failed at Reader. Result=$execResult, Marker=$commitMarker")
                 onLog("STD: Execution Failed at Reader")
-                byteArrayOf(MSG_ERR_GENERAL)
+                LogicalResponse(MSG_ERR_GENERAL)
             }
         } catch (e: Exception) {
             Log.e("StandardTx", "FinalCommit exception: ${e.message}")
-            byteArrayOf(MSG_ERR_GENERAL)
+            LogicalResponse(MSG_ERR_GENERAL)
         }
     }
 }

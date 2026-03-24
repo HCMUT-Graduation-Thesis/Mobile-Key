@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
+import com.example.a100_basiccrypto.shared.link.LogicalResponse
 import com.example.a100_basiccrypto.shared.link.TransactionRouter
 import com.example.a100_basiccrypto.shared.link.ITransactionHandler
 import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_ADMIN
@@ -20,6 +21,8 @@ import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_START_EN
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_STOP_ENGINE
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_UNLOCK
 import com.example.a100_basiccrypto.shared.command.MessageConstants.FINAL_COMMIT
+import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_GLOBAL_SUCCESS
+import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_GENERAL
 import com.example.a100_basiccrypto.shared.policy.TransportType
 import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.CLA_ISO
@@ -163,25 +166,26 @@ class MyHostApduService : HostApduService() {
         val response = if (fullPayload != null) {
             val inputFrame = LogicalFrame(cla, ins, fullPayload)
             
-            val responseFrame = if (cla == CLASS_FRIEND_PAIRING) {
-                val resultPayload = friendPairingHandler?.processCommand(inputFrame) ?: byteArrayOf(0xE0.toByte())
-                LogicalFrame(cla, ins, resultPayload)
+            val logicalResponse = if (cla == CLASS_FRIEND_PAIRING) {
+                friendPairingHandler?.processCommand(inputFrame) ?: LogicalResponse(MSG_ERR_GENERAL)
             } else {
                 router.route(inputFrame, TransportType.NFC)
             }
             
-            val result = responseFrame.payload
+            val result = logicalResponse.serialize()
             
             // Handle NFC Result Broadcasts
-            handleActionBroadcasts(cla, ins, result)
+            handleActionBroadcasts(cla, ins, logicalResponse)
 
             if (result.size > MAX_APDU_PAYLOAD_SIZE) {
                 chainingManager.setOutgoingBuffer(result)
                 chainingManager.getNextOutgoingChunk(0)
             } else {
+                // If it's already a full APDU response (2 bytes error code), send as is
                 if (result.size == 2 && (result[0].toInt() and 0xFF) >= 0x60) {
                     result
                 } else {
+                    // For LogicalResponse, serialize it and append SW_SUCCESS for NFC
                     result + SW_SUCCESS
                 }
             }
@@ -193,7 +197,7 @@ class MyHostApduService : HostApduService() {
         return response
     }
 
-    private fun handleActionBroadcasts(cla: Byte, ins: Byte, result: ByteArray) {
+    private fun handleActionBroadcasts(cla: Byte, ins: Byte, response: LogicalResponse) {
         val actionName = when {
             cla == CLASS_FAST_ACTION && ins == INS_UNLOCK -> "UNLOCK"
             cla == CLASS_FAST_ACTION && ins == INS_LOCK -> "LOCK"
@@ -205,11 +209,7 @@ class MyHostApduService : HostApduService() {
         }
 
         if (actionName != null) {
-            val isSuccess = if (cla == CLASS_FRIEND_PAIRING || cla == CLASS_ADMIN) {
-                result.contentEquals(byteArrayOf(0x90.toByte())) || result.contentEquals(SW_SUCCESS)
-            } else {
-                result.size > 2
-            }
+            val isSuccess = response.status == MSG_GLOBAL_SUCCESS
             broadcastResultToActivity(actionName, isSuccess)
         }
     }

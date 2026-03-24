@@ -10,6 +10,7 @@ import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.normalize
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.shared.link.ITransactionHandler
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
+import com.example.a100_basiccrypto.shared.link.LogicalResponse
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.physical.NfcConstants
 import java.nio.ByteBuffer
@@ -36,7 +37,7 @@ class FriendPairingTransaction(
     private var ephemeralKeyPair: KeyPair? = null
     private var isComplete = false
 
-    override fun processCommand(frame: LogicalFrame): ByteArray {
+    override fun processCommand(frame: LogicalFrame): LogicalResponse {
         return when (frame.msgId) {
             MessageConstants.PHASE_FRIEND_INIT -> handleInit()
             MessageConstants.PHASE_FRIEND_KEM -> handleEcdhExchange(frame.payload)
@@ -44,7 +45,7 @@ class FriendPairingTransaction(
             MessageConstants.PHASE_FRIEND_POP -> handleProofOfPossession(frame.payload)
             MessageConstants.PHASE_FRIEND_PROV -> handleProvisioning(frame.payload)
             MessageConstants.PHASE_FRIEND_COMMIT -> handleCommit()
-            else -> byteArrayOf(MessageConstants.MSG_ERR_GENERAL)
+            else -> LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
         }
     }
 
@@ -57,37 +58,31 @@ class FriendPairingTransaction(
 
     override fun isTransactionComplete(): Boolean = isComplete
 
-    private fun handleInit(): ByteArray {
+    private fun handleInit(): LogicalResponse {
         onLog("Phase 1: Generating ECDH Ephemeral Key & Sending PK")
         return try {
-            // 1. Generate ephemeral ECDH keypair for the App
             val keyPair = CryptoUtils.generateEcKeyPair()
             ephemeralKeyPair = keyPair
 
-            // 2. Extract uncompressed Public Key (65 bytes)
             val ecPubKey = keyPair.public as ECPublicKey
             val x = CryptoUtils.run { ecPubKey.w.affineX.toByteArray().normalize(32) }
             val y = CryptoUtils.run { ecPubKey.w.affineY.toByteArray().normalize(32) }
             val pk = byteArrayOf(0x04.toByte()) + x + y
 
-            // 3. Return PK + Success code
-            pk + byteArrayOf(MessageConstants.MSG_GLOBAL_SUCCESS)
+            LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS, pk)
         } catch (e: Exception) {
             Log.e(TAG, "Init error: ${e.message}")
-            byteArrayOf(MessageConstants.MSG_ERR_GENERAL)
+            LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
         }
     }
-    private fun handleEcdhExchange(payload: ByteArray): ByteArray {
+
+    private fun handleEcdhExchange(payload: ByteArray): LogicalResponse {
         onLog("Phase 2: Computing Shared Secret (ECDH)")
         return try {
-            // 1. Receive Reader's Public Key from payload (65 bytes)
             val readerPK = CryptoUtils.getPublicKeyFromBytes(payload)
             val myPriv = ephemeralKeyPair?.private ?: throw IllegalStateException("Ephemeral key missing")
-
-            // 2. Perform ECDH Key Agreement
             val sharedSecret = CryptoUtils.generateSharedSecret(myPriv, readerPK)
 
-            // 3. Derive Session Key using HKDF
             val sKey = CryptoUtils.deriveSessionKey(
                 ikm = sharedSecret,
                 salt = CryptoConstants.FRIEND_ECDH_SALT.toByteArray(),
@@ -96,26 +91,24 @@ class FriendPairingTransaction(
             )
             sessionKey = sKey
 
-            // LOG SESSION KEY FOR DEBUGGING
             Log.d(TAG, "SESSION_KEY (Phase 2): ${sKey.joinToString("") { "%02X".format(it) }}")
             onLog("System: Session Key established.")
 
-            // 4. Release ephemeral keys
             ephemeralKeyPair = null
-            byteArrayOf(MessageConstants.MSG_GLOBAL_SUCCESS)
+            LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS)
         } catch (e: Exception) {
             Log.e(TAG, "ECDH error: ${e.message}")
-            byteArrayOf(MessageConstants.MSG_ERR_GENERAL)
+            LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
         }
     }
 
-    private fun handleVerifyAttestation(payload: ByteArray): ByteArray {
-        val sKey = sessionKey ?: return NfcConstants.SW_DECRYPTION_FAILED
+    private fun handleVerifyAttestation(payload: ByteArray): LogicalResponse {
+        val sKey = sessionKey ?: return LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
         return try {
             onLog("Phase 3.1: Sending Authorization (AP) & Identity PK")
 
             val identityPK = identityCrypto.getPublicKey()
-            val ap = record.attestationPackage ?: return NfcConstants.SW_INTERNAL_ERROR
+            val ap = record.attestationPackage ?: return LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
 
             val codeBytes = pairingCode.toByteArray().run {
                 if (size < 32) this + ByteArray(32 - size) else this
@@ -129,42 +122,42 @@ class FriendPairingTransaction(
                 put(codeBytes)
             }.array()
 
-            // Append 0x90 at the end of encrypted packet for Reader logic consistency
-            CryptoUtils.encryptAesGcm(bundle, sKey) + byteArrayOf(MessageConstants.MSG_GLOBAL_SUCCESS)
+            val encrypted = CryptoUtils.encryptAesGcm(bundle, sKey)
+            LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS, encrypted)
         } catch (e: Exception) {
             Log.e(TAG, "Phase 3.1 error: ${e.message}")
-            NfcConstants.SW_INTERNAL_ERROR
+            LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
         }
     }
 
-    private fun handleProofOfPossession(payload: ByteArray): ByteArray {
-        val sKey = sessionKey ?: return NfcConstants.SW_DECRYPTION_FAILED
+    private fun handleProofOfPossession(payload: ByteArray): LogicalResponse {
+        val sKey = sessionKey ?: return LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sKey)
 
             if (decrypted.size == 1 && decrypted[0] == MessageConstants.ERR_FRIEND_INVCODE_MISMATCH) {
                 onLog("Error: Invitation Code mismatch on Vehicle")
-                return byteArrayOf(MessageConstants.ERR_FRIEND_INVCODE_MISMATCH)
+                return LogicalResponse(MessageConstants.ERR_FRIEND_INVCODE_MISMATCH)
             }
 
             onLog("Phase 3.2: Signing Challenge Nonce (ML-DSA 3)")
             val signature = identityCrypto.sign(decrypted, identityCrypto.getPrivateKey())
 
-            // Append 0x90 at the end of encrypted packet
-            CryptoUtils.encryptAesGcm(signature, sKey) + byteArrayOf(MessageConstants.MSG_GLOBAL_SUCCESS)
+            val encrypted = CryptoUtils.encryptAesGcm(signature, sKey)
+            LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS, encrypted)
         } catch (e: Exception) {
             Log.e(TAG, "Phase 3.2 error: ${e.message}")
-            NfcConstants.SW_DECRYPTION_FAILED
+            LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
         }
     }
 
-    private fun handleProvisioning(payload: ByteArray): ByteArray {
-        val sKey = sessionKey ?: return NfcConstants.SW_DECRYPTION_FAILED
+    private fun handleProvisioning(payload: ByteArray): LogicalResponse {
+        val sKey = sessionKey ?: return LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sKey)
             if (decrypted.size == 1 && decrypted[0] == MessageConstants.ERR_FRIEND_POP_FAILED) {
                 onLog("Error: Identity proof failed on Vehicle")
-                return byteArrayOf(MessageConstants.ERR_FRIEND_POP_FAILED)
+                return LogicalResponse(MessageConstants.ERR_FRIEND_POP_FAILED)
             }
 
             onLog("Phase 4: Receiving Operational Data")
@@ -189,14 +182,14 @@ class FriendPairingTransaction(
             }
 
             storageManager.saveDigitalKey(record)
-            byteArrayOf(MessageConstants.MSG_GLOBAL_SUCCESS)
+            LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS)
         } catch (e: Exception) {
             Log.e(TAG, "Phase 4 error: ${e.message}")
-            NfcConstants.SW_DECRYPTION_FAILED
+            LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
         }
     }
 
-    private fun handleCommit(): ByteArray {
+    private fun handleCommit(): LogicalResponse {
         record.core.keyState = KeyState.ACTIVE
         storageManager.saveDigitalKey(record)
 
@@ -205,6 +198,6 @@ class FriendPairingTransaction(
         CryptoUtils.secureClear(sessionKey)
         sessionKey = null
 
-        return byteArrayOf(MessageConstants.MSG_GLOBAL_SUCCESS)
+        return LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS)
     }
 }

@@ -5,12 +5,15 @@ import com.example.a100_basiccrypto.shared.model.CarMetadata
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
+import com.example.a100_basiccrypto.shared.link.LogicalResponse
 import com.example.a100_basiccrypto.shared.link.ITransactionHandler
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_COMMIT
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_DATA_SYNC
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_KEY_EXCHANGE
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_PAIRING_REQ
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_VERIFY_NONCE
+import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_GLOBAL_SUCCESS
+import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_GENERAL
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.shared.crypto.HandshakeProtector
@@ -44,14 +47,14 @@ class OwnerPairingTransaction(
     
     private val gson = Gson()
 
-    override fun processCommand(frame: LogicalFrame): ByteArray {
+    override fun processCommand(frame: LogicalFrame): LogicalResponse {
         return when (frame.msgId) {
             PHASE_PAIRING_REQ -> handleStartPairing()
             PHASE_KEY_EXCHANGE -> handleExchangePubKey(frame.payload)
             PHASE_VERIFY_NONCE -> handleVerifyNonce(frame.payload)
             PHASE_DATA_SYNC -> handleExchangeVehicleData(frame.payload)
             PHASE_COMMIT -> handleCommitPairing(frame.payload)
-            else -> byteArrayOf(0xE0.toByte())
+            else -> LogicalResponse(MSG_ERR_GENERAL)
         }
     }
 
@@ -64,12 +67,12 @@ class OwnerPairingTransaction(
 
     override fun isTransactionComplete(): Boolean = isComplete
 
-    private fun handleStartPairing(): ByteArray {
+    private fun handleStartPairing(): LogicalResponse {
         onLog("Phase 1: Pairing Request Received")
-        return ByteArray(0)
+        return LogicalResponse(MSG_GLOBAL_SUCCESS)
     }
 
-    private fun handleExchangePubKey(payload: ByteArray): ByteArray {
+    private fun handleExchangePubKey(payload: ByteArray): LogicalResponse {
         return try {
             onLog("Phase 2.a: Key Exchange")
             val pubKeyReaderBytes = payload.sliceArray(0 until 65)
@@ -83,15 +86,16 @@ class OwnerPairingTransaction(
             )
 
             onLog("Phase 2.a: Session Key established")
-            HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public)
+            val responseData = HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public)
+            LogicalResponse(MSG_GLOBAL_SUCCESS, responseData)
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 2a: ${e.message}")
-            SW_INTERNAL_ERROR
+            LogicalResponse(MSG_ERR_GENERAL)
         }
     }
 
-    private fun handleVerifyNonce(payload: ByteArray): ByteArray {
-        val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
+    private fun handleVerifyNonce(payload: ByteArray): LogicalResponse {
+        val sessionKey = currentSessionKey ?: return LogicalResponse(MSG_ERR_GENERAL)
         return try {
             val decrypted2b = CryptoUtils.decryptAesGcm(payload, sessionKey)
             onLog("Phase 2.b: Nonce verified")
@@ -100,16 +104,17 @@ class OwnerPairingTransaction(
             val hcePubKey = identityCrypto.getPublicKey()
             Log.d(TAG, "Phase 2.b: Sending App Identity Raw PK, size: ${hcePubKey.size} bytes")
             
-            val response = decrypted2b.sliceArray(0 until 16) + hcePubKey
-            CryptoUtils.encryptAesGcm(response, sessionKey)
+            val responseData = decrypted2b.sliceArray(0 until 16) + hcePubKey
+            val encrypted = CryptoUtils.encryptAesGcm(responseData, sessionKey)
+            LogicalResponse(MSG_GLOBAL_SUCCESS, encrypted)
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 2b: ${e.message}")
-            SW_DECRYPTION_FAILED
+            LogicalResponse(MSG_ERR_GENERAL)
         }
     }
 
-    private fun handleExchangeVehicleData(payload: ByteArray): ByteArray {
-        val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
+    private fun handleExchangeVehicleData(payload: ByteArray): LogicalResponse {
+        val sessionKey = currentSessionKey ?: return LogicalResponse(MSG_ERR_GENERAL)
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
             onLog("Phase 3: Data Received (${decryptedData.size} bytes)")
@@ -125,7 +130,7 @@ class OwnerPairingTransaction(
                 Log.d(TAG, "Vehicle Raw PK extracted: ${vehiclePK.size} bytes")
             } else {
                 Log.e(TAG, "Phase 3 error: Payload too short for Raw PK")
-                return SW_DECRYPTION_FAILED
+                return LogicalResponse(MSG_ERR_GENERAL)
             }
 
             // 2. KeyID (8 bytes)
@@ -195,15 +200,16 @@ class OwnerPairingTransaction(
             storageManager.saveDigitalKey(record)
             
             onLog("Phase 3 Complete. Raw Identity Keys saved.")
-            CryptoUtils.encryptAesGcm(record.core.devicePublicKey!!, sessionKey)
+            val encrypted = CryptoUtils.encryptAesGcm(record.core.devicePublicKey!!, sessionKey)
+            LogicalResponse(MSG_GLOBAL_SUCCESS, encrypted)
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 3: ${e.message}")
-            SW_DECRYPTION_FAILED
+            LogicalResponse(MSG_ERR_GENERAL)
         }
     }
 
-    private fun handleCommitPairing(payload: ByteArray): ByteArray {
-        val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
+    private fun handleCommitPairing(payload: ByteArray): LogicalResponse {
+        val sessionKey = currentSessionKey ?: return LogicalResponse(MSG_ERR_GENERAL)
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
             if (decryptedData.size == 1 && decryptedData[0] == 0x01.toByte()) {
@@ -213,18 +219,18 @@ class OwnerPairingTransaction(
                     storageManager.saveDigitalKey(recordToActivate)
                     onLog("Phase 4: Pairing Complete! Key is ACTIVE")
                     isComplete = true
-                    ByteArray(0)
+                    LogicalResponse(MSG_GLOBAL_SUCCESS)
                 } else {
                     Log.e(TAG, "Error Phase 4: No pending record to activate")
-                    SW_DECRYPTION_FAILED
+                    LogicalResponse(MSG_ERR_GENERAL)
                 }
             } else {
                 Log.e(TAG, "Error Phase 4: Invalid commitment signal")
-                SW_DECRYPTION_FAILED
+                LogicalResponse(MSG_ERR_GENERAL)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 4: ${e.message}")
-            SW_DECRYPTION_FAILED
+            LogicalResponse(MSG_ERR_GENERAL)
         }
     }
 }
