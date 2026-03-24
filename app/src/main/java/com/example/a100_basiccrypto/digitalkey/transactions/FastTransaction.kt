@@ -4,17 +4,15 @@ import android.util.Log
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.example.a100_basiccrypto.shared.link.ITransactionHandler
-import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_LOCK
-import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_UNLOCK
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_START_ENGINE
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_STOP_ENGINE
 import com.example.a100_basiccrypto.shared.command.MessageConstants.FAST_COMMIT
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_AUTH_FAIL
-import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_DESYNC
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_GENERAL
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_PERMISSION
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_GLOBAL_SUCCESS
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
+import com.example.a100_basiccrypto.shared.crypto.CryptoConstants
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import java.nio.ByteBuffer
@@ -53,11 +51,11 @@ class FastTransaction(
         val buffer = ByteBuffer.wrap(frame.payload)
         
         // 1. Identification (Cleartext ModuleID per spec)
-        if (buffer.remaining() < 16) {
+        if (buffer.remaining() < CryptoConstants.MODULE_ID_SIZE) {
             onLog("FastTx Error: ModuleID missing")
             return byteArrayOf(MSG_ERR_GENERAL, 0x01.toByte())
         }
-        val targetModuleID = ByteArray(16)
+        val targetModuleID = ByteArray(CryptoConstants.MODULE_ID_SIZE)
         buffer.get(targetModuleID)
 
         // 2. Query Active Key
@@ -80,13 +78,13 @@ class FastTransaction(
         // 4. Phase 2 Response (Encrypted)
         // Payload: [MSG_GLOBAL_SUCCESS] [TempCounter (4B)] + [Optional Token (64B)]
         val isEngineCmd = (frame.msgId == INS_START_ENGINE || frame.msgId == INS_STOP_ENGINE)
-        val responseSize = 1 + 4 + (if (isEngineCmd) 64 else 0)
+        val responseSize = 1 + 4 + (if (isEngineCmd) CryptoConstants.IMMOBILIZER_TOKEN_SIZE else 0)
         
         val responsePlain = ByteBuffer.allocate(responseSize).apply {
             put(MSG_GLOBAL_SUCCESS)
             putInt(tempCounter)
             if (isEngineCmd) {
-                put(record.core.immobilizerToken ?: ByteArray(64))
+                put(record.core.immobilizerToken ?: ByteArray(CryptoConstants.IMMOBILIZER_TOKEN_SIZE))
             }
         }.array()
 

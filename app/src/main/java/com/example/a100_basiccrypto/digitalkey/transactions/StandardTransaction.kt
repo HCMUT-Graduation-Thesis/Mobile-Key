@@ -17,6 +17,7 @@ import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_UNLOCK
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
 import com.example.a100_basiccrypto.shared.crypto.HandshakeProtector
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
+import com.example.a100_basiccrypto.shared.crypto.CryptoConstants
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_DECRYPTION_FAILED
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_SUCCESS
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
@@ -48,10 +49,6 @@ class StandardTransaction(
     private var isCarVerified = false
     private var isDeviceVerified = false
     private var isComplete = false
-
-    private val STD_HKDF_INFO = "STD_SESSION"
-    private val FAST_KEY_REFRESH = "FAST_KEY_REFRESH"
-    private val DILITHIUM3_SIG_SIZE = 3309
 
     // Helper to log bytes in Hex with truncation
     private fun logBytes(label: String, data: ByteArray?) {
@@ -117,7 +114,7 @@ class StandardTransaction(
 
             val salt = passwordProvider().toByteArray()
             currentSessionKey = HandshakeProtector.deriveSessionKey(
-                ephemeralKeyPair!!.private, vehicleEphemeralPK, salt, STD_HKDF_INFO
+                ephemeralKeyPair!!.private, vehicleEphemeralPK, salt, CryptoConstants.STD_SESSION_INFO
             )
 
             sharedSecret = CryptoUtils.generateSharedSecret(ephemeralKeyPair!!.private, vehicleEphemeralPK)
@@ -142,13 +139,13 @@ class StandardTransaction(
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
             val buffer = ByteBuffer.wrap(decrypted)
 
-            if (buffer.remaining() < 16 + DILITHIUM3_SIG_SIZE + 16) {
+            if (buffer.remaining() < 16 + CryptoConstants.ML_DSA_65_SIG_SIZE + 16) {
                 Log.e("StandardTx", "MutualVerify: Payload too short. Remaining: ${buffer.remaining()}")
                 return byteArrayOf(MSG_ERR_GENERAL)
             }
 
             val moduleId = ByteArray(16).also { buffer.get(it) }
-            val vehicleSig = ByteArray(DILITHIUM3_SIG_SIZE).also { buffer.get(it) }
+            val vehicleSig = ByteArray(CryptoConstants.ML_DSA_65_SIG_SIZE).also { buffer.get(it) }
             val readerChallenge = ByteArray(16).also { buffer.get(it) }
 
             logBytes("Received ModuleID", moduleId)
@@ -215,7 +212,7 @@ class StandardTransaction(
                 return byteArrayOf(MSG_ERR_GENERAL)
             }
             
-            stagedFastKey = CryptoUtils.deriveSessionKey(secret, immotoken, FAST_KEY_REFRESH.toByteArray(), 32)
+            stagedFastKey = CryptoUtils.deriveSessionKey(secret, immotoken, CryptoConstants.FAST_KEY_REFRESH.toByteArray(), 32)
             stagedCounter = 0
             
             onLog("STD: Action Req received. Proposing UNLOCK + Sync.")

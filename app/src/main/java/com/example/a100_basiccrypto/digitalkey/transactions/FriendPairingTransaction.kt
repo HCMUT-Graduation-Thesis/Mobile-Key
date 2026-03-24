@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import com.example.a100_basiccrypto.shared.command.MessageConstants
+import com.example.a100_basiccrypto.shared.crypto.CryptoConstants
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.normalize
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
@@ -29,7 +30,6 @@ class FriendPairingTransaction(
 
     companion object {
         private const val TAG = "FriendPairingTrans"
-        private const val FAST_AUTH_TAG = "DIGITAL_KEY_FAST_AUTH"
     }
 
     private var sessionKey: ByteArray? = null
@@ -90,9 +90,9 @@ class FriendPairingTransaction(
             // 3. Derive Session Key using HKDF
             val sKey = CryptoUtils.deriveSessionKey(
                 ikm = sharedSecret,
-                salt = "FRIEND_ECDH_SALT".toByteArray(),
-                info = "FRIEND_SESSION_V1".toByteArray(),
-                length = 32
+                salt = CryptoConstants.FRIEND_ECDH_SALT.toByteArray(),
+                info = CryptoConstants.FRIEND_SESSION_INFO.toByteArray(),
+                length = CryptoConstants.DEFAULT_SESSION_KEY_SIZE
             )
             sessionKey = sKey
 
@@ -172,11 +172,16 @@ class FriendPairingTransaction(
 
             record.apply {
                 core.slotID = buffer.get()
-                core.keyID = ByteArray(8).apply { buffer.get(this) }
-                core.immobilizerToken = ByteArray(64).apply { buffer.get(this) }
+                core.keyID = ByteArray(CryptoConstants.KEY_ID_SIZE).apply { buffer.get(this) }
+                core.immobilizerToken = ByteArray(CryptoConstants.IMMOBILIZER_TOKEN_SIZE).apply { buffer.get(this) }
                 core.permissions = buffer.int
 
-                core.fastAuthKey = CryptoUtils.deriveSessionKey(sKey, pairingCode.toByteArray(), FAST_AUTH_TAG.toByteArray(), 32)
+                core.fastAuthKey = CryptoUtils.deriveSessionKey(
+                    sKey, 
+                    pairingCode.toByteArray(), 
+                    CryptoConstants.FAST_AUTH_TAG.toByteArray(), 
+                    CryptoConstants.DEFAULT_SESSION_KEY_SIZE
+                )
 
                 devicePrivateKey = identityCrypto.getPrivateKey()
                 core.devicePublicKey = identityCrypto.getPublicKey()

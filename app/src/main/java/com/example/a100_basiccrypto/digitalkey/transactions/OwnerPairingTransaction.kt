@@ -15,6 +15,7 @@ import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.shared.crypto.HandshakeProtector
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
+import com.example.a100_basiccrypto.shared.crypto.CryptoConstants
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_DECRYPTION_FAILED
 import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_INTERNAL_ERROR
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
@@ -34,7 +35,6 @@ class OwnerPairingTransaction(
 
     companion object {
         private const val TAG = "OwnerPairing"
-        private const val RAW_ML_DSA_65_PK_SIZE = 1952
     }
 
     private var currentSessionKey: ByteArray? = null
@@ -42,8 +42,6 @@ class OwnerPairingTransaction(
     private var isComplete = false
     private var pendingRecord: DigitalKeyRecord? = null
     
-    private val HKDF_INFO = "NFC_OWNER_CONFIRM"
-    private val FAST_AUTH_TAG = "DIGITAL_KEY_FAST_AUTH"
     private val gson = Gson()
 
     override fun processCommand(frame: LogicalFrame): ByteArray {
@@ -81,7 +79,7 @@ class OwnerPairingTransaction(
             
             val salt = passwordProvider().toByteArray()
             currentSessionKey = HandshakeProtector.deriveSessionKey(
-                ephemeralKeyPair!!.private, pubKeyReader, salt, HKDF_INFO
+                ephemeralKeyPair!!.private, pubKeyReader, salt, CryptoConstants.OWNER_SESSION_INFO
             )
 
             onLog("Phase 2.a: Session Key established")
@@ -120,8 +118,8 @@ class OwnerPairingTransaction(
             val record = DigitalKeyRecord()
 
             // 1. Read Raw Vehicle Public Key (Exactly 1952 bytes for ML-DSA-65)
-            if (buffer.remaining() >= RAW_ML_DSA_65_PK_SIZE) {
-                val vehiclePK = ByteArray(RAW_ML_DSA_65_PK_SIZE)
+            if (buffer.remaining() >= CryptoConstants.ML_DSA_65_PK_SIZE) {
+                val vehiclePK = ByteArray(CryptoConstants.ML_DSA_65_PK_SIZE)
                 buffer.get(vehiclePK)
                 record.core.vehiclePublicKey = vehiclePK
                 Log.d(TAG, "Vehicle Raw PK extracted: ${vehiclePK.size} bytes")
@@ -186,7 +184,7 @@ class OwnerPairingTransaction(
             }
 
             val salt = passwordProvider().toByteArray()
-            record.core.fastAuthKey = CryptoUtils.deriveSessionKey(sessionKey, salt, FAST_AUTH_TAG.toByteArray(), 32)
+            record.core.fastAuthKey = CryptoUtils.deriveSessionKey(sessionKey, salt, CryptoConstants.FAST_AUTH_TAG.toByteArray(), 32)
             
             // Store Raw Keys
             record.devicePrivateKey = identityCrypto.getPrivateKey()
