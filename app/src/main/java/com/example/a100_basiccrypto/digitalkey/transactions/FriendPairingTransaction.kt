@@ -77,7 +77,6 @@ class FriendPairingTransaction(
             byteArrayOf(MessageConstants.MSG_ERR_GENERAL)
         }
     }
-
     private fun handleEcdhExchange(payload: ByteArray): ByteArray {
         onLog("Phase 2: Computing Shared Secret (ECDH)")
         return try {
