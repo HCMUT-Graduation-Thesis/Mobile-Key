@@ -1,70 +1,86 @@
 package com.example.a100_basiccrypto.shared.crypto
 
-import org.bouncycastle.jce.provider.BouncyCastleProvider
-import org.bouncycastle.jcajce.spec.MLDSAParameterSpec
-import java.security.*
-import java.security.spec.PKCS8EncodedKeySpec
-import java.security.spec.X509EncodedKeySpec
+import org.bouncycastle.pqc.crypto.mldsa.MLDSAParameters
+import org.bouncycastle.pqc.crypto.mldsa.MLDSAPublicKeyParameters
+import org.bouncycastle.pqc.crypto.mldsa.MLDSAPrivateKeyParameters
+import org.bouncycastle.pqc.crypto.mldsa.MLDSASigner
+import org.bouncycastle.pqc.crypto.mldsa.MLDSAKeyPairGenerator
+import org.bouncycastle.pqc.crypto.mldsa.MLDSAKeyGenerationParameters
+import java.security.SecureRandom
 
 /**
- * Implementation of ML-DSA (Standardized Dilithium) Crypto 
- * using the BouncyCastle provider instance directly.
- * Shared between Mobile App and Vehicle.
+ * Implementation of ML-DSA-65 (FIPS 204 Standard).
+ * Compatible with ML-DSA on ESP32 (3309 bytes signature).
  */
 class DilithiumIdentityCryptoImpl : IIdentityCrypto {
 
-    private val bcProvider: Provider = BouncyCastleProvider()
-    private val keyPair: KeyPair
+    // Using ML-DSA-65 (Equivalent to Dilithium3 but FIPS 204 standard)
+    private val params = MLDSAParameters.ml_dsa_65
+    private val publicKeyParams: MLDSAPublicKeyParameters
+    private val privateKeyParams: MLDSAPrivateKeyParameters
 
     init {
-        try {
-            // Use "ML-DSA" instead of "Dilithium" for standardization
-            val kpg = KeyPairGenerator.getInstance("ML-DSA", bcProvider)
-            
-            // dilithium3 corresponds to ml_dsa_65 as per FIPS 204
-            kpg.initialize(MLDSAParameterSpec.ml_dsa_65, SecureRandom())
-
-            keyPair = kpg.generateKeyPair()
-        } catch (e: Exception) {
-            println("DilithiumCrypto: Init failed: ${e.message}")
-            throw RuntimeException("Failed to initialize ML-DSA KeyPairGenerator", e)
-        }
+        val engine = MLDSAKeyPairGenerator()
+        engine.init(MLDSAKeyGenerationParameters(SecureRandom(), params))
+        val pair = engine.generateKeyPair()
+        publicKeyParams = pair.public as MLDSAPublicKeyParameters
+        privateKeyParams = pair.private as MLDSAPrivateKeyParameters
+        println("ML-DSACrypto: Low-level ML-DSA-65 Engine Initialized")
     }
 
     override fun getPublicKey(): ByteArray {
-        return keyPair.public.encoded
+        // Returns exactly 1952 bytes
+        return publicKeyParams.encoded
     }
 
     override fun getPrivateKey(): ByteArray {
-        return keyPair.private.encoded
+        // ML-DSA-65 SK is 4032 bytes
+        return privateKeyParams.encoded
     }
 
     override fun sign(data: ByteArray, privateKeyBytes: ByteArray): ByteArray {
         return try {
-            val kf = KeyFactory.getInstance("ML-DSA", bcProvider)
-            val privateKey = kf.generatePrivate(PKCS8EncodedKeySpec(privateKeyBytes))
-
-            val signer = Signature.getInstance("ML-DSA", bcProvider)
-            signer.initSign(privateKey)
-            signer.update(data)
-            signer.sign()
+            val privKey = MLDSAPrivateKeyParameters(params, privateKeyBytes)
+            val signer = MLDSASigner()
+            signer.init(true, privKey)
+            signer.update(data, 0, data.size)
+            signer.generateSignature()
         } catch (e: Exception) {
-            println("DilithiumCrypto: Sign failed: ${e.message}")
+            println("ML-DSACrypto: Sign error: ${e.message}")
             ByteArray(0)
         }
     }
 
     override fun verify(data: ByteArray, signature: ByteArray, publicKeyBytes: ByteArray): Boolean {
         return try {
-            val kf = KeyFactory.getInstance("ML-DSA", bcProvider)
-            val publicKey = kf.generatePublic(X509EncodedKeySpec(publicKeyBytes))
+            val rawPubKey = if (publicKeyBytes.size > 1952) {
+                publicKeyBytes.takeLast(1952).toByteArray()
+            } else {
+                publicKeyBytes
+            }
 
-            val verifier = Signature.getInstance("ML-DSA", bcProvider)
-            verifier.initVerify(publicKey)
-            verifier.update(data)
-            verifier.verify(signature)
+            if (rawPubKey.size != 1952) {
+                println("ML-DSACrypto: Invalid Public Key size: ${rawPubKey.size}")
+                return false
+            }
+
+            // ML-DSA-65 signature must be 3309 bytes
+            if (signature.size != 3309) {
+                println("ML-DSACrypto: WARNING - Invalid signature size! (Received: ${signature.size}, Required: 3309)")
+            }
+
+            val pubKey = MLDSAPublicKeyParameters(params, rawPubKey)
+            val verifier = MLDSASigner()
+            verifier.init(false, pubKey)
+
+            verifier.update(data, 0, data.size)
+            val result = verifier.verifySignature(signature)
+            if (!result) {
+                println("ML-DSACrypto: Math Verification Failed!")
+            }
+            result
         } catch (e: Exception) {
-            println("DilithiumCrypto: Verify error: ${e.message}")
+            println("ML-DSACrypto: Verify exception: ${e.message}")
             false
         }
     }
