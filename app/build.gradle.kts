@@ -48,8 +48,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     
-    // Bouncy Castle
-    implementation(libs.bouncycastle.prov)
+    // Bouncy Castle - Updated to match libs.versions.toml alias
+    implementation(libs.bouncycastle.bcprov)
     implementation(libs.bouncycastle.pqc)
     
     // Security and JSON
