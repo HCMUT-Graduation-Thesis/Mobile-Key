@@ -22,6 +22,9 @@ import com.google.gson.Gson
 import java.nio.ByteBuffer
 import java.security.KeyPair
 
+/**
+ * Owner Pairing Transaction - Updated for Raw ML-DSA-65 (FIPS 204).
+ */
 class OwnerPairingTransaction(
     private val identityCrypto: IIdentityCrypto,
     private val storageManager: IKeyStorageManager,
@@ -31,6 +34,7 @@ class OwnerPairingTransaction(
 
     companion object {
         private const val TAG = "OwnerPairing"
+        private const val RAW_ML_DSA_65_PK_SIZE = 1952
     }
 
     private var currentSessionKey: ByteArray? = null
@@ -71,11 +75,8 @@ class OwnerPairingTransaction(
         return try {
             onLog("Phase 2.a: Key Exchange")
             val pubKeyReaderBytes = payload.sliceArray(0 until 65)
-            
-            // Use HandshakeProtector to parse the reader's public key
             val pubKeyReader = HandshakeProtector.parseUncompressedPublicKey(pubKeyReaderBytes)
 
-            // Use HandshakeProtector to generate session keys
             ephemeralKeyPair = HandshakeProtector.generateEphemeralKeyPair()
             
             val salt = passwordProvider().toByteArray()
@@ -84,8 +85,6 @@ class OwnerPairingTransaction(
             )
 
             onLog("Phase 2.a: Session Key established")
-            
-            // Return uncompressed raw public key
             HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public)
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 2a: ${e.message}")
@@ -97,14 +96,13 @@ class OwnerPairingTransaction(
         val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
         return try {
             val decrypted2b = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            
             onLog("Phase 2.b: Nonce verified")
             
-            // Return "original" Public Key (Full X.509)
+            // Sends Raw 1952 bytes Public Key
             val hcePubKey = identityCrypto.getPublicKey()
-            Log.d(TAG, "Phase 2.b: Sending App Identity Public Key to Reader, size: ${hcePubKey.size} bytes")
-            val response = decrypted2b.sliceArray(0 until 16) + hcePubKey
+            Log.d(TAG, "Phase 2.b: Sending App Identity Raw PK, size: ${hcePubKey.size} bytes")
             
+            val response = decrypted2b.sliceArray(0 until 16) + hcePubKey
             CryptoUtils.encryptAesGcm(response, sessionKey)
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 2b: ${e.message}")
@@ -121,45 +119,15 @@ class OwnerPairingTransaction(
             val buffer = ByteBuffer.wrap(decryptedData)
             val record = DigitalKeyRecord()
 
-            // Read "original" Vehicle Public Key with ASN.1 DER length parsing.
-            val fixedFieldsSize = 113
-            Log.d(TAG, "Phase 3: Total Decrypted Payload Size: ${decryptedData.size} bytes")
-            
-            if (buffer.remaining() > fixedFieldsSize) {
-                val currentPos = buffer.position()
-                val firstByte = buffer.get(currentPos)
-                
-                var actualPkSize = 1952 // Default fallback
-                
-                if (firstByte == 0x30.toByte()) {
-                    val lenByte1 = buffer.get(currentPos + 1).toInt() and 0xFF
-                    actualPkSize = when {
-                        lenByte1 == 0x82 -> {
-                            val b2 = buffer.get(currentPos + 2).toInt() and 0xFF
-                            val b3 = buffer.get(currentPos + 3).toInt() and 0xFF
-                            ((b2 shl 8) or b3) + 4
-                        }
-                        lenByte1 == 0x81 -> {
-                            (buffer.get(currentPos + 2).toInt() and 0xFF) + 3
-                        }
-                        lenByte1 < 0x80 -> {
-                            lenByte1 + 2
-                        }
-                        else -> 1952
-                    }
-                }
-
-                if (buffer.remaining() >= actualPkSize) {
-                    val vehiclePK = ByteArray(actualPkSize)
-                    buffer.get(vehiclePK)
-                    record.core.vehiclePublicKey = vehiclePK
-                    Log.d(TAG, "Vehicle PK extracted: ${vehiclePK.size} bytes")
-                } else {
-                    val available = buffer.remaining()
-                    val fallbackPK = ByteArray(available)
-                    buffer.get(fallbackPK)
-                    record.core.vehiclePublicKey = fallbackPK
-                }
+            // 1. Read Raw Vehicle Public Key (Exactly 1952 bytes for ML-DSA-65)
+            if (buffer.remaining() >= RAW_ML_DSA_65_PK_SIZE) {
+                val vehiclePK = ByteArray(RAW_ML_DSA_65_PK_SIZE)
+                buffer.get(vehiclePK)
+                record.core.vehiclePublicKey = vehiclePK
+                Log.d(TAG, "Vehicle Raw PK extracted: ${vehiclePK.size} bytes")
+            } else {
+                Log.e(TAG, "Phase 3 error: Payload too short for Raw PK")
+                return SW_DECRYPTION_FAILED
             }
 
             // 2. KeyID (8 bytes)
@@ -217,10 +185,10 @@ class OwnerPairingTransaction(
                 }
             }
 
-            // Use the same HKDF logic through CryptoUtils
             val salt = passwordProvider().toByteArray()
             record.core.fastAuthKey = CryptoUtils.deriveSessionKey(sessionKey, salt, FAST_AUTH_TAG.toByteArray(), 32)
             
+            // Store Raw Keys
             record.devicePrivateKey = identityCrypto.getPrivateKey()
             record.core.devicePublicKey = identityCrypto.getPublicKey()
             
@@ -228,7 +196,7 @@ class OwnerPairingTransaction(
             pendingRecord = record
             storageManager.saveDigitalKey(record)
             
-            onLog("Phase 3 Complete. Full Identity Keys saved.")
+            onLog("Phase 3 Complete. Raw Identity Keys saved.")
             CryptoUtils.encryptAesGcm(record.core.devicePublicKey!!, sessionKey)
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 3: ${e.message}")

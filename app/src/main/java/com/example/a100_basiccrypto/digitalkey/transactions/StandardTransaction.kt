@@ -53,18 +53,36 @@ class StandardTransaction(
     private val FAST_KEY_REFRESH = "FAST_KEY_REFRESH"
     private val DILITHIUM3_SIG_SIZE = 3309
 
+    // Helper to log bytes in Hex with truncation
+    private fun logBytes(label: String, data: ByteArray?) {
+        if (data == null) {
+            Log.d("StandardTx", "$label: null")
+            return
+        }
+        val hex = data.take(16).toByteArray().joinToString("") { "%02x".format(it) }
+        Log.d("StandardTx", "$label: [$hex...] (Size: ${data.size})")
+    }
+
     override fun processCommand(frame: LogicalFrame): ByteArray {
         return when (frame.msgId) {
             AUTH_INIT -> handleAuthInit(frame.payload)
             MUTUAL_VERIFY -> handleMutualVerify(frame.payload)
             ACTION_SYNC -> ifFullAuth { handleActionSync(frame.payload) }
             FINAL_COMMIT -> ifFullAuth { handleFinalCommit(frame.payload) }
-            else -> byteArrayOf(MSG_ERR_GENERAL)
+            else -> {
+                Log.w("StandardTx", "Unknown Command Received: ${frame.msgId}")
+                byteArrayOf(MSG_ERR_GENERAL)
+            }
         }
     }
 
     private fun ifFullAuth(action: () -> ByteArray): ByteArray {
-        return if (isCarVerified && isDeviceVerified) action() else byteArrayOf(MSG_ERR_AUTH_FAIL)
+        return if (isCarVerified && isDeviceVerified) {
+            action()
+        } else {
+            Log.e("StandardTx", "Auth failed: CarVerified=$isCarVerified, DeviceVerified=$isDeviceVerified")
+            byteArrayOf(MSG_ERR_AUTH_FAIL)
+        }
     }
 
     override fun resetTransaction() {
@@ -87,52 +105,73 @@ class StandardTransaction(
         return try {
             onLog("STD: Phase 1 - Key Exchange")
             val startIndex = payload.indexOf(0x04.toByte())
-            if (startIndex == -1 || payload.size - startIndex < 65) return byteArrayOf(MSG_ERR_GENERAL)
+            if (startIndex == -1 || payload.size - startIndex < 65) {
+                Log.e("StandardTx", "AuthInit: Invalid Reader Public Key")
+                return byteArrayOf(MSG_ERR_GENERAL)
+            }
 
             val vehiclePKBytes = payload.sliceArray(startIndex until startIndex + 65)
-            
-            // USE THE NEW HELPER: parseUncompressedPublicKey
             val vehicleEphemeralPK = HandshakeProtector.parseUncompressedPublicKey(vehiclePKBytes)
 
-            // Use HandshakeProtector to generate ephemeral keys
             ephemeralKeyPair = HandshakeProtector.generateEphemeralKeyPair()
 
-            // Calculate session key using HandshakeProtector
             val salt = passwordProvider().toByteArray()
             currentSessionKey = HandshakeProtector.deriveSessionKey(
                 ephemeralKeyPair!!.private, vehicleEphemeralPK, salt, STD_HKDF_INFO
             )
 
-            // Set sharedSecret for Phase 3 (Fast Key derivation)
             sharedSecret = CryptoUtils.generateSharedSecret(ephemeralKeyPair!!.private, vehicleEphemeralPK)
-
             appNonce = ByteArray(16).apply { SecureRandom().nextBytes(this) }
             
-            // Return uncompressed raw public key + nonce using HandshakeProtector
+            logBytes("App PK (Identity)", identityCrypto.getPublicKey())
+            logBytes("Generated AppNonce", appNonce)
+            
             HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public) + appNonce!!
         } catch (e: Exception) {
-            Log.e("StandardTx", "AuthInit failed: ${e.message}")
+            Log.e("StandardTx", "AuthInit exception: ${e.message}")
             byteArrayOf(MSG_ERR_GENERAL)
         }
     }
 
     private fun handleMutualVerify(payload: ByteArray): ByteArray {
-        val sessionKey = currentSessionKey ?: return SW_DECRYPTION_FAILED
+        val sessionKey = currentSessionKey ?: run {
+            Log.e("StandardTx", "MutualVerify: Session Key is null")
+            return SW_DECRYPTION_FAILED
+        }
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
             val buffer = ByteBuffer.wrap(decrypted)
 
-            if (buffer.remaining() < 16 + DILITHIUM3_SIG_SIZE + 16) return byteArrayOf(MSG_ERR_GENERAL)
+            if (buffer.remaining() < 16 + DILITHIUM3_SIG_SIZE + 16) {
+                Log.e("StandardTx", "MutualVerify: Payload too short. Remaining: ${buffer.remaining()}")
+                return byteArrayOf(MSG_ERR_GENERAL)
+            }
 
             val moduleId = ByteArray(16).also { buffer.get(it) }
             val vehicleSig = ByteArray(DILITHIUM3_SIG_SIZE).also { buffer.get(it) }
             val readerChallenge = ByteArray(16).also { buffer.get(it) }
 
-            val record = storageManager.getAllKeys().find { it.core.moduleID?.contentEquals(moduleId) == true }
-                ?: return byteArrayOf(MSG_ERR_AUTH_FAIL).also { onLog("Error: ModuleID not found.") }
+            logBytes("Received ModuleID", moduleId)
+            logBytes("Received Vehicle Signature", vehicleSig)
+            logBytes("Received Reader Challenge", readerChallenge)
+            logBytes("Current AppNonce (for verify)", appNonce)
 
-            val vehiclePK = record.core.vehiclePublicKey ?: return byteArrayOf(MSG_ERR_AUTH_FAIL)
+            val record = storageManager.getAllKeys().find { it.core.moduleID?.contentEquals(moduleId) == true }
+                ?: run {
+                    Log.e("StandardTx", "MutualVerify: ModuleID not found in storage")
+                    onLog("Error: ModuleID not found.")
+                    return byteArrayOf(MSG_ERR_AUTH_FAIL)
+                }
+
+            val vehiclePK = record.core.vehiclePublicKey ?: run {
+                Log.e("StandardTx", "MutualVerify: Vehicle Public Key not found in record")
+                return byteArrayOf(MSG_ERR_AUTH_FAIL)
+            }
+            
+            logBytes("Stored Vehicle PK", vehiclePK)
+            
             if (!identityCrypto.verify(appNonce!!, vehicleSig, vehiclePK)) {
+                Log.e("StandardTx", "MutualVerify: Vehicle PQC Signature Verification FAILED")
                 onLog("Error: Vehicle PQC Sig Invalid")
                 return byteArrayOf(MSG_ERR_AUTH_FAIL)
             }
@@ -140,13 +179,25 @@ class StandardTransaction(
             isCarVerified = true
             activeRecord = record
 
-            val deviceSK = record.devicePrivateKey ?: return byteArrayOf(MSG_ERR_GENERAL)
-            val appSig = identityCrypto.sign(readerChallenge, deviceSK)
-            isDeviceVerified = true
+            val deviceSK = record.devicePrivateKey ?: run {
+                Log.e("StandardTx", "MutualVerify: Device Private Key is null")
+                return byteArrayOf(MSG_ERR_GENERAL)
+            }
             
+            val appSig = identityCrypto.sign(readerChallenge, deviceSK)
+            if (appSig.isEmpty()) {
+                Log.e("StandardTx", "MutualVerify: Signing reader challenge FAILED (empty signature)")
+                return byteArrayOf(MSG_ERR_GENERAL)
+            }
+            
+            logBytes("Generated App Sig", appSig)
+            
+            isDeviceVerified = true
             onLog("STD: Mutual Auth Success")
             CryptoUtils.encryptAesGcm((record.core.keyID ?: ByteArray(8)) + appSig, sessionKey)
         } catch (e: Exception) {
+            Log.e("StandardTx", "MutualVerify exception: ${e.message}")
+            e.printStackTrace()
             byteArrayOf(MSG_ERR_GENERAL)
         }
     }
@@ -159,17 +210,19 @@ class StandardTransaction(
         return try {
             onLog("STD: Phase 3 - Derive Fast Key & Sync")
             
-            // 1. Derive new Fast Auth Key using HKDF (SharedSecret + ImmobilizerToken)
-            val immotoken = record.core.immobilizerToken ?: return byteArrayOf(MSG_ERR_GENERAL)
+            val immotoken = record.core.immobilizerToken ?: run {
+                Log.e("StandardTx", "ActionSync: Immobilizer Token is null")
+                return byteArrayOf(MSG_ERR_GENERAL)
+            }
+            
             stagedFastKey = CryptoUtils.deriveSessionKey(secret, immotoken, FAST_KEY_REFRESH.toByteArray(), 32)
             stagedCounter = 0
             
             onLog("STD: Action Req received. Proposing UNLOCK + Sync.")
-            
-            // 2. Respond with Sync Success + Instruction (Unlock)
             val response = byteArrayOf(STD_MSG_SYNC_OK, INS_UNLOCK)
             CryptoUtils.encryptAesGcm(response, sessionKey)
         } catch (e: Exception) {
+            Log.e("StandardTx", "ActionSync exception: ${e.message}")
             byteArrayOf(MSG_ERR_GENERAL)
         }
     }
@@ -181,27 +234,27 @@ class StandardTransaction(
 
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            if (decrypted.size < 2) return byteArrayOf(MSG_ERR_GENERAL)
+            if (decrypted.size < 2) {
+                Log.e("StandardTx", "FinalCommit: Payload too short (${decrypted.size})")
+                return byteArrayOf(MSG_ERR_GENERAL)
+            }
 
             val execResult = decrypted[0]
             val commitMarker = decrypted[1]
 
             if (execResult == STD_EXEC_SUCCESS && commitMarker == STD_COMMIT_MARKER) {
                 onLog("STD: Phase 4 - Reader Executed OK. Atomic Commit...")
-                
-                // FINAL ATOMIC COMMIT: Save to persistent storage
                 storageManager.updateFastKeyAndCounter(record.core.keyID!!, newKey, stagedCounter)
-                
                 isComplete = true
                 onLog("STD: Recovery Complete. Transaction Finalized.")
-                
-                // Response 90 00
                 SW_SUCCESS
             } else {
+                Log.e("StandardTx", "FinalCommit: Execution Failed at Reader. Result=$execResult, Marker=$commitMarker")
                 onLog("STD: Execution Failed at Reader")
                 byteArrayOf(MSG_ERR_GENERAL)
             }
         } catch (e: Exception) {
+            Log.e("StandardTx", "FinalCommit exception: ${e.message}")
             byteArrayOf(MSG_ERR_GENERAL)
         }
     }
