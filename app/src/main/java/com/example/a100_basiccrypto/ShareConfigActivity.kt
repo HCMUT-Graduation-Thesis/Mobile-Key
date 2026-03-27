@@ -19,6 +19,7 @@ import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.Role
 import com.example.a100_basiccrypto.shared.command.SharingConstants
+import com.example.a100_basiccrypto.shared.command.DigitalKeyPermissions
 import com.google.android.material.tabs.TabLayout
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -188,7 +189,7 @@ class ShareConfigActivity : AppCompatActivity() {
                     }
                 }
 
-                val permissions = SharingConstants.PERM_UNLOCK or SharingConstants.PERM_LOCK or SharingConstants.PERM_START
+                val permissions = DigitalKeyPermissions.UNLOCK or DigitalKeyPermissions.LOCK or DigitalKeyPermissions.START
                 val friendlyName = etFriendlyName.text.toString().ifEmpty { "Key for $recipient" }
 
                 // Now using the updated sharingManager with recipient and friendlyName

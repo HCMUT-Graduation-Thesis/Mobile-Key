@@ -9,6 +9,7 @@ import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.normalize
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.shared.link.ITransactionHandler
+import com.example.a100_basiccrypto.shared.link.IPassiveTransport
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.example.a100_basiccrypto.shared.link.LogicalResponse
 import com.example.a100_basiccrypto.shared.model.KeyState
@@ -18,8 +19,7 @@ import java.security.KeyPair
 import java.security.interfaces.ECPublicKey
 
 /**
- * Orchestrates the Friend Pairing logic (State Machine) for PQC Digital Key.
- * Uses ML-DSA 3 (Dilithium 3) for Identity and ECDH for Session Security.
+ * Orchestrates the Friend Pairing logic - Updated for IPassiveTransport.
  */
 class FriendPairingTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -37,7 +37,7 @@ class FriendPairingTransaction(
     private var ephemeralKeyPair: KeyPair? = null
     private var isComplete = false
 
-    override fun processCommand(frame: LogicalFrame): LogicalResponse {
+    override fun processCommand(frame: LogicalFrame, transport: IPassiveTransport): LogicalResponse {
         return when (frame.msgId) {
             MessageConstants.PHASE_FRIEND_INIT -> handleInit()
             MessageConstants.PHASE_FRIEND_KEM -> handleEcdhExchange(frame.payload)
@@ -59,16 +59,14 @@ class FriendPairingTransaction(
     override fun isTransactionComplete(): Boolean = isComplete
 
     private fun handleInit(): LogicalResponse {
-        onLog("Phase 1: Generating ECDH Ephemeral Key & Sending PK")
+        onLog("Phase 1: Generating ECDH Ephemeral Key")
         return try {
             val keyPair = CryptoUtils.generateEcKeyPair()
             ephemeralKeyPair = keyPair
-
             val ecPubKey = keyPair.public as ECPublicKey
             val x = CryptoUtils.run { ecPubKey.w.affineX.toByteArray().normalize(32) }
             val y = CryptoUtils.run { ecPubKey.w.affineY.toByteArray().normalize(32) }
             val pk = byteArrayOf(0x04.toByte()) + x + y
-
             LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS, pk)
         } catch (e: Exception) {
             Log.e(TAG, "Init error: ${e.message}")
@@ -77,23 +75,18 @@ class FriendPairingTransaction(
     }
 
     private fun handleEcdhExchange(payload: ByteArray): LogicalResponse {
-        onLog("Phase 2: Computing Shared Secret (ECDH)")
+        onLog("Phase 2: Computing Shared Secret")
         return try {
             val readerPK = CryptoUtils.getPublicKeyFromBytes(payload)
-            val myPriv = ephemeralKeyPair?.private ?: throw IllegalStateException("Ephemeral key missing")
+            val myPriv = ephemeralKeyPair?.private ?: throw IllegalStateException("Key missing")
             val sharedSecret = CryptoUtils.generateSharedSecret(myPriv, readerPK)
-
-            val sKey = CryptoUtils.deriveSessionKey(
+            sessionKey = CryptoUtils.deriveSessionKey(
                 ikm = sharedSecret,
                 salt = CryptoConstants.FRIEND_ECDH_SALT.toByteArray(),
                 info = CryptoConstants.FRIEND_SESSION_INFO.toByteArray(),
-                length = CryptoConstants.DEFAULT_SESSION_KEY_SIZE
+                length = 32
             )
-            sessionKey = sKey
-
-            Log.d(TAG, "SESSION_KEY (Phase 2): ${sKey.joinToString("") { "%02X".format(it) }}")
             onLog("System: Session Key established.")
-
             ephemeralKeyPair = null
             LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS)
         } catch (e: Exception) {
@@ -105,25 +98,16 @@ class FriendPairingTransaction(
     private fun handleVerifyAttestation(payload: ByteArray): LogicalResponse {
         val sKey = sessionKey ?: return LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
         return try {
-            onLog("Phase 3.1: Sending Authorization (AP) & Identity PK")
-
+            onLog("Phase 3.1: Sending Authorization & Identity PK")
             val identityPK = identityCrypto.getPublicKey()
             val ap = record.attestationPackage ?: return LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
-
-            val codeBytes = pairingCode.toByteArray().run {
-                if (size < 32) this + ByteArray(32 - size) else this
-            }
-
+            val codeBytes = pairingCode.toByteArray().run { if (size < 32) this + ByteArray(32 - size) else this }
             val bundle = ByteBuffer.allocate(2 + ap.size + 2 + identityPK.size + 32).apply {
-                putShort(ap.size.toShort())
-                put(ap)
-                putShort(identityPK.size.toShort())
-                put(identityPK)
+                putShort(ap.size.toShort()); put(ap)
+                putShort(identityPK.size.toShort()); put(identityPK)
                 put(codeBytes)
             }.array()
-
-            val encrypted = CryptoUtils.encryptAesGcm(bundle, sKey)
-            LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS, encrypted)
+            LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS, CryptoUtils.encryptAesGcm(bundle, sKey))
         } catch (e: Exception) {
             Log.e(TAG, "Phase 3.1 error: ${e.message}")
             LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
@@ -134,17 +118,13 @@ class FriendPairingTransaction(
         val sKey = sessionKey ?: return LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sKey)
-
             if (decrypted.size == 1 && decrypted[0] == MessageConstants.ERR_FRIEND_INVCODE_MISMATCH) {
-                onLog("Error: Invitation Code mismatch on Vehicle")
+                onLog("Error: Invitation Code mismatch")
                 return LogicalResponse(MessageConstants.ERR_FRIEND_INVCODE_MISMATCH)
             }
-
-            onLog("Phase 3.2: Signing Challenge Nonce (ML-DSA 3)")
+            onLog("Phase 3.2: Signing Challenge")
             val signature = identityCrypto.sign(decrypted, identityCrypto.getPrivateKey())
-
-            val encrypted = CryptoUtils.encryptAesGcm(signature, sKey)
-            LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS, encrypted)
+            LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS, CryptoUtils.encryptAesGcm(signature, sKey))
         } catch (e: Exception) {
             Log.e(TAG, "Phase 3.2 error: ${e.message}")
             LogicalResponse(MessageConstants.MSG_ERR_GENERAL)
@@ -156,31 +136,21 @@ class FriendPairingTransaction(
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sKey)
             if (decrypted.size == 1 && decrypted[0] == MessageConstants.ERR_FRIEND_POP_FAILED) {
-                onLog("Error: Identity proof failed on Vehicle")
+                onLog("Error: Identity proof failed")
                 return LogicalResponse(MessageConstants.ERR_FRIEND_POP_FAILED)
             }
-
-            onLog("Phase 4: Receiving Operational Data")
+            onLog("Phase 4: Receiving Data")
             val buffer = ByteBuffer.wrap(decrypted)
-
             record.apply {
                 core.slotID = buffer.get()
-                core.keyID = ByteArray(CryptoConstants.KEY_ID_SIZE).apply { buffer.get(this) }
-                core.immobilizerToken = ByteArray(CryptoConstants.IMMOBILIZER_TOKEN_SIZE).apply { buffer.get(this) }
+                core.keyID = ByteArray(8).apply { buffer.get(this) }
+                core.immobilizerToken = ByteArray(64).apply { buffer.get(this) }
                 core.permissions = buffer.int
-
-                core.fastAuthKey = CryptoUtils.deriveSessionKey(
-                    sKey, 
-                    pairingCode.toByteArray(), 
-                    CryptoConstants.FAST_AUTH_TAG.toByteArray(), 
-                    CryptoConstants.DEFAULT_SESSION_KEY_SIZE
-                )
-
+                core.fastAuthKey = CryptoUtils.deriveSessionKey(sKey, pairingCode.toByteArray(), CryptoConstants.FAST_AUTH_TAG.toByteArray(), 32)
                 devicePrivateKey = identityCrypto.getPrivateKey()
                 core.devicePublicKey = identityCrypto.getPublicKey()
                 core.keyState = KeyState.PROVISIONING
             }
-
             storageManager.saveDigitalKey(record)
             LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS)
         } catch (e: Exception) {
@@ -192,12 +162,9 @@ class FriendPairingTransaction(
     private fun handleCommit(): LogicalResponse {
         record.core.keyState = KeyState.ACTIVE
         storageManager.saveDigitalKey(record)
-
-        onLog("Phase 5: Pairing Successful. Friend Key is ACTIVE.")
+        onLog("Phase 5: Pairing Successful.")
         isComplete = true
-        CryptoUtils.secureClear(sessionKey)
-        sessionKey = null
-
+        CryptoUtils.secureClear(sessionKey); sessionKey = null
         return LogicalResponse(MessageConstants.MSG_GLOBAL_SUCCESS)
     }
 }

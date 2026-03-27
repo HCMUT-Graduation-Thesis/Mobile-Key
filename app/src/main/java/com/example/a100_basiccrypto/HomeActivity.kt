@@ -25,6 +25,7 @@ import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.digitalkey.transactions.FriendPairingTransaction
 import com.example.a100_basiccrypto.shared.command.MessageConstants
 import com.example.a100_basiccrypto.shared.command.SharingConstants
+import com.example.a100_basiccrypto.shared.command.DigitalKeyPermissions
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
 import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.shared.model.KeyState
@@ -229,9 +230,9 @@ class HomeActivity : AppCompatActivity() {
 
     private fun getPermissionsString(perms: Int): String {
         val list = mutableListOf<String>()
-        if (perms and SharingConstants.PERM_UNLOCK != 0) list.add("Unlock")
-        if (perms and SharingConstants.PERM_LOCK != 0) list.add("Lock")
-        if (perms and SharingConstants.PERM_START != 0) list.add("Start")
+        if (DigitalKeyPermissions.hasPermission(perms, DigitalKeyPermissions.UNLOCK)) list.add("Unlock")
+        if (DigitalKeyPermissions.hasPermission(perms, DigitalKeyPermissions.LOCK)) list.add("Lock")
+        if (DigitalKeyPermissions.hasPermission(perms, DigitalKeyPermissions.START)) list.add("Start")
         return list.joinToString(", ")
     }
 

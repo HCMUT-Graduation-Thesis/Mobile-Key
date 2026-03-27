@@ -7,6 +7,7 @@ import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.example.a100_basiccrypto.shared.link.LogicalResponse
 import com.example.a100_basiccrypto.shared.link.ITransactionHandler
+import com.example.a100_basiccrypto.shared.link.IPassiveTransport
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_COMMIT
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_DATA_SYNC
 import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_KEY_EXCHANGE
@@ -19,15 +20,13 @@ import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.shared.crypto.HandshakeProtector
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.shared.crypto.CryptoConstants
-import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_DECRYPTION_FAILED
-import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_INTERNAL_ERROR
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import com.google.gson.Gson
 import java.nio.ByteBuffer
 import java.security.KeyPair
 
 /**
- * Owner Pairing Transaction - Updated for Raw ML-DSA-65 (FIPS 204).
+ * Owner Pairing Transaction - Updated for IPassiveTransport.
  */
 class OwnerPairingTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -47,7 +46,7 @@ class OwnerPairingTransaction(
     
     private val gson = Gson()
 
-    override fun processCommand(frame: LogicalFrame): LogicalResponse {
+    override fun processCommand(frame: LogicalFrame, transport: IPassiveTransport): LogicalResponse {
         return when (frame.msgId) {
             PHASE_PAIRING_REQ -> handleStartPairing()
             PHASE_KEY_EXCHANGE -> handleExchangePubKey(frame.payload)
@@ -100,10 +99,7 @@ class OwnerPairingTransaction(
             val decrypted2b = CryptoUtils.decryptAesGcm(payload, sessionKey)
             onLog("Phase 2.b: Nonce verified")
             
-            // Sends Raw 1952 bytes Public Key
             val hcePubKey = identityCrypto.getPublicKey()
-            Log.d(TAG, "Phase 2.b: Sending App Identity Raw PK, size: ${hcePubKey.size} bytes")
-            
             val responseData = decrypted2b.sliceArray(0 until 16) + hcePubKey
             val encrypted = CryptoUtils.encryptAesGcm(responseData, sessionKey)
             LogicalResponse(MSG_GLOBAL_SUCCESS, encrypted)
@@ -117,65 +113,48 @@ class OwnerPairingTransaction(
         val sessionKey = currentSessionKey ?: return LogicalResponse(MSG_ERR_GENERAL)
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            onLog("Phase 3: Data Received (${decryptedData.size} bytes)")
+            onLog("Phase 3: Data Received")
             
             val buffer = ByteBuffer.wrap(decryptedData)
             val record = DigitalKeyRecord()
 
-            // 1. Read Raw Vehicle Public Key (Exactly 1952 bytes for ML-DSA-65)
             if (buffer.remaining() >= CryptoConstants.ML_DSA_65_PK_SIZE) {
                 val vehiclePK = ByteArray(CryptoConstants.ML_DSA_65_PK_SIZE)
                 buffer.get(vehiclePK)
                 record.core.vehiclePublicKey = vehiclePK
-                Log.d(TAG, "Vehicle Raw PK extracted: ${vehiclePK.size} bytes")
-            } else {
-                Log.e(TAG, "Phase 3 error: Payload too short for Raw PK")
-                return LogicalResponse(MSG_ERR_GENERAL)
-            }
+            } else return LogicalResponse(MSG_ERR_GENERAL)
 
-            // 2. KeyID (8 bytes)
             if (buffer.remaining() >= 8) {
                 val kid = ByteArray(8)
                 buffer.get(kid)
                 record.core.keyID = kid
-                Log.d(TAG, "KeyID extracted: ${kid.toHex()}")
             }
 
-            // 3. ModuleID (16) + SlotID (1)
             if (buffer.remaining() >= 17) {
                 val mid = ByteArray(16)
                 buffer.get(mid)
                 record.core.moduleID = mid
                 record.core.slotID = buffer.get()
-                Log.d(TAG, "ModuleID extracted: ${mid.toHex()}, SlotID: ${record.core.slotID}")
             }
 
-            // 4. Counter (4) + Permissions (4)
             if (buffer.remaining() >= 8) {
                 record.core.transactionCounter = buffer.int
                 record.core.permissions = buffer.int
-                Log.d(TAG, "Counter: ${record.core.transactionCounter}, Permissions: ${record.core.permissions}")
             }
 
-            // 5. Validity Start (8) + End (8)
             if (buffer.remaining() >= 16) {
                 record.core.validityStart = buffer.long
                 record.core.validityEnd = buffer.long
-                Log.d(TAG, "Validity: ${record.core.validityStart} to ${record.core.validityEnd}")
             }
 
-            // 6. Immobilizer Token (64 bytes)
             if (buffer.remaining() >= 64) {
                 val token = ByteArray(64)
                 buffer.get(token)
                 record.core.immobilizerToken = token
-                Log.d(TAG, "Immobilizer Token extracted (64 bytes)")
             }
 
-            // 7. Metadata JSON (Remaining part)
             if (buffer.hasRemaining()) {
-                val remainingCount = buffer.remaining()
-                val remaining = ByteArray(remainingCount)
+                val remaining = ByteArray(buffer.remaining())
                 buffer.get(remaining)
                 val metadataStr = String(remaining, Charsets.UTF_8).trim { it <= ' ' || it == '\u0000' }
                 try {
@@ -183,15 +162,12 @@ class OwnerPairingTransaction(
                         record.core.carMetadata = gson.fromJson(metadataStr, CarMetadata::class.java)
                         record.friendlyName = record.core.carMetadata?.modelName ?: "My Vehicle"
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Metadata parse failed: ${e.message}")
-                }
+                } catch (e: Exception) { Log.e(TAG, "Metadata error: ${e.message}") }
             }
 
             val salt = passwordProvider().toByteArray()
             record.core.fastAuthKey = CryptoUtils.deriveSessionKey(sessionKey, salt, CryptoConstants.FAST_AUTH_TAG.toByteArray(), 32)
             
-            // Store Raw Keys
             record.devicePrivateKey = identityCrypto.getPrivateKey()
             record.core.devicePublicKey = identityCrypto.getPublicKey()
             
@@ -199,7 +175,7 @@ class OwnerPairingTransaction(
             pendingRecord = record
             storageManager.saveDigitalKey(record)
             
-            onLog("Phase 3 Complete. Raw Identity Keys saved.")
+            onLog("Phase 3 Complete. Key saved.")
             val encrypted = CryptoUtils.encryptAesGcm(record.core.devicePublicKey!!, sessionKey)
             LogicalResponse(MSG_GLOBAL_SUCCESS, encrypted)
         } catch (e: Exception) {
@@ -220,14 +196,8 @@ class OwnerPairingTransaction(
                     onLog("Phase 4: Pairing Complete! Key is ACTIVE")
                     isComplete = true
                     LogicalResponse(MSG_GLOBAL_SUCCESS)
-                } else {
-                    Log.e(TAG, "Error Phase 4: No pending record to activate")
-                    LogicalResponse(MSG_ERR_GENERAL)
-                }
-            } else {
-                Log.e(TAG, "Error Phase 4: Invalid commitment signal")
-                LogicalResponse(MSG_ERR_GENERAL)
-            }
+                } else LogicalResponse(MSG_ERR_GENERAL)
+            } else LogicalResponse(MSG_ERR_GENERAL)
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 4: ${e.message}")
             LogicalResponse(MSG_ERR_GENERAL)

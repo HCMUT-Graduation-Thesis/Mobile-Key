@@ -22,24 +22,17 @@ import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_STOP_ENG
 import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_UNLOCK
 import com.example.a100_basiccrypto.shared.command.MessageConstants.FINAL_COMMIT
 import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_GLOBAL_SUCCESS
-import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_GENERAL
-import com.example.a100_basiccrypto.shared.policy.TransportType
 import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
-import com.example.a100_basiccrypto.shared.physical.NfcConstants.CLA_ISO
-import com.example.a100_basiccrypto.shared.physical.NfcConstants.CLA_PROPRIETARY
-import com.example.a100_basiccrypto.shared.physical.NfcConstants.INS_GET_NEXT_CHUNK
-import com.example.a100_basiccrypto.shared.physical.NfcConstants.MAX_APDU_PAYLOAD_SIZE
-import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_HAS_MORE_DATA
-import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_INTERNAL_ERROR
-import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_SUCCESS
-import com.example.a100_basiccrypto.shared.physical.NfcConstants.SW_UNKNOWN_CMD
-import com.example.a100_basiccrypto.shared.physical.NfcConstants.TRANSACTION_TIMEOUT_MS
+import com.example.a100_basiccrypto.shared.physical.NfcConstants
 import com.example.a100_basiccrypto.digitalkey.storage.PasswordManager
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.digitalkey.transactions.FastTransaction
 import com.example.a100_basiccrypto.digitalkey.transactions.OwnerPairingTransaction
 import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransaction
 
+/**
+ * Optimized HostApduService using NfcPassiveTransport and TransactionRouter.
+ */
 class MyHostApduService : HostApduService() {
 
     companion object {
@@ -54,10 +47,11 @@ class MyHostApduService : HostApduService() {
         var friendPairingHandler: ITransactionHandler? = null
     }
 
-    private val chainingManager = NfcChainingManager()
     private val storageManager by lazy { SecureKeyStorageManager(applicationContext) }
     private val identityCrypto = DilithiumIdentityCryptoImpl()
     
+    private val nfcTransport = NfcPassiveTransport()
+
     private val router: TransactionRouter by lazy {
         val pairingHandler = OwnerPairingTransaction(
             identityCrypto = identityCrypto,
@@ -79,19 +73,62 @@ class MyHostApduService : HostApduService() {
             pairingHandler = pairingHandler,
             fastHandler = fastHandler,
             standardHandler = standardHandler,
-            friendPairingHandler = null
-        )
+            friendPairingHandler = friendPairingHandler
+        ).apply {
+            nfcTransport.setCallback(this)
+        }
     }
 
     private val timeoutHandler = Handler(Looper.getMainLooper())
     private val timeoutRunnable = Runnable { handleTimeout() }
 
-    private fun sendLogToGui(message: String) {
-        val intent = Intent(LOG_ACTION).apply {
-            putExtra("log_message", message)
-            setPackage(packageName)
+    override fun processCommandApdu(commandApdu: ByteArray?, extras: Bundle?): ByteArray {
+        if (commandApdu == null || commandApdu.size < 2) return NfcConstants.SW_INTERNAL_ERROR
+
+        val cla = commandApdu[0]
+        val ins = commandApdu[1]
+        
+        // 1. Initial Selective Blocking
+        if ((cla == CLASS_OWNER_PAIRING || cla == 0x80.toByte()) && !isPairingModeEnabled) {
+            return NfcConstants.SW_UNKNOWN_CMD
         }
-        sendBroadcast(intent)
+
+        // 2. Select AID Handling
+        if (cla == NfcConstants.CLA_ISO && ins == 0xA4.toByte()) {
+            resetSession()
+            sendLogToGui("System: Reader Connected.")
+            return NfcConstants.SW_SUCCESS
+        }
+
+        // 3. Chaining / Chunking Handling
+        if (ins == NfcConstants.INS_GET_NEXT_CHUNK) {
+            val chunkIndex = if (commandApdu.size >= 3) commandApdu[2].toInt() and 0xFF else 0
+            return nfcTransport.getNextChunk(chunkIndex)
+        }
+
+        resetTimeoutTimer()
+
+        // 4. Delegate to Transport & Router, with callback for UI logic
+        return nfcTransport.onApduReceived(commandApdu) { frame, response ->
+            handleActionBroadcasts(frame, response)
+        }
+    }
+
+    private fun handleActionBroadcasts(frame: LogicalFrame, response: LogicalResponse) {
+        val actionName = when {
+            frame.msgClass == CLASS_FAST_ACTION && frame.msgId == INS_UNLOCK -> "UNLOCK"
+            frame.msgClass == CLASS_FAST_ACTION && frame.msgId == INS_LOCK -> "LOCK"
+            frame.msgClass == CLASS_ENGINE_OP && frame.msgId == INS_START_ENGINE -> "START ENGINE"
+            frame.msgClass == CLASS_ENGINE_OP && frame.msgId == INS_STOP_ENGINE -> "STOP ENGINE"
+            frame.msgClass == CLASS_ADMIN && frame.msgId == FINAL_COMMIT -> "RECOVERY & ACTION"
+            frame.msgClass == CLASS_FRIEND_PAIRING && frame.msgId == 0x17.toByte() -> "FRIEND PAIRING"
+            else -> null
+        }
+
+        if (actionName != null) {
+            val isSuccess = response.status == MSG_GLOBAL_SUCCESS
+            broadcastResultToActivity(actionName, isSuccess)
+        }
     }
 
     private fun broadcastResultToActivity(actionName: String, isSuccess: Boolean) {
@@ -103,142 +140,34 @@ class MyHostApduService : HostApduService() {
         sendBroadcast(intent)
     }
 
-    override fun processCommandApdu(commandApdu: ByteArray?, extras: Bundle?): ByteArray {
-        if (commandApdu == null || commandApdu.size < 2) return SW_INTERNAL_ERROR
-
-        Log.d(TAG, "RX: ${toHexString(commandApdu)}")
-
-        val cla = commandApdu[0]
-        val ins = commandApdu[1]
-        
-        if (cla == CLASS_OWNER_PAIRING || cla == 0x80.toByte()) {
-            if (!isPairingModeEnabled) {
-                Log.w(TAG, "Pairing Blocked: Mode not enabled by User.")
-                val resp = SW_UNKNOWN_CMD
-                Log.d(TAG, "TX: ${toHexString(resp)}")
-                return resp
-            }
+    private fun sendLogToGui(message: String) {
+        val intent = Intent(LOG_ACTION).apply {
+            putExtra("log_message", message)
+            setPackage(packageName)
         }
-
-        if (cla == CLASS_FRIEND_PAIRING) {
-            if (friendPairingHandler == null) {
-                val resp = SW_UNKNOWN_CMD
-                Log.d(TAG, "TX: ${toHexString(resp)}")
-                return resp
-            }
-        }
-
-        if (cla == CLA_ISO && ins == 0xA4.toByte()) {
-            resetSession()
-            sendLogToGui("System: Reader Connected.")
-            val resp = SW_SUCCESS
-            Log.d(TAG, "TX: ${toHexString(resp)}")
-            return resp
-        }
-
-        if (ins == INS_GET_NEXT_CHUNK) {
-            val chunkIndex = if (commandApdu.size >= 3) commandApdu[2].toInt() and 0xFF else 0
-            val resp = chainingManager.getNextOutgoingChunk(chunkIndex)
-            Log.d(TAG, "TX (chunk): ${toHexString(resp)}")
-            return resp
-        }
-
-        val isAllowedClass = cla == CLA_ISO || 
-                            cla == CLA_PROPRIETARY || 
-                            cla == CLASS_OWNER_PAIRING || 
-                            cla == CLASS_FAST_ACTION || 
-                            cla == CLASS_ENGINE_OP || 
-                            cla == CLASS_TELEMETRY || 
-                            cla == CLASS_ADMIN || 
-                            cla == CLASS_FRIEND_PAIRING ||
-                            cla == 0x80.toByte()
-
-        if (!isAllowedClass) {
-            val resp = SW_UNKNOWN_CMD
-            Log.d(TAG, "TX: ${toHexString(resp)}")
-            return resp
-        }
-        
-        resetTimeoutTimer()
-
-        val fullPayload = chainingManager.handleIncomingFragment(commandApdu)
-        
-        val response = if (fullPayload != null) {
-            val inputFrame = LogicalFrame(cla, ins, fullPayload)
-            
-            val logicalResponse = if (cla == CLASS_FRIEND_PAIRING) {
-                friendPairingHandler?.processCommand(inputFrame) ?: LogicalResponse(MSG_ERR_GENERAL)
-            } else {
-                router.route(inputFrame, TransportType.NFC)
-            }
-            
-            val result = logicalResponse.serialize()
-            
-            // Handle NFC Result Broadcasts
-            handleActionBroadcasts(cla, ins, logicalResponse)
-
-            if (result.size > MAX_APDU_PAYLOAD_SIZE) {
-                chainingManager.setOutgoingBuffer(result)
-                chainingManager.getNextOutgoingChunk(0)
-            } else {
-                // If it's already a full APDU response (2 bytes error code), send as is
-                if (result.size == 2 && (result[0].toInt() and 0xFF) >= 0x60) {
-                    result
-                } else {
-                    // For LogicalResponse, serialize it and append SW_SUCCESS for NFC
-                    result + SW_SUCCESS
-                }
-            }
-        } else {
-            SW_HAS_MORE_DATA
-        }
-
-        Log.d(TAG, "TX: ${toHexString(response)}")
-        return response
-    }
-
-    private fun handleActionBroadcasts(cla: Byte, ins: Byte, response: LogicalResponse) {
-        val actionName = when {
-            cla == CLASS_FAST_ACTION && ins == INS_UNLOCK -> "UNLOCK"
-            cla == CLASS_FAST_ACTION && ins == INS_LOCK -> "LOCK"
-            cla == CLASS_ENGINE_OP && ins == INS_START_ENGINE -> "START ENGINE"
-            cla == CLASS_ENGINE_OP && ins == INS_STOP_ENGINE -> "STOP ENGINE"
-            cla == CLASS_ADMIN && ins == FINAL_COMMIT -> "RECOVERY & ACTION"
-            cla == CLASS_FRIEND_PAIRING && ins == 0x17.toByte() -> "FRIEND PAIRING"
-            else -> null
-        }
-
-        if (actionName != null) {
-            val isSuccess = response.status == MSG_GLOBAL_SUCCESS
-            broadcastResultToActivity(actionName, isSuccess)
-        }
-    }
-
-    private fun toHexString(bytes: ByteArray): String {
-        return bytes.joinToString("") { "%02X".format(it) }
+        sendBroadcast(intent)
     }
 
     private fun resetSession() {
         timeoutHandler.removeCallbacks(timeoutRunnable)
-        timeoutHandler.postDelayed(timeoutRunnable, TRANSACTION_TIMEOUT_MS)
-        chainingManager.clear()
+        timeoutHandler.postDelayed(timeoutRunnable, NfcConstants.TRANSACTION_TIMEOUT_MS)
+        nfcTransport.reset()
         router.resetAll()
     }
 
     private fun resetTimeoutTimer() {
         timeoutHandler.removeCallbacks(timeoutRunnable)
-        timeoutHandler.postDelayed(timeoutRunnable, TRANSACTION_TIMEOUT_MS)
+        timeoutHandler.postDelayed(timeoutRunnable, NfcConstants.TRANSACTION_TIMEOUT_MS)
     }
 
     private fun handleTimeout() {
-        chainingManager.clear()
+        nfcTransport.reset()
         router.resetAll()
-        friendPairingHandler = null
         sendLogToGui("Session Timeout")
     }
 
     override fun onDeactivated(reason: Int) {
         timeoutHandler.removeCallbacks(timeoutRunnable)
-        chainingManager.clear()
+        nfcTransport.reset()
     }
 }

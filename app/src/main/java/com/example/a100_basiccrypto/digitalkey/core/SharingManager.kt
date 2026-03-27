@@ -51,7 +51,7 @@ class SharingManager(
 
             // 3. Build Metadata Payload (68 bytes) - Keeping Version V1
             val payload = ByteBuffer.allocate(SharingConstants.METADATA_SIZE).apply {
-                put(SharingConstants.AP_VERSION_V1)              // Offset 0
+                put(SharingConstants.AP_VERSION)              // Offset 0
                 put(ownerID)                                     // Offset 1
                 put(invCodeHash)                                 // Offset 9
                 put(role.value)                                  // Offset 41
