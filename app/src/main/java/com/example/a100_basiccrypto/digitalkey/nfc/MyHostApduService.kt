@@ -10,18 +10,11 @@ import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.example.a100_basiccrypto.shared.link.LogicalResponse
 import com.example.a100_basiccrypto.shared.link.TransactionRouter
 import com.example.a100_basiccrypto.shared.link.ITransactionHandler
-import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_ADMIN
-import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_ENGINE_OP
-import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_FAST_ACTION
-import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_FRIEND_PAIRING
-import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_OWNER_PAIRING
-import com.example.a100_basiccrypto.shared.command.MessageConstants.CLASS_TELEMETRY
-import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_LOCK
-import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_START_ENGINE
-import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_STOP_ENGINE
-import com.example.a100_basiccrypto.shared.command.MessageConstants.INS_UNLOCK
-import com.example.a100_basiccrypto.shared.command.MessageConstants.FINAL_COMMIT
-import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_GLOBAL_SUCCESS
+import com.example.a100_basiccrypto.shared.command.MessageConstants.Class
+import com.example.a100_basiccrypto.shared.command.MessageConstants.Fast
+import com.example.a100_basiccrypto.shared.command.MessageConstants.Admin
+import com.example.a100_basiccrypto.shared.command.MessageConstants.FriendPairing
+import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
 import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.shared.physical.NfcConstants
 import com.example.a100_basiccrypto.digitalkey.storage.PasswordManager
@@ -89,7 +82,7 @@ class MyHostApduService : HostApduService() {
         val ins = commandApdu[1]
         
         // 1. Initial Selective Blocking
-        if ((cla == CLASS_OWNER_PAIRING || cla == 0x80.toByte()) && !isPairingModeEnabled) {
+        if ((cla == Class.OWNER_PAIRING || cla == 0x80.toByte()) && !isPairingModeEnabled) {
             return NfcConstants.SW_UNKNOWN_CMD
         }
 
@@ -116,17 +109,17 @@ class MyHostApduService : HostApduService() {
 
     private fun handleActionBroadcasts(frame: LogicalFrame, response: LogicalResponse) {
         val actionName = when {
-            frame.msgClass == CLASS_FAST_ACTION && frame.msgId == INS_UNLOCK -> "UNLOCK"
-            frame.msgClass == CLASS_FAST_ACTION && frame.msgId == INS_LOCK -> "LOCK"
-            frame.msgClass == CLASS_ENGINE_OP && frame.msgId == INS_START_ENGINE -> "START ENGINE"
-            frame.msgClass == CLASS_ENGINE_OP && frame.msgId == INS_STOP_ENGINE -> "STOP ENGINE"
-            frame.msgClass == CLASS_ADMIN && frame.msgId == FINAL_COMMIT -> "RECOVERY & ACTION"
-            frame.msgClass == CLASS_FRIEND_PAIRING && frame.msgId == 0x17.toByte() -> "FRIEND PAIRING"
+            frame.msgClass == Class.FAST_ACTION && frame.msgId == Fast.INS_UNLOCK -> "UNLOCK"
+            frame.msgClass == Class.FAST_ACTION && frame.msgId == Fast.INS_LOCK -> "LOCK"
+            frame.msgClass == Class.ENGINE_OP && frame.msgId == Fast.INS_START_ENGINE -> "START ENGINE"
+            frame.msgClass == Class.ENGINE_OP && frame.msgId == Fast.INS_STOP_ENGINE -> "STOP ENGINE"
+            frame.msgClass == Class.ADMIN && frame.msgId == Admin.PHASE_FINAL_COMMIT -> "RECOVERY & ACTION"
+            frame.msgClass == Class.FRIEND_PAIRING && frame.msgId == FriendPairing.PHASE_COMMIT -> "FRIEND PAIRING"
             else -> null
         }
 
         if (actionName != null) {
-            val isSuccess = response.status == MSG_GLOBAL_SUCCESS
+            val isSuccess = response.status == Status.SUCCESS
             broadcastResultToActivity(actionName, isSuccess)
         }
     }

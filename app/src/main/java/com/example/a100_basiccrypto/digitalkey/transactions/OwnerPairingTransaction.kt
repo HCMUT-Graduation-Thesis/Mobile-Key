@@ -8,13 +8,8 @@ import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.example.a100_basiccrypto.shared.link.LogicalResponse
 import com.example.a100_basiccrypto.shared.link.ITransactionHandler
 import com.example.a100_basiccrypto.shared.link.IPassiveTransport
-import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_COMMIT
-import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_DATA_SYNC
-import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_KEY_EXCHANGE
-import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_PAIRING_REQ
-import com.example.a100_basiccrypto.shared.command.MessageConstants.PHASE_VERIFY_NONCE
-import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_GLOBAL_SUCCESS
-import com.example.a100_basiccrypto.shared.command.MessageConstants.MSG_ERR_GENERAL
+import com.example.a100_basiccrypto.shared.command.MessageConstants.OwnerPairing
+import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.shared.crypto.HandshakeProtector
@@ -48,12 +43,12 @@ class OwnerPairingTransaction(
 
     override fun processCommand(frame: LogicalFrame, transport: IPassiveTransport): LogicalResponse {
         return when (frame.msgId) {
-            PHASE_PAIRING_REQ -> handleStartPairing()
-            PHASE_KEY_EXCHANGE -> handleExchangePubKey(frame.payload)
-            PHASE_VERIFY_NONCE -> handleVerifyNonce(frame.payload)
-            PHASE_DATA_SYNC -> handleExchangeVehicleData(frame.payload)
-            PHASE_COMMIT -> handleCommitPairing(frame.payload)
-            else -> LogicalResponse(MSG_ERR_GENERAL)
+            OwnerPairing.PHASE_REQ -> handleStartPairing()
+            OwnerPairing.PHASE_KEY_EXCHANGE -> handleExchangePubKey(frame.payload)
+            OwnerPairing.PHASE_VERIFY_NONCE -> handleVerifyNonce(frame.payload)
+            OwnerPairing.PHASE_DATA_SYNC -> handleExchangeVehicleData(frame.payload)
+            OwnerPairing.PHASE_COMMIT -> handleCommitPairing(frame.payload)
+            else -> LogicalResponse(Status.ERR_GENERAL)
         }
     }
 
@@ -68,7 +63,7 @@ class OwnerPairingTransaction(
 
     private fun handleStartPairing(): LogicalResponse {
         onLog("Phase 1: Pairing Request Received")
-        return LogicalResponse(MSG_GLOBAL_SUCCESS)
+        return LogicalResponse(Status.SUCCESS)
     }
 
     private fun handleExchangePubKey(payload: ByteArray): LogicalResponse {
@@ -86,15 +81,15 @@ class OwnerPairingTransaction(
 
             onLog("Phase 2.a: Session Key established")
             val responseData = HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public)
-            LogicalResponse(MSG_GLOBAL_SUCCESS, responseData)
+            LogicalResponse(Status.SUCCESS, responseData)
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 2a: ${e.message}")
-            LogicalResponse(MSG_ERR_GENERAL)
+            LogicalResponse(Status.ERR_GENERAL)
         }
     }
 
     private fun handleVerifyNonce(payload: ByteArray): LogicalResponse {
-        val sessionKey = currentSessionKey ?: return LogicalResponse(MSG_ERR_GENERAL)
+        val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_GENERAL)
         return try {
             val decrypted2b = CryptoUtils.decryptAesGcm(payload, sessionKey)
             onLog("Phase 2.b: Nonce verified")
@@ -102,15 +97,15 @@ class OwnerPairingTransaction(
             val hcePubKey = identityCrypto.getPublicKey()
             val responseData = decrypted2b.sliceArray(0 until 16) + hcePubKey
             val encrypted = CryptoUtils.encryptAesGcm(responseData, sessionKey)
-            LogicalResponse(MSG_GLOBAL_SUCCESS, encrypted)
+            LogicalResponse(Status.SUCCESS, encrypted)
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 2b: ${e.message}")
-            LogicalResponse(MSG_ERR_GENERAL)
+            LogicalResponse(Status.ERR_GENERAL)
         }
     }
 
     private fun handleExchangeVehicleData(payload: ByteArray): LogicalResponse {
-        val sessionKey = currentSessionKey ?: return LogicalResponse(MSG_ERR_GENERAL)
+        val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_GENERAL)
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
             onLog("Phase 3: Data Received")
@@ -122,7 +117,7 @@ class OwnerPairingTransaction(
                 val vehiclePK = ByteArray(CryptoConstants.ML_DSA_65_PK_SIZE)
                 buffer.get(vehiclePK)
                 record.core.vehiclePublicKey = vehiclePK
-            } else return LogicalResponse(MSG_ERR_GENERAL)
+            } else return LogicalResponse(Status.ERR_GENERAL)
 
             if (buffer.remaining() >= 8) {
                 val kid = ByteArray(8)
@@ -177,15 +172,15 @@ class OwnerPairingTransaction(
             
             onLog("Phase 3 Complete. Key saved.")
             val encrypted = CryptoUtils.encryptAesGcm(record.core.devicePublicKey!!, sessionKey)
-            LogicalResponse(MSG_GLOBAL_SUCCESS, encrypted)
+            LogicalResponse(Status.SUCCESS, encrypted)
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 3: ${e.message}")
-            LogicalResponse(MSG_ERR_GENERAL)
+            LogicalResponse(Status.ERR_GENERAL)
         }
     }
 
     private fun handleCommitPairing(payload: ByteArray): LogicalResponse {
-        val sessionKey = currentSessionKey ?: return LogicalResponse(MSG_ERR_GENERAL)
+        val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_GENERAL)
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
             if (decryptedData.size == 1 && decryptedData[0] == 0x01.toByte()) {
@@ -195,12 +190,12 @@ class OwnerPairingTransaction(
                     storageManager.saveDigitalKey(recordToActivate)
                     onLog("Phase 4: Pairing Complete! Key is ACTIVE")
                     isComplete = true
-                    LogicalResponse(MSG_GLOBAL_SUCCESS)
-                } else LogicalResponse(MSG_ERR_GENERAL)
-            } else LogicalResponse(MSG_ERR_GENERAL)
+                    LogicalResponse(Status.SUCCESS)
+                } else LogicalResponse(Status.ERR_GENERAL)
+            } else LogicalResponse(Status.ERR_GENERAL)
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 4: ${e.message}")
-            LogicalResponse(MSG_ERR_GENERAL)
+            LogicalResponse(Status.ERR_GENERAL)
         }
     }
 }
