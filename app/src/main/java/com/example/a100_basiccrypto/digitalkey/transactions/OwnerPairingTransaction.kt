@@ -11,21 +11,22 @@ import com.example.a100_basiccrypto.shared.link.IPassiveTransport
 import com.example.a100_basiccrypto.shared.command.MessageConstants.OwnerPairing
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
-import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.shared.crypto.HandshakeProtector
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.shared.crypto.CryptoConstants
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
+import com.example.a100_basiccrypto.digitalkey.storage.BleIdentityManager
 import com.google.gson.Gson
 import java.nio.ByteBuffer
 import java.security.KeyPair
 
 /**
- * Owner Pairing Transaction - Updated for IPassiveTransport.
+ * Owner Pairing Transaction - Updated for Full Two-Way BLE OOB Exchange using persistent identity.
  */
 class OwnerPairingTransaction(
     private val identityCrypto: IIdentityCrypto,
     private val storageManager: IKeyStorageManager,
+    private val bleIdentityManager: BleIdentityManager,
     private val passwordProvider: () -> String,
     private val onLog: (String) -> Unit
 ) : ITransactionHandler {
@@ -108,11 +109,12 @@ class OwnerPairingTransaction(
         val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_GENERAL)
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            onLog("Phase 3: Data Received")
+            onLog("Phase 3: Data Received from Vehicle")
             
             val buffer = ByteBuffer.wrap(decryptedData)
             val record = DigitalKeyRecord()
 
+            // 1. Core Cryptographic Data (Vehicle PK)
             if (buffer.remaining() >= CryptoConstants.ML_DSA_65_PK_SIZE) {
                 val vehiclePK = ByteArray(CryptoConstants.ML_DSA_65_PK_SIZE)
                 buffer.get(vehiclePK)
@@ -125,6 +127,7 @@ class OwnerPairingTransaction(
                 record.core.keyID = kid
             }
 
+            // 2. Hardware Identifiers
             if (buffer.remaining() >= 17) {
                 val mid = ByteArray(16)
                 buffer.get(mid)
@@ -132,26 +135,46 @@ class OwnerPairingTransaction(
                 record.core.slotID = buffer.get()
             }
 
+            // 3. Permissions & Counters
             if (buffer.remaining() >= 8) {
                 record.core.transactionCounter = buffer.int
                 record.core.permissions = buffer.int
             }
 
+            // 4. Validity
             if (buffer.remaining() >= 16) {
                 record.core.validityStart = buffer.long
                 record.core.validityEnd = buffer.long
             }
 
+            // 5. Immobilizer Token
             if (buffer.remaining() >= 64) {
                 val token = ByteArray(64)
                 buffer.get(token)
                 record.core.immobilizerToken = token
             }
 
-            if (buffer.hasRemaining()) {
-                val remaining = ByteArray(buffer.remaining())
-                buffer.get(remaining)
-                val metadataStr = String(remaining, Charsets.UTF_8).trim { it <= ' ' || it == '\u0000' }
+            // 6. BLE OOB Data (Vehicle -> App)
+            if (buffer.remaining() >= CryptoConstants.BLE_ADDR_SIZE) {
+                val bleAddr = ByteArray(CryptoConstants.BLE_ADDR_SIZE)
+                buffer.get(bleAddr)
+                record.core.bleAddress = bleAddr
+                onLog("Phase 3: Vehicle BLE Address received")
+            }
+
+            if (buffer.remaining() >= CryptoConstants.BLE_IRK_SIZE) {
+                val irk = ByteArray(CryptoConstants.BLE_IRK_SIZE)
+                buffer.get(irk)
+                record.core.irk = irk
+                onLog("Phase 3: Vehicle BLE IRK received")
+            }
+
+            // 7. Metadata (Remaining buffer)
+            val metadataBytesLeft = buffer.remaining()
+            if (metadataBytesLeft > 0) {
+                val metadataBytes = ByteArray(metadataBytesLeft)
+                buffer.get(metadataBytes)
+                val metadataStr = String(metadataBytes, Charsets.UTF_8).trim { it <= ' ' }
                 try {
                     if (metadataStr.isNotEmpty()) {
                         record.core.carMetadata = gson.fromJson(metadataStr, CarMetadata::class.java)
@@ -160,9 +183,20 @@ class OwnerPairingTransaction(
                 } catch (e: Exception) { Log.e(TAG, "Metadata error: ${e.message}") }
             }
 
+            // 8. Key Derivations (Fast Auth & BLE LTK)
             val salt = passwordProvider().toByteArray()
-            record.core.fastAuthKey = CryptoUtils.deriveSessionKey(sessionKey, salt, CryptoConstants.FAST_AUTH_TAG.toByteArray(), 32)
             
+            // Derive Fast Auth Key (AES-256)
+            record.core.fastAuthKey = CryptoUtils.deriveSessionKey(
+                sessionKey, salt, CryptoConstants.FAST_AUTH_TAG.toByteArray(), 32
+            )
+            
+            // Derive BLE LTK (AES-128) - Shared between App and Vehicle
+            record.core.bleLtk = CryptoUtils.deriveSessionKey(
+                sessionKey, salt, CryptoConstants.BLE_LTK_INFO.toByteArray(), CryptoConstants.BLE_LTK_SIZE
+            )
+            onLog("Phase 3: BLE LTK derived successfully")
+
             record.devicePrivateKey = identityCrypto.getPrivateKey()
             record.core.devicePublicKey = identityCrypto.getPublicKey()
             
@@ -170,9 +204,26 @@ class OwnerPairingTransaction(
             pendingRecord = record
             storageManager.saveDigitalKey(record)
             
-            onLog("Phase 3 Complete. Key saved.")
-            val encrypted = CryptoUtils.encryptAesGcm(record.core.devicePublicKey!!, sessionKey)
-            LogicalResponse(Status.SUCCESS, encrypted)
+            // 9. Prepare Response Data (App -> Vehicle)
+            // We send [Device PK | App BLE Address | App IRK]
+            onLog("Phase 3: Sending App Identity & BLE OOB to Vehicle")
+            
+            val appBleAddress = bleIdentityManager.getAppBleAddress()
+            val appIrk = bleIdentityManager.getAppIrk()
+
+            val devicePubKey = record.core.devicePublicKey!!
+            val responsePayload = ByteBuffer.allocate(
+                devicePubKey.size + CryptoConstants.BLE_ADDR_SIZE + CryptoConstants.BLE_IRK_SIZE
+            ).apply {
+                put(devicePubKey)
+                put(appBleAddress)
+                put(appIrk)
+            }.array()
+
+            val encryptedResponse = CryptoUtils.encryptAesGcm(responsePayload, sessionKey)
+            
+            onLog("Phase 3 Complete. Key saved and OOB sent.")
+            LogicalResponse(Status.SUCCESS, encryptedResponse)
         } catch (e: Exception) {
             Log.e(TAG, "Error Phase 3: ${e.message}")
             LogicalResponse(Status.ERR_GENERAL)

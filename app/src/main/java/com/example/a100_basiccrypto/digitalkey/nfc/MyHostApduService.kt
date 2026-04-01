@@ -19,6 +19,7 @@ import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.shared.physical.NfcConstants
 import com.example.a100_basiccrypto.digitalkey.storage.PasswordManager
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
+import com.example.a100_basiccrypto.digitalkey.storage.BleIdentityManager
 import com.example.a100_basiccrypto.digitalkey.transactions.FastTransaction
 import com.example.a100_basiccrypto.digitalkey.transactions.OwnerPairingTransaction
 import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransaction
@@ -41,6 +42,7 @@ class MyHostApduService : HostApduService() {
     }
 
     private val storageManager by lazy { SecureKeyStorageManager(applicationContext) }
+    private val bleIdentityManager by lazy { BleIdentityManager(applicationContext) }
     private val identityCrypto = DilithiumIdentityCryptoImpl()
     
     private val nfcTransport = NfcPassiveTransport()
@@ -49,6 +51,7 @@ class MyHostApduService : HostApduService() {
         val pairingHandler = OwnerPairingTransaction(
             identityCrypto = identityCrypto,
             storageManager = storageManager,
+            bleIdentityManager = bleIdentityManager,
             passwordProvider = { PasswordManager.getPassword(applicationContext) },
             onLog = { sendLogToGui(it) }
         )
@@ -81,19 +84,16 @@ class MyHostApduService : HostApduService() {
         val cla = commandApdu[0]
         val ins = commandApdu[1]
         
-        // 1. Initial Selective Blocking
         if ((cla == Class.OWNER_PAIRING || cla == 0x80.toByte()) && !isPairingModeEnabled) {
             return NfcConstants.SW_UNKNOWN_CMD
         }
 
-        // 2. Select AID Handling
         if (cla == NfcConstants.CLA_ISO && ins == 0xA4.toByte()) {
             resetSession()
             sendLogToGui("System: Reader Connected.")
             return NfcConstants.SW_SUCCESS
         }
 
-        // 3. Chaining / Chunking Handling
         if (ins == NfcConstants.INS_GET_NEXT_CHUNK) {
             val chunkIndex = if (commandApdu.size >= 3) commandApdu[2].toInt() and 0xFF else 0
             return nfcTransport.getNextChunk(chunkIndex)
@@ -101,7 +101,6 @@ class MyHostApduService : HostApduService() {
 
         resetTimeoutTimer()
 
-        // 4. Delegate to Transport & Router, with callback for UI logic
         return nfcTransport.onApduReceived(commandApdu) { frame, response ->
             handleActionBroadcasts(frame, response)
         }
