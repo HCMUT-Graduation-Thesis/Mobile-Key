@@ -1,5 +1,10 @@
 package com.example.a100_basiccrypto.digitalkey.transactions
 
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import android.os.Build
 import android.util.Log
 import com.example.a100_basiccrypto.shared.model.CarMetadata
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
@@ -19,11 +24,15 @@ import com.example.a100_basiccrypto.digitalkey.storage.BleIdentityManager
 import com.google.gson.Gson
 import java.nio.ByteBuffer
 import java.security.KeyPair
+import java.security.SecureRandom
+import java.util.concurrent.Executors
 
 /**
- * Owner Pairing Transaction - Updated for Full Two-Way BLE OOB Exchange using persistent identity.
+ * Owner Pairing Transaction - CCC 3.0 Standard OOB Pairing.
+ * Handles Phase 3 with extended OOB parameters and Fast Auth Key derivation.
  */
 class OwnerPairingTransaction(
+    private val context: Context,
     private val identityCrypto: IIdentityCrypto,
     private val storageManager: IKeyStorageManager,
     private val bleIdentityManager: BleIdentityManager,
@@ -39,7 +48,15 @@ class OwnerPairingTransaction(
     private var ephemeralKeyPair: KeyPair? = null
     private var isComplete = false
     private var pendingRecord: DigitalKeyRecord? = null
+
+    private var localOobData: Any? = null
+    private val executor = Executors.newSingleThreadExecutor()
     
+    private val bluetoothAdapter: BluetoothAdapter? by lazy {
+        val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        manager?.adapter
+    }
+
     private val gson = Gson()
 
     override fun processCommand(frame: LogicalFrame, transport: IPassiveTransport): LogicalResponse {
@@ -58,51 +75,43 @@ class OwnerPairingTransaction(
         ephemeralKeyPair = null
         isComplete = false
         pendingRecord = null
+        localOobData = null
     }
 
     override fun isTransactionComplete(): Boolean = isComplete
 
     private fun handleStartPairing(): LogicalResponse {
-        onLog("Phase 1: Pairing Request Received")
+        onLog("Phase 1: Pairing Request")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && bluetoothAdapter != null) {
+            try {
+                val callbackClass = Class.forName("android.bluetooth.BluetoothAdapter\$OobDataCallback")
+                val proxy = java.lang.reflect.Proxy.newProxyInstance(callbackClass.classLoader, arrayOf(callbackClass)) { _, method, args ->
+                    if (method.name == "onOobData") { localOobData = args[1]; onLog("Phase 1: Local OOB ready") }
+                    null
+                }
+                val generateMethod = bluetoothAdapter!!.javaClass.getMethod("generateLocalOobData", Int::class.java, java.util.concurrent.Executor::class.java, callbackClass)
+                generateMethod.invoke(bluetoothAdapter, 2, executor, proxy)
+            } catch (e: Exception) { Log.e(TAG, "OOB Init Error: ${e.message}") }
+        }
         return LogicalResponse(Status.SUCCESS)
     }
 
     private fun handleExchangePubKey(payload: ByteArray): LogicalResponse {
         return try {
-            onLog("Phase 2.a: Key Exchange")
-            val pubKeyReaderBytes = payload.sliceArray(0 until 65)
-            val pubKeyReader = HandshakeProtector.parseUncompressedPublicKey(pubKeyReaderBytes)
-
+            val pubKeyReader = HandshakeProtector.parseUncompressedPublicKey(payload.sliceArray(0 until 65))
             ephemeralKeyPair = HandshakeProtector.generateEphemeralKeyPair()
-            
-            val salt = passwordProvider().toByteArray()
-            currentSessionKey = HandshakeProtector.deriveSessionKey(
-                ephemeralKeyPair!!.private, pubKeyReader, salt, CryptoConstants.OWNER_SESSION_INFO
-            )
-
-            onLog("Phase 2.a: Session Key established")
-            val responseData = HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public)
-            LogicalResponse(Status.SUCCESS, responseData)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error Phase 2a: ${e.message}")
-            LogicalResponse(Status.ERR_GENERAL)
-        }
+            currentSessionKey = HandshakeProtector.deriveSessionKey(ephemeralKeyPair!!.private, pubKeyReader, passwordProvider().toByteArray(), CryptoConstants.OWNER_SESSION_INFO)
+            LogicalResponse(Status.SUCCESS, HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public))
+        } catch (e: Exception) { LogicalResponse(Status.ERR_GENERAL) }
     }
 
     private fun handleVerifyNonce(payload: ByteArray): LogicalResponse {
         val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_GENERAL)
         return try {
-            val decrypted2b = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            onLog("Phase 2.b: Nonce verified")
-            
-            val hcePubKey = identityCrypto.getPublicKey()
-            val responseData = decrypted2b.sliceArray(0 until 16) + hcePubKey
-            val encrypted = CryptoUtils.encryptAesGcm(responseData, sessionKey)
-            LogicalResponse(Status.SUCCESS, encrypted)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error Phase 2b: ${e.message}")
-            LogicalResponse(Status.ERR_GENERAL)
-        }
+            val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
+            val responseData = decrypted.sliceArray(0 until 16) + identityCrypto.getPublicKey()
+            LogicalResponse(Status.SUCCESS, CryptoUtils.encryptAesGcm(responseData, sessionKey))
+        } catch (e: Exception) { LogicalResponse(Status.ERR_GENERAL) }
     }
 
     private fun handleExchangeVehicleData(payload: ByteArray): LogicalResponse {
@@ -110,122 +119,95 @@ class OwnerPairingTransaction(
         return try {
             val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
             onLog("Phase 3: Data Received from Vehicle")
-            
+
             val buffer = ByteBuffer.wrap(decryptedData)
             val record = DigitalKeyRecord()
 
-            // 1. Core Cryptographic Data (Vehicle PK)
-            if (buffer.remaining() >= CryptoConstants.ML_DSA_65_PK_SIZE) {
-                val vehiclePK = ByteArray(CryptoConstants.ML_DSA_65_PK_SIZE)
-                buffer.get(vehiclePK)
-                record.core.vehiclePublicKey = vehiclePK
-            } else return LogicalResponse(Status.ERR_GENERAL)
+            // 1. Dilithium PK (1952)
+            val vehiclePK = ByteArray(CryptoConstants.ML_DSA_65_PK_SIZE)
+            buffer.get(vehiclePK)
+            record.core.vehiclePublicKey = vehiclePK
 
-            if (buffer.remaining() >= 8) {
-                val kid = ByteArray(8)
-                buffer.get(kid)
-                record.core.keyID = kid
+            // 2. Metadata & Identifiers
+            val kid = ByteArray(8); buffer.get(kid)
+            record.core.keyID = kid
+
+            val mid = ByteArray(16); buffer.get(mid)
+            record.core.moduleID = mid
+
+            record.core.slotID = buffer.get()
+            record.core.transactionCounter = buffer.int
+            record.core.permissions = buffer.int
+            record.core.validityStart = buffer.long
+            record.core.validityEnd = buffer.long
+
+            val token = ByteArray(64); buffer.get(token)
+            record.core.immobilizerToken = token
+
+            // 3. BLE Identity (6 + 16)
+            val bleAddr = ByteArray(6); buffer.get(bleAddr)
+            record.core.bleAddress = bleAddr
+
+            val irk = ByteArray(16); buffer.get(irk)
+            record.core.irk = irk
+
+            // 4. BLE OOB (65 + 16 + 16)
+            val blePk = ByteArray(65); buffer.get(blePk)
+            record.core.bleVehiclePublicKey = blePk
+
+            val conf = ByteArray(16); buffer.get(conf)
+            record.core.oobConfirmation = conf
+
+            val rand = ByteArray(16); buffer.get(rand)
+            record.core.oobRandomizer = rand
+
+            // 5. Metadata JSON (Remaining)
+            val metaLen = buffer.remaining()
+            if (metaLen > 0) {
+                val metaBytes = ByteArray(metaLen); buffer.get(metaBytes)
+                record.core.carMetadata = gson.fromJson(String(metaBytes), CarMetadata::class.java)
+                record.friendlyName = record.core.carMetadata?.modelName ?: "My Vehicle"
             }
 
-            // 2. Hardware Identifiers
-            if (buffer.remaining() >= 17) {
-                val mid = ByteArray(16)
-                buffer.get(mid)
-                record.core.moduleID = mid
-                record.core.slotID = buffer.get()
-            }
-
-            // 3. Permissions & Counters
-            if (buffer.remaining() >= 8) {
-                record.core.transactionCounter = buffer.int
-                record.core.permissions = buffer.int
-            }
-
-            // 4. Validity
-            if (buffer.remaining() >= 16) {
-                record.core.validityStart = buffer.long
-                record.core.validityEnd = buffer.long
-            }
-
-            // 5. Immobilizer Token
-            if (buffer.remaining() >= 64) {
-                val token = ByteArray(64)
-                buffer.get(token)
-                record.core.immobilizerToken = token
-            }
-
-            // 6. BLE OOB Data (Vehicle -> App)
-            if (buffer.remaining() >= CryptoConstants.BLE_ADDR_SIZE) {
-                val bleAddr = ByteArray(CryptoConstants.BLE_ADDR_SIZE)
-                buffer.get(bleAddr)
-                record.core.bleAddress = bleAddr
-                onLog("Phase 3: Vehicle BLE Address received")
-            }
-
-            if (buffer.remaining() >= CryptoConstants.BLE_IRK_SIZE) {
-                val irk = ByteArray(CryptoConstants.BLE_IRK_SIZE)
-                buffer.get(irk)
-                record.core.irk = irk
-                onLog("Phase 3: Vehicle BLE IRK received")
-            }
-
-            // 7. Metadata (Remaining buffer)
-            val metadataBytesLeft = buffer.remaining()
-            if (metadataBytesLeft > 0) {
-                val metadataBytes = ByteArray(metadataBytesLeft)
-                buffer.get(metadataBytes)
-                val metadataStr = String(metadataBytes, Charsets.UTF_8).trim { it <= ' ' }
-                try {
-                    if (metadataStr.isNotEmpty()) {
-                        record.core.carMetadata = gson.fromJson(metadataStr, CarMetadata::class.java)
-                        record.friendlyName = record.core.carMetadata?.modelName ?: "My Vehicle"
-                    }
-                } catch (e: Exception) { Log.e(TAG, "Metadata error: ${e.message}") }
-            }
-
-            // 8. Key Derivations (Fast Auth & BLE LTK)
+            // 6. Fast Auth Key Derivation
+            onLog("Phase 3: Deriving Fast Auth Key...")
             val salt = passwordProvider().toByteArray()
-            
-            // Derive Fast Auth Key (AES-256)
             record.core.fastAuthKey = CryptoUtils.deriveSessionKey(
                 sessionKey, salt, CryptoConstants.FAST_AUTH_TAG.toByteArray(), 32
             )
-            
-            // Derive BLE LTK (AES-128) - Shared between App and Vehicle
-            record.core.bleLtk = CryptoUtils.deriveSessionKey(
-                sessionKey, salt, CryptoConstants.BLE_LTK_INFO.toByteArray(), CryptoConstants.BLE_LTK_SIZE
-            )
-            onLog("Phase 3: BLE LTK derived successfully")
 
             record.devicePrivateKey = identityCrypto.getPrivateKey()
             record.core.devicePublicKey = identityCrypto.getPublicKey()
-            
             record.core.keyState = KeyState.PROVISIONING
             pendingRecord = record
             storageManager.saveDigitalKey(record)
-            
-            // 9. Prepare Response Data (App -> Vehicle)
-            // We send [Device PK | App BLE Address | App IRK]
-            onLog("Phase 3: Sending App Identity & BLE OOB to Vehicle")
-            
-            val appBleAddress = bleIdentityManager.getAppBleAddress()
-            val appIrk = bleIdentityManager.getAppIrk()
 
-            val devicePubKey = record.core.devicePublicKey!!
-            val responsePayload = ByteBuffer.allocate(
-                devicePubKey.size + CryptoConstants.BLE_ADDR_SIZE + CryptoConstants.BLE_IRK_SIZE
-            ).apply {
-                put(devicePubKey)
-                put(appBleAddress)
+            // 7. Prepare Response: App -> Vehicle
+            onLog("Phase 3: Preparing BLE OOB Response...")
+            val appAddr = bleIdentityManager.getAppBleAddress()
+            val appIrk = bleIdentityManager.getAppIrk()
+            val oob = localOobData
+            
+            val appConf = if (oob != null) oob.javaClass.getMethod("getLeConfirmationHash").invoke(oob) as ByteArray else ByteArray(16)
+            val appRand = if (oob != null) oob.javaClass.getMethod("getLeRandomizerHash").invoke(oob) as ByteArray else ByteArray(16)
+            val appPk = if (oob != null) oob.javaClass.getMethod("getLeTemporaryKey").invoke(oob) as ByteArray else ByteArray(65)
+
+            val appKeyId = ByteArray(8).apply { SecureRandom().nextBytes(this) }
+
+            // Response: PK(1952) + KeyID(8) + Addr(6) + IRK(16) + PK(65) + Conf(16) + Rand(16)
+            val response = ByteBuffer.allocate(1952 + 8 + 6 + 16 + 65 + 16 + 16).apply {
+                put(record.core.devicePublicKey!!)
+                put(appKeyId)
+                put(appAddr)
                 put(appIrk)
+                put(appPk)
+                put(appConf)
+                put(appRand)
             }.array()
 
-            val encryptedResponse = CryptoUtils.encryptAesGcm(responsePayload, sessionKey)
-            
-            onLog("Phase 3 Complete. Key saved and OOB sent.")
-            LogicalResponse(Status.SUCCESS, encryptedResponse)
+            LogicalResponse(Status.SUCCESS, CryptoUtils.encryptAesGcm(response, sessionKey))
         } catch (e: Exception) {
-            Log.e(TAG, "Error Phase 3: ${e.message}")
+            Log.e(TAG, "Phase 3 Error: ${e.message}")
             LogicalResponse(Status.ERR_GENERAL)
         }
     }
@@ -233,20 +215,16 @@ class OwnerPairingTransaction(
     private fun handleCommitPairing(payload: ByteArray): LogicalResponse {
         val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_GENERAL)
         return try {
-            val decryptedData = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            if (decryptedData.size == 1 && decryptedData[0] == 0x01.toByte()) {
-                val recordToActivate = pendingRecord ?: storageManager.getAllKeys().lastOrNull { it.core.keyState == KeyState.PROVISIONING }
-                if (recordToActivate != null) {
-                    recordToActivate.core.keyState = KeyState.ACTIVE
-                    storageManager.saveDigitalKey(recordToActivate)
-                    onLog("Phase 4: Pairing Complete! Key is ACTIVE")
-                    isComplete = true
-                    LogicalResponse(Status.SUCCESS)
-                } else LogicalResponse(Status.ERR_GENERAL)
+            val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
+            if (decrypted.size == 1 && decrypted[0] == 0x01.toByte()) {
+                pendingRecord?.let { 
+                    it.core.keyState = KeyState.ACTIVE
+                    storageManager.saveDigitalKey(it)
+                    onLog("Phase 4: Pairing Active!")
+                }
+                isComplete = true
+                LogicalResponse(Status.SUCCESS)
             } else LogicalResponse(Status.ERR_GENERAL)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error Phase 4: ${e.message}")
-            LogicalResponse(Status.ERR_GENERAL)
-        }
+        } catch (e: Exception) { LogicalResponse(Status.ERR_GENERAL) }
     }
 }

@@ -49,6 +49,7 @@ class MyHostApduService : HostApduService() {
 
     private val router: TransactionRouter by lazy {
         val pairingHandler = OwnerPairingTransaction(
+            context = applicationContext,
             identityCrypto = identityCrypto,
             storageManager = storageManager,
             bleIdentityManager = bleIdentityManager,

@@ -8,7 +8,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.a100_basiccrypto"
-        minSdk = 24
+        minSdk = 30
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -48,7 +48,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     
-    // Bouncy Castle - Updated to match libs.versions.toml alias
+    // Bouncy Castle
     implementation(libs.bouncycastle.bcprov)
     implementation(libs.bouncycastle.pqc)
     
