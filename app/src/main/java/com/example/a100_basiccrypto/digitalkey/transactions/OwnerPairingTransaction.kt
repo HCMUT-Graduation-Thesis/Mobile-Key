@@ -1,8 +1,5 @@
 package com.example.a100_basiccrypto.digitalkey.transactions
 
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.util.Log
 import com.example.a100_basiccrypto.shared.model.CarMetadata
@@ -19,22 +16,18 @@ import com.example.a100_basiccrypto.shared.crypto.HandshakeProtector
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.shared.crypto.CryptoConstants
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
-import com.example.a100_basiccrypto.digitalkey.storage.BleIdentityManager
 import com.google.gson.Gson
 import java.nio.ByteBuffer
 import java.security.KeyPair
-import java.security.SecureRandom
-import java.util.concurrent.Executors
 
 /**
  * Owner Pairing Transaction - Updated for BLE L2CAP Insecure flow.
- * Removed Level 4 OOB security parameters.
+ * Removed Level 4 OOB security parameters and BLE routing parameters from payload.
  */
 class OwnerPairingTransaction(
     private val context: Context,
     private val identityCrypto: IIdentityCrypto,
     private val storageManager: IKeyStorageManager,
-    private val bleIdentityManager: BleIdentityManager,
     private val passwordProvider: () -> String,
     private val onLog: (String) -> Unit
 ) : ITransactionHandler {
@@ -47,11 +40,6 @@ class OwnerPairingTransaction(
     private var ephemeralKeyPair: KeyPair? = null
     private var isComplete = false
     private var pendingRecord: DigitalKeyRecord? = null
-
-    private val bluetoothAdapter: BluetoothAdapter? by lazy {
-        val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-        manager?.adapter
-    }
 
     private val gson = Gson()
 
@@ -87,7 +75,7 @@ class OwnerPairingTransaction(
             currentSessionKey = HandshakeProtector.deriveSessionKey(
                 ephemeralKeyPair!!.private, 
                 pubKeyReader, 
-                passwordProvider().toByteArray(), 
+                passwordProvider().toByteArray(),
                 CryptoConstants.OWNER_SESSION_INFO
             )
             LogicalResponse(Status.SUCCESS, HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public))
@@ -140,15 +128,7 @@ class OwnerPairingTransaction(
             val token = ByteArray(64); buffer.get(token)
             record.core.immobilizerToken = token
 
-            // 3. BLE Connectivity (Simplified)
-            val bleAddr = ByteArray(6); buffer.get(bleAddr)
-            record.core.bleAddress = bleAddr
-
-            // New: Read PSM from vehicle
-            if (buffer.remaining() >= 2) {
-                record.core.bleL2capPsm = buffer.short.toInt() and 0xFFFF
-                onLog("Phase 3: Received L2CAP PSM: ${record.core.bleL2capPsm}")
-            }
+            // 3. BLE Connectivity - REMOVED Address and PSM from payload
 
             // 4. Metadata JSON (Remaining)
             val metaLen = buffer.remaining()
@@ -176,13 +156,11 @@ class OwnerPairingTransaction(
             storageManager.saveDigitalKey(record)
 
             // 6. Prepare Response: App -> Vehicle (Simplified)
-            onLog("Phase 3: Sending App BLE Identity...")
-            val appAddr = bleIdentityManager.getAppBleAddress()
-
-            // Response: PK(1952) + Addr(6)
-            val response = ByteBuffer.allocate(CryptoConstants.ML_DSA_65_PK_SIZE + 6).apply {
+            onLog("Phase 3: Sending App Identity...")
+            
+            // Response: PK(1952) only - Address removed
+            val response = ByteBuffer.allocate(CryptoConstants.ML_DSA_65_PK_SIZE).apply {
                 put(record.core.devicePublicKey!!)
-                put(appAddr)
             }.array()
 
             LogicalResponse(Status.SUCCESS, CryptoUtils.encryptAesGcm(response, sessionKey))

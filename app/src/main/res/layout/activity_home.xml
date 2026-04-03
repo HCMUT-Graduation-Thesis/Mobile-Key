@@ -89,7 +89,6 @@
                 android:orientation="horizontal"
                 android:gravity="center_vertical">
 
-                <!-- Reset Keys Button (Trash Icon) -->
                 <FrameLayout
                     android:id="@+id/btn_reset_keys"
                     android:layout_width="36dp"
@@ -108,7 +107,6 @@
                         app:tint="@color/error_red" />
                 </FrameLayout>
 
-                <!-- Owner Pairing "+" Button (Rounded Square Blue) -->
                 <FrameLayout
                     android:id="@+id/btn_add_key_header"
                     android:layout_width="36dp"
@@ -129,6 +127,51 @@
         </RelativeLayout>
     </androidx.appcompat.widget.Toolbar>
 
+    <!-- BLE Status Indicator -->
+    <LinearLayout
+        android:id="@+id/ll_ble_status_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginTop="8dp"
+        android:background="#1AFFFFFF"
+        android:orientation="vertical"
+        android:padding="12dp"
+        app:layout_constraintTop_toBottomOf="@id/toolbar_home">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <ImageView
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:layout_gravity="center_vertical"
+                android:layout_marginEnd="8dp"
+                android:src="@android:drawable/stat_sys_data_bluetooth"
+                app:tint="#4CAF50" />
+
+            <TextView
+                android:id="@+id/tv_home_ble_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Status: BLE Idle"
+                android:textColor="#B3FFFFFF"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_home_app_mac"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginStart="24dp"
+            android:text="App MAC: --:--:--:--:--:--"
+            android:textColor="#88FFFFFF"
+            android:textSize="10sp"
+            android:fontFamily="monospace" />
+    </LinearLayout>
+
     <!-- Body: Key List -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rv_keys"
@@ -137,7 +180,7 @@
         android:paddingHorizontal="12dp"
         android:paddingTop="8dp"
         android:clipToPadding="false"
-        app:layout_constraintTop_toBottomOf="@id/toolbar_home"
+        app:layout_constraintTop_toBottomOf="@id/ll_ble_status_container"
         app:layout_constraintBottom_toBottomOf="parent"
         tools:listitem="@layout/item_digital_key" />
 

@@ -19,7 +19,6 @@ import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.shared.physical.NfcConstants
 import com.example.a100_basiccrypto.digitalkey.storage.PasswordManager
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
-import com.example.a100_basiccrypto.digitalkey.storage.BleIdentityManager
 import com.example.a100_basiccrypto.digitalkey.transactions.FastTransaction
 import com.example.a100_basiccrypto.digitalkey.transactions.OwnerPairingTransaction
 import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransaction
@@ -42,7 +41,6 @@ class MyHostApduService : HostApduService() {
     }
 
     private val storageManager by lazy { SecureKeyStorageManager(applicationContext) }
-    private val bleIdentityManager by lazy { BleIdentityManager(applicationContext) }
     private val identityCrypto = DilithiumIdentityCryptoImpl()
     
     private val nfcTransport = NfcPassiveTransport()
@@ -52,7 +50,6 @@ class MyHostApduService : HostApduService() {
             context = applicationContext,
             identityCrypto = identityCrypto,
             storageManager = storageManager,
-            bleIdentityManager = bleIdentityManager,
             passwordProvider = { PasswordManager.getPassword(applicationContext) },
             onLog = { sendLogToGui(it) }
         )
