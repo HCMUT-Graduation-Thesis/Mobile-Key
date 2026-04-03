@@ -12,13 +12,17 @@ import android.os.Looper
 import android.os.ParcelUuid
 import android.util.Log
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
 import com.example.a100_basiccrypto.shared.model.CoreDigitalKey
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.physical.BleConstants
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
- * BleCentralManager - Now with Module ID verification and dynamic info broadcasting.
+ * BleCentralManager - Implements Secure L2CAP PSM exchange using AES-GCM and ImmoToken.
+ * Updated to match Technical Spec: Little Endian PSM and 32-byte sliced ImmoToken.
  */
 @SuppressLint("MissingPermission")
 class BleCentralManager(
@@ -29,6 +33,7 @@ class BleCentralManager(
         private const val TAG = "BleCentralManager"
         private const val SCAN_PERIOD: Long = 12000 
         private const val RECONNECT_DELAY: Long = 3000
+        private const val GCM_IV_LENGTH = 12
     }
 
     var onDataReceived: ((ByteArray) -> Unit)? = null
@@ -130,14 +135,17 @@ class BleCentralManager(
 
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-            if (status != BluetoothGatt.GATT_SUCCESS) return
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                onLog("BLE Error: Read failed with status $status")
+                return
+            }
 
             when (characteristic.uuid) {
                 BleConstants.MODULE_ID_CHARACTERISTIC_UUID -> {
                     val receivedModuleId = characteristic.value
                     if (verifyVehicleIdentity(receivedModuleId)) {
-                        onLog("BLE: Identity Verified! Syncing PSM...")
-                        // Step 2: If identity is correct, read PSM
+                        onLog("BLE: Identity Verified! Syncing Secure PSM...")
+                        // Step 2: If identity is correct, read encrypted PSM
                         val psmChar = gatt.getService(BleConstants.SERVICE_UUID)
                             ?.getCharacteristic(BleConstants.PSM_CHARACTERISTIC_UUID)
                         if (psmChar != null) gatt.readCharacteristic(psmChar)
@@ -147,15 +155,53 @@ class BleCentralManager(
                     }
                 }
                 BleConstants.PSM_CHARACTERISTIC_UUID -> {
-                    val psm = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT16, 0)
-                    onLog("BLE: Ready to open data pipe (PSM: $psm)")
-                    
-                    // BROADCAST INFO TO UI
-                    targetKey?.moduleID?.let { mid ->
-                        onVehicleInfoUpdated?.invoke(mid.toHex(), gatt.device.address, psm)
+                    val receivedPayload = characteristic.value
+                    if (receivedPayload == null || receivedPayload.isEmpty()) {
+                        onLog("BLE Error: Empty PSM data.")
+                        handleDisconnection()
+                        return
                     }
-                    
-                    openInsecureL2capChannel(gatt.device, psm)
+
+                    // LOG RAW PSM INFO (18 bytes: 2 bytes Ciphertext + 16 bytes Tag)
+                    onLog("BLE: Received Payload (Length: ${receivedPayload.size} bytes)")
+                    Log.d(TAG, "Raw Payload: ${receivedPayload.toHex()}")
+
+                    val fullToken = targetKey?.immobilizerToken
+                    if (fullToken == null || fullToken.size < 32) {
+                        onLog("BLE Error: Invalid or missing ImmoToken (Requires 32 bytes).")
+                        handleDisconnection()
+                        return
+                    }
+
+                    try {
+                        // SPEC COMPLIANCE: Use only first 32 bytes of ImmoToken as AES-256 key
+                        val aesKey = fullToken.sliceArray(0 until 32)
+                        
+                        // MTU OPTIMIZATION: Vehicle uses a static zero IV (12 bytes)
+                        val zeroIv = ByteArray(GCM_IV_LENGTH) { 0 }
+                        val fullCipherData = zeroIv + receivedPayload
+
+                        // Step 3: Decrypt using AES/GCM/NoPadding
+                        val decryptedBytes = CryptoUtils.decryptAesGcm(fullCipherData, aesKey)
+                        
+                        // Step 4: Convert 2-byte plaintext to Int using LITTLE ENDIAN (as per spec)
+                        // Formula: (data[0] & 0xFF) | ((data[1] & 0xFF) << 8)
+                        val psm = ByteBuffer.wrap(decryptedBytes).order(ByteOrder.LITTLE_ENDIAN).short.toInt() and 0xFFFF
+                        
+                        onLog("BLE: PSM Decrypted (Value: 0x${Integer.toHexString(psm).uppercase()}, Int: $psm). Opening L2CAP...")
+                        Log.d(TAG, "Decrypted PSM: $psm (0x${Integer.toHexString(psm).uppercase()})")
+                        
+                        // BROADCAST INFO TO UI
+                        targetKey?.moduleID?.let { mid ->
+                            onVehicleInfoUpdated?.invoke(mid.toHex(), gatt.device.address, psm)
+                        }
+                        
+                        openInsecureL2capChannel(gatt.device, psm)
+                    } catch (e: Exception) {
+                        onLog("BLE Security Error: PSM Decryption failed (AEAD check failed).")
+                        Log.e(TAG, "Decryption error", e)
+                        handleDisconnection()
+                    }
                 }
             }
         }
@@ -181,7 +227,7 @@ class BleCentralManager(
                 bluetoothSocket = device.createInsecureL2capChannel(psm)
                 bluetoothSocket?.connect()
                 isConnected = true
-                onLog("BLE: Data pipe connected.")
+                onLog("BLE: L2CAP Data pipe connected.")
                 
                 val inputStream = bluetoothSocket?.inputStream ?: return@Thread
                 val buffer = ByteArray(8192)
@@ -190,6 +236,7 @@ class BleCentralManager(
                     if (bytes > 0) onDataReceived?.invoke(buffer.copyOfRange(0, bytes))
                 }
             } catch (e: IOException) {
+                onLog("BLE: L2CAP Connection failed.")
                 handleDisconnection()
             }
         }.start()

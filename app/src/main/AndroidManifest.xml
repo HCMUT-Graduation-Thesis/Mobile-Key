@@ -47,6 +47,8 @@
         <activity android:name=".ControlActivity" android:label="Vehicle Control" />
         <activity android:name=".NotificationActivity" android:label="Notifications" />
         <activity android:name=".ShareConfigActivity" android:label="Share Key Settings" />
+        <activity android:name=".SettingsActivity" android:label="Vehicle Settings" />
+        <activity android:name=".EKeyManagerActivity" android:label="Manage eKeys" />
 
         <!-- NFC HCE Service -->
         <service
