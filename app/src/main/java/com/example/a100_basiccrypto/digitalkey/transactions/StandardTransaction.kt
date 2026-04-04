@@ -113,7 +113,7 @@ class StandardTransaction(
             val record = storageManager.getAllKeys().find { it.core.moduleID?.contentEquals(moduleId) == true }
                 ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
 
-            val vehiclePK = record.core.vehiclePublicKey ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
+            val vehiclePK = record.vehiclePublicKey ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
             
             if (!identityCrypto.verify(appNonce!!, vehicleSig, vehiclePK)) {
                 onLog("Error: Vehicle PQC Sig Invalid")

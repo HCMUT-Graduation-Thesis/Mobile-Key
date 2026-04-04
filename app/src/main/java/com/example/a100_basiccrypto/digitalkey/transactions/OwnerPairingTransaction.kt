@@ -64,7 +64,7 @@ class OwnerPairingTransaction(
     override fun isTransactionComplete(): Boolean = isComplete
 
     private fun handleStartPairing(): LogicalResponse {
-        onLog("Phase 1: Pairing Request (L2CAP Insecure Mode)")
+        onLog("Phase 1: Pairing Request")
         return LogicalResponse(Status.SUCCESS)
     }
 
@@ -110,7 +110,7 @@ class OwnerPairingTransaction(
             // 1. Dilithium PK (1952)
             val vehiclePK = ByteArray(CryptoConstants.ML_DSA_65_PK_SIZE)
             buffer.get(vehiclePK)
-            record.core.vehiclePublicKey = vehiclePK
+            record.vehiclePublicKey = vehiclePK
 
             // 2. Metadata & Identifiers
             val kid = ByteArray(8); buffer.get(kid)
@@ -150,17 +150,16 @@ class OwnerPairingTransaction(
             )
 
             record.devicePrivateKey = identityCrypto.getPrivateKey()
-            record.core.devicePublicKey = identityCrypto.getPublicKey()
+            record.devicePublicKey = identityCrypto.getPublicKey()
             record.core.keyState = KeyState.PROVISIONING
             pendingRecord = record
-            storageManager.saveDigitalKey(record)
 
             // 6. Prepare Response: App -> Vehicle (Simplified)
             onLog("Phase 3: Sending App Identity...")
             
             // Response: PK(1952) only - Address removed
             val response = ByteBuffer.allocate(CryptoConstants.ML_DSA_65_PK_SIZE).apply {
-                put(record.core.devicePublicKey!!)
+                put(record.devicePublicKey!!)
             }.array()
 
             LogicalResponse(Status.SUCCESS, CryptoUtils.encryptAesGcm(response, sessionKey))

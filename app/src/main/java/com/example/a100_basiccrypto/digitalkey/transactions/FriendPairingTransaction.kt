@@ -149,7 +149,7 @@ class FriendPairingTransaction(
                 core.permissions = buffer.int
                 core.fastAuthKey = CryptoUtils.deriveSessionKey(sKey, pairingCode.toByteArray(), CryptoConstants.FAST_AUTH_TAG.toByteArray(), 32)
                 devicePrivateKey = identityCrypto.getPrivateKey()
-                core.devicePublicKey = identityCrypto.getPublicKey()
+                devicePublicKey = identityCrypto.getPublicKey()
                 core.keyState = KeyState.PROVISIONING
             }
             storageManager.saveDigitalKey(record)

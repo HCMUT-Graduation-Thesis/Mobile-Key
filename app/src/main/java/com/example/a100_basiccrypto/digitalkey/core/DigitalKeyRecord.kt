@@ -15,7 +15,9 @@ data class DigitalKeyRecord(
     // 2. App-Specific Identification & Cloud Metadata
     var accountID: String? = null, // Link to User Account on server
 
-    // 3. App-Specific Secrets
+    // 3. App-Specific Secrets & Identity
+    var devicePublicKey: ByteArray? = null,  // Dilithium PK of the App
+    var vehiclePublicKey: ByteArray? = null, // Dilithium PK of the Vehicle
     var devicePrivateKey: ByteArray? = null, // Unique Private Key per vehicle
 
     // 4. Lifecycle & UI Metadata
