@@ -89,8 +89,8 @@ class OwnerPairingTransaction(
         val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_GENERAL)
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            // Echo nonce (16b) + App Identity PK
-            val responseData = decrypted.sliceArray(0 until 16) + identityCrypto.getPublicKey()
+            // Echo nonce (16b)
+            val responseData = decrypted.sliceArray(0 until 16)
             LogicalResponse(Status.SUCCESS, CryptoUtils.encryptAesGcm(responseData, sessionKey))
         } catch (e: Exception) { 
             Log.e(TAG, "Verify Nonce Error: ${e.message}")
