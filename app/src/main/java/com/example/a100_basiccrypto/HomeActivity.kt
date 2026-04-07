@@ -154,11 +154,11 @@ class HomeActivity : AppCompatActivity() {
         
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val item = items[position]
-            holder.tvName.text = if (item.friendlyName.isNotEmpty()) item.friendlyName else (item.core.carMetadata?.modelName ?: "Vehicle")
-            holder.tvPlate.text = item.core.carMetadata?.licensePlate ?: "No Plate"
+            holder.tvName.text = if (item.friendlyName.isNotEmpty()) item.friendlyName else (item.carMetadata?.modelName ?: "Vehicle")
+            holder.tvPlate.text = item.carMetadata?.licensePlate ?: "No Plate"
             
             // Format ModuleID to hex for lookup
-            val midHex = item.core.moduleID?.joinToString("") { "%02x".format(it) } ?: ""
+            val midHex = item.moduleID?.joinToString("") { "%02x".format(it) } ?: ""
             val dynamicData = dynamicVehicleData[midHex]
             
             if (dynamicData != null) {

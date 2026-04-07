@@ -47,7 +47,7 @@ class BleForegroundService : Service() {
         val storageManager = SecureKeyStorageManager(this)
         val activeKeys = storageManager.getAllKeys().filter { it.core.keyState == KeyState.ACTIVE }
         if (activeKeys.isNotEmpty()) {
-            BleProvider.getManager().scanAndConnect(activeKeys[0].core)
+            BleProvider.getManager().scanAndConnect(activeKeys[0])
         }
 
         return START_STICKY

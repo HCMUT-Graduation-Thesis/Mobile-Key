@@ -145,7 +145,7 @@ class FriendPairingTransaction(
             record.apply {
                 core.slotID = buffer.get()
                 core.keyID = ByteArray(8).apply { buffer.get(this) }
-                core.immobilizerToken = ByteArray(64).apply { buffer.get(this) }
+                immobilizerToken = ByteArray(64).apply { buffer.get(this) }
                 core.permissions = buffer.int
                 core.fastAuthKey = CryptoUtils.deriveSessionKey(sKey, pairingCode.toByteArray(), CryptoConstants.FAST_AUTH_TAG.toByteArray(), 32)
                 devicePrivateKey = identityCrypto.getPrivateKey()

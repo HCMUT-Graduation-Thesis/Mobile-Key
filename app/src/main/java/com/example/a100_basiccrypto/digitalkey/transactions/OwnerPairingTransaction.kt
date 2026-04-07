@@ -117,7 +117,7 @@ class OwnerPairingTransaction(
             record.core.keyID = kid
 
             val mid = ByteArray(16); buffer.get(mid)
-            record.core.moduleID = mid
+            record.moduleID = mid
 
             record.core.slotID = buffer.get()
             record.core.transactionCounter = buffer.int
@@ -126,7 +126,7 @@ class OwnerPairingTransaction(
             record.core.validityEnd = buffer.long
 
             val token = ByteArray(64); buffer.get(token)
-            record.core.immobilizerToken = token
+            record.immobilizerToken = token
 
             // 3. BLE Connectivity - REMOVED Address and PSM from payload
 
@@ -135,8 +135,8 @@ class OwnerPairingTransaction(
             if (metaLen > 0) {
                 val metaBytes = ByteArray(metaLen); buffer.get(metaBytes)
                 try {
-                    record.core.carMetadata = gson.fromJson(String(metaBytes), CarMetadata::class.java)
-                    record.friendlyName = record.core.carMetadata?.modelName ?: "My Vehicle"
+                    record.carMetadata = gson.fromJson(String(metaBytes), CarMetadata::class.java)
+                    record.friendlyName = record.carMetadata?.modelName ?: "My Vehicle"
                 } catch (e: Exception) {
                     onLog("Metadata parse warning: ${e.message}")
                 }

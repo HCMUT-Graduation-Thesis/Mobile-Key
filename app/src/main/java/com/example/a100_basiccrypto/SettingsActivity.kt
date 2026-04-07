@@ -53,10 +53,10 @@ class SettingsActivity : AppCompatActivity() {
         btnFactoryReset = findViewById(R.id.btn_settings_factory_reset)
 
         currentKey?.let {
-            etVehicleName.setText(it.friendlyName.ifEmpty { it.core.carMetadata?.modelName ?: "Vehicle" })
+            etVehicleName.setText(it.friendlyName.ifEmpty { it.carMetadata?.modelName ?: "Vehicle" })
             // Display full IDs instead of truncated versions
             tvKeyId.text = "KeyID: ${it.core.keyID?.toHex() ?: "N/A"}"
-            tvModuleId.text = "ModuleID: ${it.core.moduleID?.toHex() ?: "N/A"}"
+            tvModuleId.text = "ModuleID: ${it.moduleID?.toHex() ?: "N/A"}"
         }
 
         btnUpdate.setOnClickListener {

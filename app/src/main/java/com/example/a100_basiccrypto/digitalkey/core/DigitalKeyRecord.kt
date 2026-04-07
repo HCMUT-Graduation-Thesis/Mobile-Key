@@ -19,6 +19,9 @@ data class DigitalKeyRecord(
     var devicePublicKey: ByteArray? = null,  // Dilithium PK of the App
     var vehiclePublicKey: ByteArray? = null, // Dilithium PK of the Vehicle
     var devicePrivateKey: ByteArray? = null, // Unique Private Key per vehicle
+    var immobilizerToken: ByteArray? = null, // Token for BLE PSM decryption & Engine Start
+    var carMetadata: CarMetadata? = null,    // Vehicle Identity (App-only storage)
+    var moduleID: ByteArray? = null,         // Unique ID of the vehicle module
 
     // 4. Lifecycle & UI Metadata
     var syncStatus: SyncStatus = SyncStatus.PENDING_UPLOAD,

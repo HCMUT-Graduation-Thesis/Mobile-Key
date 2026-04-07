@@ -10,6 +10,7 @@ import com.example.a100_basiccrypto.shared.command.MessageConstants.Admin
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Fast
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.shared.crypto.HandshakeProtector
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.shared.crypto.CryptoConstants
@@ -19,7 +20,7 @@ import java.security.KeyPair
 import java.security.SecureRandom
 
 /**
- * Standard Transaction V1.3.0 Implementation - Updated for IPassiveTransport.
+ * Standard Transaction V1.3.0 Implementation - Updated for IPassiveTransport and Pure Sync flow.
  */
 class StandardTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -74,17 +75,44 @@ class StandardTransaction(
     private fun handleAuthInit(payload: ByteArray): LogicalResponse {
         return try {
             onLog("STD: Phase 1 - Key Exchange")
+            
+            // Find the starting position of the Public Key (0x04)
             val startIndex = payload.indexOf(0x04.toByte())
-            if (startIndex == -1 || payload.size - startIndex < 65) return LogicalResponse(Status.ERR_GENERAL)
+            if (startIndex == -1 || payload.size - startIndex < 65) {
+                onLog("Error: Invalid AuthInit payload structure")
+                return LogicalResponse(Status.ERR_GENERAL)
+            }
 
+            // 1. Extract ModuleID from the data preceding the Public Key
+            val moduleId = payload.sliceArray(0 until startIndex)
+            if (moduleId.isEmpty()) {
+                onLog("Error: ModuleID missing in AuthInit. Vehicle must send ModuleID.")
+                return LogicalResponse(Status.ERR_AUTH_FAIL)
+            }
+
+            // 2. Look up and Store the Key record based on the provided ModuleID
+            val record = storageManager.getAllKeys().find { it.moduleID?.contentEquals(moduleId) == true }
+                ?: run {
+                    onLog("Error: No paired key found for ModuleID: ${moduleId.toHex()}")
+                    return LogicalResponse(Status.ERR_AUTH_FAIL)
+                }
+            
+            activeRecord = record // Store active record for subsequent phases
+
+            // 3. Extract Vehicle Public Key
             val vehiclePKBytes = payload.sliceArray(startIndex until startIndex + 65)
             val vehicleEphemeralPK = HandshakeProtector.parseUncompressedPublicKey(vehiclePKBytes)
 
             ephemeralKeyPair = HandshakeProtector.generateEphemeralKeyPair()
 
-            val salt = passwordProvider().toByteArray()
+            // 4. Use Immobilizer Token from the identified record as Salt
+            val salt = record.immobilizerToken ?: throw IllegalStateException("Record missing Immobilizer Token")
+            
             currentSessionKey = HandshakeProtector.deriveSessionKey(
-                ephemeralKeyPair!!.private, vehicleEphemeralPK, salt, CryptoConstants.STD_SESSION_INFO
+                ephemeralKeyPair!!.private, 
+                vehicleEphemeralPK, 
+                salt, 
+                CryptoConstants.STD_SESSION_INFO
             )
 
             sharedSecret = CryptoUtils.generateSharedSecret(ephemeralKeyPair!!.private, vehicleEphemeralPK)
@@ -94,24 +122,24 @@ class StandardTransaction(
             LogicalResponse(Status.SUCCESS, responseData)
         } catch (e: Exception) {
             Log.e("StandardTx", "AuthInit error: ${e.message}")
+            onLog("AuthInit Error: ${e.message}")
             LogicalResponse(Status.ERR_GENERAL)
         }
     }
 
     private fun handleMutualVerify(payload: ByteArray): LogicalResponse {
         val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
+        val record = activeRecord ?: return LogicalResponse(Status.ERR_AUTH_FAIL) // Use stored record
+        
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
             val buffer = ByteBuffer.wrap(decrypted)
 
-            if (buffer.remaining() < 16 + CryptoConstants.ML_DSA_65_SIG_SIZE + 16) return LogicalResponse(Status.ERR_GENERAL)
+            // Adjusted size check: Sig (3309) + Challenge (16) = 3325 (ModuleID removed from Phase 2)
+            if (buffer.remaining() < CryptoConstants.ML_DSA_65_SIG_SIZE + 16) return LogicalResponse(Status.ERR_GENERAL)
 
-            val moduleId = ByteArray(16).also { buffer.get(it) }
             val vehicleSig = ByteArray(CryptoConstants.ML_DSA_65_SIG_SIZE).also { buffer.get(it) }
             val readerChallenge = ByteArray(16).also { buffer.get(it) }
-
-            val record = storageManager.getAllKeys().find { it.core.moduleID?.contentEquals(moduleId) == true }
-                ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
 
             val vehiclePK = record.vehiclePublicKey ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
             
@@ -121,7 +149,6 @@ class StandardTransaction(
             }
             
             isCarVerified = true
-            activeRecord = record
 
             val deviceSK = record.devicePrivateKey ?: return LogicalResponse(Status.ERR_GENERAL)
             val appSig = identityCrypto.sign(readerChallenge, deviceSK)
@@ -138,16 +165,19 @@ class StandardTransaction(
 
     private fun handleActionSync(payload: ByteArray): LogicalResponse {
         val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
-        val secret = sharedSecret ?: return LogicalResponse(Status.ERR_GENERAL)
-        val record = activeRecord ?: return LogicalResponse(Status.ERR_GENERAL)
 
         return try {
-            val immotoken = record.core.immobilizerToken ?: return LogicalResponse(Status.ERR_GENERAL)
-            stagedFastKey = CryptoUtils.deriveSessionKey(secret, immotoken, CryptoConstants.FAST_KEY_REFRESH.toByteArray(), 32)
-            stagedCounter = 0
+            val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
             
-            onLog("STD: Action Req received.")
-            val responseData = byteArrayOf(Admin.STD_MSG_SYNC_OK, Fast.INS_UNLOCK)
+            // Logic for NFC: Expecting empty payload for Pure Sync
+            if (decrypted.isEmpty()) {
+                onLog("STD: Pure Sync Request received.")
+            } else {
+                onLog("STD: Action Sync with command (Size: ${decrypted.size}B)")
+                // Advanced command logic can be handled here for BLE if needed
+            }
+            
+            val responseData = byteArrayOf(Admin.STD_MSG_SYNC_OK)
             val encrypted = CryptoUtils.encryptAesGcm(responseData, sessionKey)
             LogicalResponse(Status.SUCCESS, encrypted)
         } catch (e: Exception) {
@@ -159,8 +189,8 @@ class StandardTransaction(
     private fun handleFinalCommit(payload: ByteArray): LogicalResponse {
         val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
         val record = activeRecord ?: return LogicalResponse(Status.ERR_GENERAL)
-        val newKey = stagedFastKey ?: return LogicalResponse(Status.ERR_GENERAL)
-
+        val secret = sharedSecret ?: return LogicalResponse(Status.ERR_GENERAL)
+        val immotoken = record.immobilizerToken ?: return LogicalResponse(Status.ERR_GENERAL)
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
             if (decrypted.size < 2) return LogicalResponse(Status.ERR_GENERAL)
@@ -169,11 +199,23 @@ class StandardTransaction(
             val commitMarker = decrypted[1]
 
             if (execResult == Admin.STD_EXEC_SUCCESS && commitMarker == Admin.STD_COMMIT_MARKER) {
-                storageManager.updateFastKeyAndCounter(record.core.keyID!!, newKey, stagedCounter)
+                // Always rotate the fast auth key during Standard Transaction
+                val newFastKey = CryptoUtils.deriveSessionKey(
+                    secret,
+                    immotoken,
+                    CryptoConstants.FAST_KEY_REFRESH.toByteArray(),
+                    32
+                )
+                stagedFastKey = newFastKey
+                stagedCounter = 0
+                storageManager.updateFastKeyAndCounter(record.core.keyID!!, newFastKey, stagedCounter)
                 isComplete = true
-                onLog("STD: Recovery Complete.")
+                onLog("STD: Final Commit Success. Key is now ACTIVE.")
                 LogicalResponse(Status.SUCCESS)
-            } else LogicalResponse(Status.ERR_GENERAL)
+            } else {
+                onLog("STD Error: Commit markers mismatch.")
+                LogicalResponse(Status.ERR_GENERAL)
+            }
         } catch (e: Exception) {
             Log.e("StandardTx", "FinalCommit error: ${e.message}")
             LogicalResponse(Status.ERR_GENERAL)

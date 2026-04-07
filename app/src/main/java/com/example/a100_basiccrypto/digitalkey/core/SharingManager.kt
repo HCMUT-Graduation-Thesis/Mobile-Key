@@ -85,7 +85,7 @@ class SharingManager(
                 core.daysOfWeek = daysOfWeek
                 core.startTimeMinutes = startTimeMinutes
                 core.endTimeMinutes = endTimeMinutes
-                core.carMetadata = ownerRecord.core.carMetadata
+                this.carMetadata = ownerRecord.carMetadata
                 
                 this.invitationCode = invitationCode
                 this.invitationCodeHash = invCodeHash

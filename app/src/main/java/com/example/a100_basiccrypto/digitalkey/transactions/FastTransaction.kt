@@ -24,7 +24,7 @@ class FastTransaction(
 
     private var pendingRecord: DigitalKeyRecord? = null
     private var tempCounter: Int = 0
-    private var isTransactionComplete = false
+    private var isComplete = false
 
     override fun processCommand(frame: LogicalFrame, transport: IPassiveTransport): LogicalResponse {
         return try {
@@ -47,7 +47,7 @@ class FastTransaction(
         buffer.get(targetModuleID)
 
         val allKeys = storageManager.getAllKeys()
-        val record = allKeys.find { it.core.moduleID?.contentEquals(targetModuleID) == true }
+        val record = allKeys.find { it.moduleID?.contentEquals(targetModuleID) == true }
             ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
 
         if (record.core.keyState != KeyState.ACTIVE) return LogicalResponse(Status.ERR_PERMISSION)
@@ -56,19 +56,28 @@ class FastTransaction(
 
         tempCounter = record.core.transactionCounter + 1
         pendingRecord = record
-        isTransactionComplete = false
+        isComplete = false
 
         val isEngineCmd = (frame.msgId == Fast.INS_START_ENGINE || frame.msgId == Fast.INS_STOP_ENGINE)
+
         val responseSize = 4 + (if (isEngineCmd) CryptoConstants.IMMOBILIZER_TOKEN_SIZE else 0)
-        
         val responsePlain = ByteBuffer.allocate(responseSize).apply {
             putInt(tempCounter)
-            if (isEngineCmd) put(record.core.immobilizerToken ?: ByteArray(64))
+            if (isEngineCmd) put(record.immobilizerToken ?: ByteArray(64))
         }.array()
 
         onLog("FastTx P2: TempCounter=$tempCounter")
+        
+
         val encrypted = CryptoUtils.encryptAesGcm(responsePlain, fastAuthKey)
-        return LogicalResponse(Status.SUCCESS, encrypted)
+
+        val keyID = record.core.keyID ?: ByteArray(CryptoConstants.KEY_ID_SIZE)
+        val finalResponseData = ByteBuffer.allocate(keyID.size + encrypted.size).apply {
+            put(keyID)
+            put(encrypted)
+        }.array()
+
+        return LogicalResponse(Status.SUCCESS, finalResponseData)
     }
 
     private fun handleFinalCommit(frame: LogicalFrame): LogicalResponse {
@@ -83,7 +92,7 @@ class FastTransaction(
         }
 
         storageManager.updateTransactionCounter(record.core.keyID!!, tempCounter)
-        isTransactionComplete = true
+        isComplete = true
         onLog("FastTx P3: Atomic Commit Success.")
 
         val response = CryptoUtils.encryptAesGcm(byteArrayOf(Status.SUCCESS), fastAuthKey)
@@ -94,8 +103,8 @@ class FastTransaction(
     override fun resetTransaction() {
         pendingRecord = null
         tempCounter = 0
-        isTransactionComplete = false
+        isComplete = false
     }
 
-    override fun isTransactionComplete(): Boolean = isTransactionComplete
+    override fun isTransactionComplete(): Boolean = isComplete
 }

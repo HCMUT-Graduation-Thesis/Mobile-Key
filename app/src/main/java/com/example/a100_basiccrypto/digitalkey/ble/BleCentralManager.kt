@@ -11,9 +11,9 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
 import android.util.Log
+import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
-import com.example.a100_basiccrypto.shared.model.CoreDigitalKey
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.physical.BleConstants
 import java.io.IOException
@@ -53,13 +53,13 @@ class BleCentralManager(
     private var bluetoothSocket: BluetoothSocket? = null
     private var bluetoothGatt: BluetoothGatt? = null
     
-    // The key we are currently trying to verify against
-    private var targetKey: CoreDigitalKey? = null
+    // The record we are currently trying to verify against
+    private var targetRecord: DigitalKeyRecord? = null
 
     private fun isBluetoothEnabled(): Boolean = bluetoothAdapter?.isEnabled == true
 
-    fun scanAndConnect(key: CoreDigitalKey) {
-        targetKey = key
+    fun scanAndConnect(record: DigitalKeyRecord) {
+        targetRecord = record
         if (!isBluetoothEnabled() || isConnected || isScanning) return
         startScanSequence()
     }
@@ -166,7 +166,7 @@ class BleCentralManager(
                     onLog("BLE: Received Payload (Length: ${receivedPayload.size} bytes)")
                     Log.d(TAG, "Raw Payload: ${receivedPayload.toHex()}")
 
-                    val fullToken = targetKey?.immobilizerToken
+                    val fullToken = targetRecord?.immobilizerToken
                     if (fullToken == null || fullToken.size < 32) {
                         onLog("BLE Error: Invalid or missing ImmoToken (Requires 32 bytes).")
                         handleDisconnection()
@@ -192,8 +192,8 @@ class BleCentralManager(
                         Log.d(TAG, "Decrypted PSM: $psm (0x${Integer.toHexString(psm).uppercase()})")
                         
                         // BROADCAST INFO TO UI
-                        targetKey?.moduleID?.let { mid ->
-                            onVehicleInfoUpdated?.invoke(mid.toHex(), gatt.device.address, psm)
+                        targetRecord?.moduleID?.let { mid ->
+                            onVehicleInfoUpdated?.invoke(mid.joinToString("") { "%02x".format(it) }, gatt.device.address, psm)
                         }
                         
                         openInsecureL2capChannel(gatt.device, psm)
@@ -213,8 +213,8 @@ class BleCentralManager(
         
         // Check if the received Module ID exists in our local key database
         for (record in savedKeys) {
-            if (record.core.moduleID.contentEquals(receivedId)) {
-                targetKey = record.core // Update targetKey to the matched one
+            if (record.moduleID.contentEquals(receivedId)) {
+                targetRecord = record // Update targetRecord to the matched one
                 return true
             }
         }
@@ -250,7 +250,7 @@ class BleCentralManager(
 
     private fun scheduleReconnect() {
         handler.removeCallbacksAndMessages(null)
-        if (targetKey != null) {
+        if (targetRecord != null) {
             handler.postDelayed({ startScanSequence() }, RECONNECT_DELAY)
         }
     }

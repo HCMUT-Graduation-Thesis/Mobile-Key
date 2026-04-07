@@ -130,8 +130,8 @@ class ControlActivity : AppCompatActivity() {
 
     private fun displayKeyInfo() {
         currentKey?.let {
-            tvName.text = it.friendlyName.ifEmpty { it.core.carMetadata?.modelName ?: "Digital Key" }
-            tvPlate.text = it.core.carMetadata?.licensePlate ?: "NO PLATE"
+            tvName.text = it.friendlyName.ifEmpty { it.carMetadata?.modelName ?: "Digital Key" }
+            tvPlate.text = it.carMetadata?.licensePlate ?: "NO PLATE"
             tvConnectionStatus.text = "Connected (${it.core.role})"
             viewStatusDot.setBackgroundResource(R.drawable.shape_dot_green)
         }
