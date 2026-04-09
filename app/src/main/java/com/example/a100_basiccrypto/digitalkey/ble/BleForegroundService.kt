@@ -22,7 +22,7 @@ class BleForegroundService : Service() {
     companion object {
         private const val CHANNEL_ID = "ble_connection_channel"
         private const val NOTIFICATION_ID = 101
-        private const val TELEMETRY_POLL_INTERVAL = 15000L // 15 seconds
+        private const val TELEMETRY_POLL_INTERVAL = 15000L //  15 seconds
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -56,10 +56,11 @@ class BleForegroundService : Service() {
         }
 
         // Auto-scan for active keys if not already connected
-        if (!BleProvider.getManager().isConnected()) {
+        val manager = BleProvider.getManager()
+        if (!manager.isConnected()) {
             val activeKeys = storageManager.getAllKeys().filter { it.core.keyState == KeyState.ACTIVE }
             if (activeKeys.isNotEmpty()) {
-                BleProvider.getManager().scanAndConnect(activeKeys[0])
+                manager.scanAndConnect(activeKeys[0])
             }
         }
 
@@ -70,33 +71,22 @@ class BleForegroundService : Service() {
         telemetryJob?.cancel()
         telemetryJob = serviceScope.launch {
             while (isActive) {
-                if (BleProvider.getManager().isConnected()) {
-                    trySyncCurrentVehicle()
+                val manager = BleProvider.getManager()
+                val activeKeyID = manager.connectedKeyID
+                
+                if (manager.isConnected() && activeKeyID != null) {
+                    Log.d("BleService", "Starting background telemetry sync for: ${activeKeyID.toHex()}")
+                    val status = fastTxClient.syncTelemetry(BleProvider.getTransport(), activeKeyID)
+                    
+                    // Broadcast the update to any active UI listeners
+                    if (status != null) {
+                        withContext(Dispatchers.Main) {
+                            BleProvider.notifyTelemetryUpdated(status)
+                        }
+                    }
                 }
                 delay(TELEMETRY_POLL_INTERVAL)
             }
-        }
-    }
-
-    private suspend fun trySyncCurrentVehicle() {
-        // 1. Get the ModuleID of the currently connected vehicle from the GATT cache
-        // BleProvider updates this when identity is verified in BleCentralManager
-        val allKeys = storageManager.getAllKeys()
-        
-        // Find which key record matches the connected device
-        // We can use the logic from verifyVehicleIdentity but in reverse or check BleProvider's state
-        val connectedRecord = allKeys.find { record ->
-            val midHex = record.moduleID?.toHex() ?: ""
-            // We need a way to know which MID is currently connected. 
-            // BleCentralManager stores the connected GATT device, but we verified the MID during handshake.
-            // For now, we assume the record that matches the verification is the one.
-            BleProvider.getManager().isConnected() && midHex.isNotEmpty() 
-            // In a real scenario, we'd store the verified KeyID in BleProvider after handshake.
-        }
-
-        connectedRecord?.core?.keyID?.let { keyID ->
-            Log.d("BleService", "Starting background telemetry sync for: ${keyID.toHex()}")
-            fastTxClient.syncTelemetry(BleProvider.getTransport(), keyID)
         }
     }
 

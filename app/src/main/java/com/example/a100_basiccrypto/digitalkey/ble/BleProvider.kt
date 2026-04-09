@@ -3,9 +3,10 @@ package com.example.a100_basiccrypto.digitalkey.ble
 import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Log
+import com.example.a100_basiccrypto.shared.model.VehicleStatus
 
 /**
- * Singleton Provider - Now supports Sticky Vehicle Info updates.
+ * Singleton Provider - Now supports Sticky Vehicle Info and Telemetry updates.
  */
 @SuppressLint("StaticFieldLeak")
 object BleProvider {
@@ -14,11 +15,13 @@ object BleProvider {
 
     private val statusListeners = mutableSetOf<(String) -> Unit>()
     private val vehicleInfoListeners = mutableSetOf<(moduleID: String, mac: String, psm: Int) -> Unit>()
+    private val telemetryListeners = mutableSetOf<(VehicleStatus) -> Unit>()
     
     private var lastStatus: String = "BLE Idle"
     
-    // Sticky Cache for the last identified vehicle info
+    // Sticky Cache
     private var lastVehicleInfo: Triple<String, String, Int>? = null
+    private var lastTelemetry: VehicleStatus? = null
 
     fun init(appContext: Context) {
         if (bleCentralManager == null) {
@@ -27,9 +30,9 @@ object BleProvider {
                 Log.d("BLE_GLOBAL", message)
                 lastStatus = message
                 
-                // If disconnected, clear sticky vehicle info
                 if (message.contains("Link lost") || message.contains("OFF")) {
                     lastVehicleInfo = null
+                    lastTelemetry = null
                 }
                 
                 statusListeners.forEach { it(message) }
@@ -41,10 +44,18 @@ object BleProvider {
             }
 
             bleCentralManager!!.onVehicleInfoUpdated = { mid, mac, psm ->
-                lastVehicleInfo = Triple(mid, mac, psm) // Cache the info
+                lastVehicleInfo = Triple(mid, mac, psm)
                 vehicleInfoListeners.forEach { it(mid, mac, psm) }
             }
         }
+    }
+
+    /**
+     * Broadcasts newly received vehicle telemetry data to all registered listeners.
+     */
+    fun notifyTelemetryUpdated(status: VehicleStatus) {
+        lastTelemetry = status
+        telemetryListeners.forEach { it(status) }
     }
 
     fun addStatusListener(listener: (String) -> Unit) {
@@ -58,7 +69,6 @@ object BleProvider {
 
     fun addVehicleInfoListener(listener: (String, String, Int) -> Unit) {
         vehicleInfoListeners.add(listener)
-        // Immediately trigger if we have cached info (Sticky behavior)
         lastVehicleInfo?.let { (mid, mac, psm) ->
             listener(mid, mac, psm)
         }
@@ -66,6 +76,15 @@ object BleProvider {
 
     fun removeVehicleInfoListener(listener: (String, String, Int) -> Unit) {
         vehicleInfoListeners.remove(listener)
+    }
+
+    fun addTelemetryListener(listener: (VehicleStatus) -> Unit) {
+        telemetryListeners.add(listener)
+        lastTelemetry?.let { listener(it) }
+    }
+
+    fun removeTelemetryListener(listener: (VehicleStatus) -> Unit) {
+        telemetryListeners.remove(listener)
     }
 
     fun getManager(): BleCentralManager = bleCentralManager!!

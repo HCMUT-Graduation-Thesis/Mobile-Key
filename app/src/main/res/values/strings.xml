@@ -2,4 +2,9 @@
     <string name="app_name">100_BasicCrypto</string>
     <string name="serv_desc">NFC Lock Service</string>
     <string name="aid_desc">ECDH Exchange AID</string>
+
+    <!-- Vehicle Status Formats -->
+    <string name="temp_format">%.1f°C</string>
+    <string name="battery_format">%d%%</string>
+    <string name="odo_format">%,.0f km</string>
 </resources>

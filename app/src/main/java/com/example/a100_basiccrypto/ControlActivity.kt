@@ -6,10 +6,12 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -22,7 +24,11 @@ import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Class
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Fast
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
-import com.example.a100_basiccrypto.shared.link.LogicalFrame
+import com.example.a100_basiccrypto.shared.model.DoorLocation
+import com.example.a100_basiccrypto.shared.model.DoorState
+import com.example.a100_basiccrypto.shared.model.EngineState
+import com.example.a100_basiccrypto.shared.model.TrunkState
+import com.example.a100_basiccrypto.shared.model.VehicleStatus
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.launch
 
@@ -40,7 +46,6 @@ class ControlActivity : AppCompatActivity() {
     
     private val storageManager by lazy { SecureKeyStorageManager(this) }
     private var currentKeyID: ByteArray? = null
-    private var cachedFriendlyName: String = ""
 
     private lateinit var sharingViewModel: SharingViewModel
     private lateinit var fastTxClient: FastTransactionClient
@@ -107,6 +112,10 @@ class ControlActivity : AppCompatActivity() {
             performFastAction(Class.FAST_ACTION, Fast.INS_OPEN_TRUNK) 
         }
 
+        findViewById<View>(R.id.btn_car_info).setOnClickListener {
+            showVehicleInfoDialog()
+        }
+
         findViewById<View>(R.id.btn_ekeys).setOnClickListener { 
             val intent = Intent(this, EKeyManagerActivity::class.java)
             intent.putExtra("KEY_ID", currentKeyID)
@@ -131,7 +140,6 @@ class ControlActivity : AppCompatActivity() {
         lifecycleScope.launch {
             loadingOverlay.visibility = View.VISIBLE
             
-            // Pass ONLY KeyID. Client will fetch the latest counter from Database.
             val success = fastTxClient.execute(
                 transport = BleProvider.getTransport(),
                 keyID = keyID,
@@ -146,6 +154,103 @@ class ControlActivity : AppCompatActivity() {
             } else {
                 Toast.makeText(this@ControlActivity, "Action Failed. Check log.", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    /**
+     * Shows the BottomSheetDialog with vehicle telemetry information.
+     * Supports real-time updates via BleProvider telemetry listener.
+     */
+    private fun showVehicleInfoDialog() {
+        val keyID = currentKeyID ?: return
+        val initialRecord = storageManager.getDigitalKey(keyID) ?: return
+        
+        val dialog = BottomSheetDialog(this)
+        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_vehicle_info, null)
+        dialog.setContentView(dialogView)
+
+        // Set static Header Info once
+        dialogView.findViewById<TextView>(R.id.tv_dialog_vehicle_name).text = 
+            initialRecord.friendlyName.ifEmpty { initialRecord.carMetadata?.modelName ?: "Vehicle" }
+        dialogView.findViewById<TextView>(R.id.tv_dialog_vehicle_plate).text = 
+            initialRecord.carMetadata?.licensePlate ?: "N/A"
+
+        // Telemetry listener for real-time updates
+        val telemetryListener: (VehicleStatus) -> Unit = { status ->
+            runOnUiThread {
+                refreshDialogUi(dialogView, status)
+            }
+        }
+
+        // Initial UI population
+        initialRecord.vehicleStatus?.let { refreshDialogUi(dialogView, it) } ?: run {
+            Toast.makeText(this, "Waiting for telemetry sync...", Toast.LENGTH_SHORT).show()
+        }
+
+        // Start listening for updates while dialog is open
+        BleProvider.addTelemetryListener(telemetryListener)
+
+        // Stop listening when dialog is closed
+        dialog.setOnDismissListener {
+            BleProvider.removeTelemetryListener(telemetryListener)
+        }
+
+        dialogView.findViewById<Button>(R.id.btn_close_status).setOnClickListener { dialog.dismiss() }
+        dialog.show()
+    }
+
+    private fun refreshDialogUi(view: View, status: VehicleStatus) {
+        // Engine UI
+        val tvEngine = view.findViewById<TextView>(R.id.tv_status_engine)
+        val ivEngine = view.findViewById<ImageView>(R.id.iv_engine_icon)
+        if (status.engineState == EngineState.RUNNING) {
+            tvEngine.text = "Running"
+            tvEngine.setTextColor(ContextCompat.getColor(this, R.color.success_green))
+            ivEngine.setColorFilter(ContextCompat.getColor(this, R.color.success_green))
+        } else {
+            tvEngine.text = "Stopped"
+            tvEngine.setTextColor(ContextCompat.getColor(this, R.color.white))
+            ivEngine.setColorFilter(ContextCompat.getColor(this, R.color.gray_text))
+        }
+
+        // Core Telemetry
+        view.findViewById<TextView>(R.id.tv_status_temp).text = getString(R.string.temp_format, status.temperature)
+        view.findViewById<TextView>(R.id.tv_status_battery).text = getString(R.string.battery_format, status.batteryLevel)
+        view.findViewById<TextView>(R.id.tv_status_odometer).text = getString(R.string.odo_format, status.odometer)
+
+        // Trunk UI
+        val tvTrunk = view.findViewById<TextView>(R.id.tv_status_trunk)
+        val ivTrunk = view.findViewById<ImageView>(R.id.iv_trunk_icon)
+        if (status.trunkState == TrunkState.OPEN) {
+            tvTrunk.text = "Open"
+            tvTrunk.setTextColor(ContextCompat.getColor(this, R.color.primary_blue))
+            ivTrunk.setColorFilter(ContextCompat.getColor(this, R.color.primary_blue))
+        } else {
+            tvTrunk.text = "Closed"
+            tvTrunk.setTextColor(ContextCompat.getColor(this, R.color.white))
+            ivTrunk.setColorFilter(ContextCompat.getColor(this, R.color.gray_text))
+        }
+
+        // 4 Doors Detailed UI
+        updateDoorStatusUi(view, R.id.tv_status_door_fl, R.id.iv_door_fl_icon, status.doorStates[DoorLocation.FRONT_LEFT])
+        updateDoorStatusUi(view, R.id.tv_status_door_fr, R.id.iv_door_fr_icon, status.doorStates[DoorLocation.FRONT_RIGHT])
+        updateDoorStatusUi(view, R.id.tv_status_door_rl, R.id.iv_door_rl_icon, status.doorStates[DoorLocation.REAR_LEFT])
+        updateDoorStatusUi(view, R.id.tv_status_door_rr, R.id.iv_door_rr_icon, status.doorStates[DoorLocation.REAR_RIGHT])
+    }
+
+    private fun updateDoorStatusUi(parent: View, tvId: Int, ivId: Int, state: DoorState?) {
+        val tv = parent.findViewById<TextView>(tvId)
+        val iv = parent.findViewById<ImageView>(ivId)
+        if (state == DoorState.LOCKED) {
+            tv.text = "Locked"
+            tv.setTextColor(ContextCompat.getColor(this, R.color.white))
+            iv.setImageResource(android.R.drawable.ic_lock_lock)
+            iv.setColorFilter(ContextCompat.getColor(this, R.color.gray_text))
+        } else {
+            tv.text = "Unlocked"
+            tv.setTextColor(ContextCompat.getColor(this, R.color.error_red))
+            iv.setImageResource(android.R.drawable.ic_lock_idle_lock)
+            iv.setColorFilter(ContextCompat.getColor(this, R.color.error_red))
         }
     }
 
@@ -167,7 +272,6 @@ class ControlActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         BleProvider.addStatusListener(bleStatusListener)
-        // Refresh UI info from DB in case it changed (e.g. Friendly Name)
         displayInitialInfo()
     }
 
