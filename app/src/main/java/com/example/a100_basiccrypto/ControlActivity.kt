@@ -22,13 +22,12 @@ import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Class
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Fast
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
-import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.launch
 
 /**
  * ControlActivity manages the individual key details and sharing features.
- * Handles Active BLE Transactions while NFC remains Passive and Always-On.
+ * UI entries call the unified FastTransactionClient.execute flow for BLE actions.
  */
 class ControlActivity : AppCompatActivity() {
 
@@ -62,7 +61,7 @@ class ControlActivity : AppCompatActivity() {
         })[SharingViewModel::class.java]
 
         fastTxClient = FastTransactionClient(storageManager) { message ->
-            runOnUiThread { Log.d("ControlActivity", "FastTx: $message") }
+            Log.d("ControlActivity", "FastTx Logic: $message")
         }
 
         initViews()
@@ -121,6 +120,9 @@ class ControlActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Entry point for UI buttons. Uses the encapsulated execute method of FastTransactionClient.
+     */
     private fun performFastAction(msgClass: Byte, targetIns: Byte) {
         val record = currentKey ?: return
         
@@ -130,33 +132,22 @@ class ControlActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch {
-            try {
-                loadingOverlay.visibility = View.VISIBLE
-                
-                val authPayload = fastTxClient.prepareActionRequest(record, targetIns)
-                if (authPayload == null) {
-                    Toast.makeText(this@ControlActivity, "Security Error: Key not active", Toast.LENGTH_SHORT).show()
-                    loadingOverlay.visibility = View.GONE
-                    return@launch
-                }
+            loadingOverlay.visibility = View.VISIBLE
+            
+            // Single encapsulated call for the entire flow
+            val success = fastTxClient.execute(
+                transport = BleProvider.getTransport(),
+                record = record,
+                msgClass = msgClass,
+                targetIns = targetIns
+            )
 
-                val frame = LogicalFrame(msgClass, targetIns, authPayload)
-                val response = BleProvider.getTransport().exchange(frame)
-                
-                if (response.status == Status.SUCCESS) {
-                    val success = fastTxClient.processCommitResponse(record, response.data)
-                    if (success) {
-                        Toast.makeText(this@ControlActivity, "Action Successful!", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(this@ControlActivity, "Vehicle rejected the action", Toast.LENGTH_SHORT).show()
-                    }
-                } else {
-                    Toast.makeText(this@ControlActivity, "Transaction failed (Status: ${response.status})", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this@ControlActivity, "Communication Error: ${e.message}", Toast.LENGTH_SHORT).show()
-            } finally {
-                loadingOverlay.visibility = View.GONE
+            loadingOverlay.visibility = View.GONE
+            
+            if (success) {
+                Toast.makeText(this@ControlActivity, "Action Successful!", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this@ControlActivity, "Action Failed. Check log.", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -174,8 +165,6 @@ class ControlActivity : AppCompatActivity() {
             viewStatusDot.setBackgroundResource(R.drawable.shape_dot_grey)
             tvConnectionStatus.text = "Disconnected"
         }
-        
-        Log.d("ControlActivity", "BLE Status Update: $status (isConnected=$isConnected)")
     }
 
     override fun onResume() {
