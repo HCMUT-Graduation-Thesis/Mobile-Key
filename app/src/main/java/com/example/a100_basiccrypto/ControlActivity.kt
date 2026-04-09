@@ -22,12 +22,13 @@ import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Class
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Fast
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
+import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.launch
 
 /**
- * ControlActivity manages the individual key details and sharing features.
- * UI entries call the unified FastTransactionClient.execute flow for BLE actions.
+ * ControlActivity - Manages BLE Active control flow.
+ * Ensures counter sync by passing only KeyID to the Transaction Client.
  */
 class ControlActivity : AppCompatActivity() {
 
@@ -38,7 +39,8 @@ class ControlActivity : AppCompatActivity() {
     private lateinit var loadingOverlay: View
     
     private val storageManager by lazy { SecureKeyStorageManager(this) }
-    private var currentKey: DigitalKeyRecord? = null
+    private var currentKeyID: ByteArray? = null
+    private var cachedFriendlyName: String = ""
 
     private lateinit var sharingViewModel: SharingViewModel
     private lateinit var fastTxClient: FastTransactionClient
@@ -61,21 +63,19 @@ class ControlActivity : AppCompatActivity() {
         })[SharingViewModel::class.java]
 
         fastTxClient = FastTransactionClient(storageManager) { message ->
-            Log.d("ControlActivity", "FastTx Logic: $message")
+            Log.d("ControlActivity", "FastTx: $message")
         }
 
         initViews()
         setupToolbar()
 
-        val keyId = intent.getByteArrayExtra("KEY_ID")
-        currentKey = storageManager.getAllKeys().find { it.core.keyID?.contentEquals(keyId) == true }
-
-        if (currentKey == null) {
+        currentKeyID = intent.getByteArrayExtra("KEY_ID")
+        if (currentKeyID == null) {
             finish()
             return
         }
 
-        displayKeyInfo()
+        displayInitialInfo()
         setupActionListeners()
         observeViewModel()
     }
@@ -100,8 +100,8 @@ class ControlActivity : AppCompatActivity() {
         findViewById<View>(R.id.btn_control_lock).setOnClickListener { 
             performFastAction(Class.FAST_ACTION, Fast.INS_LOCK) 
         }
-        findViewById<View>(R.id.btn_control_start).setOnClickListener { 
-            performFastAction(Class.ENGINE_OP, Fast.INS_START_ENGINE) 
+        findViewById<View>(R.id.btn_control_stop).setOnClickListener {
+            performFastAction(Class.ENGINE_OP, Fast.INS_STOP_ENGINE)
         }
         findViewById<View>(R.id.btn_control_trunk).setOnClickListener { 
             performFastAction(Class.FAST_ACTION, Fast.INS_OPEN_TRUNK) 
@@ -109,22 +109,19 @@ class ControlActivity : AppCompatActivity() {
 
         findViewById<View>(R.id.btn_ekeys).setOnClickListener { 
             val intent = Intent(this, EKeyManagerActivity::class.java)
-            intent.putExtra("KEY_ID", currentKey?.core?.keyID)
+            intent.putExtra("KEY_ID", currentKeyID)
             startActivity(intent)
         }
         
         findViewById<View>(R.id.btn_settings).setOnClickListener { 
             val intent = Intent(this, SettingsActivity::class.java)
-            intent.putExtra("KEY_ID", currentKey?.core?.keyID)
+            intent.putExtra("KEY_ID", currentKeyID)
             startActivity(intent)
         }
     }
 
-    /**
-     * Entry point for UI buttons. Uses the encapsulated execute method of FastTransactionClient.
-     */
     private fun performFastAction(msgClass: Byte, targetIns: Byte) {
-        val record = currentKey ?: return
+        val keyID = currentKeyID ?: return
         
         if (!BleProvider.getManager().isConnected()) {
             Toast.makeText(this, "BLE not connected. Use NFC or wait.", Toast.LENGTH_SHORT).show()
@@ -134,10 +131,10 @@ class ControlActivity : AppCompatActivity() {
         lifecycleScope.launch {
             loadingOverlay.visibility = View.VISIBLE
             
-            // Single encapsulated call for the entire flow
+            // Pass ONLY KeyID. Client will fetch the latest counter from Database.
             val success = fastTxClient.execute(
                 transport = BleProvider.getTransport(),
-                record = record,
+                keyID = keyID,
                 msgClass = msgClass,
                 targetIns = targetIns
             )
@@ -157,7 +154,7 @@ class ControlActivity : AppCompatActivity() {
         
         if (isConnected) {
             viewStatusDot.setBackgroundResource(R.drawable.shape_dot_green)
-            tvConnectionStatus.text = "Connected (${currentKey?.core?.role})"
+            tvConnectionStatus.text = "Connected"
         } else if (status.contains("Searching") || status.contains("Initializing")) {
             viewStatusDot.setBackgroundResource(R.drawable.shape_dot_orange)
             tvConnectionStatus.text = "Searching..."
@@ -170,6 +167,8 @@ class ControlActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         BleProvider.addStatusListener(bleStatusListener)
+        // Refresh UI info from DB in case it changed (e.g. Friendly Name)
+        displayInitialInfo()
     }
 
     override fun onPause() {
@@ -205,8 +204,9 @@ class ControlActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun displayKeyInfo() {
-        currentKey?.let {
+    private fun displayInitialInfo() {
+        val record = storageManager.getAllKeys().find { it.core.keyID?.contentEquals(currentKeyID) == true }
+        record?.let {
             tvName.text = it.friendlyName.ifEmpty { it.carMetadata?.modelName ?: "Digital Key" }
             tvPlate.text = it.carMetadata?.licensePlate ?: "NO PLATE"
             updateBleUi("Initial check")

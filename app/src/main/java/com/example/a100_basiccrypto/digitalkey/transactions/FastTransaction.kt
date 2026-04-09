@@ -55,6 +55,8 @@ class FastTransaction(
         val fastAuthKey = record.core.fastAuthKey ?: return LogicalResponse(Status.ERR_GENERAL)
 
         tempCounter = record.core.transactionCounter + 1
+        storageManager.updateTransactionCounter(record.core.keyID!!, tempCounter)
+        record.core.transactionCounter = tempCounter // Keep local object in sync
         pendingRecord = record
         isComplete = false
 
@@ -68,6 +70,7 @@ class FastTransaction(
 
         onLog("FastTx P2: TempCounter=$tempCounter")
         
+
 
         val encrypted = CryptoUtils.encryptAesGcm(responsePlain, fastAuthKey)
 
@@ -91,7 +94,6 @@ class FastTransaction(
             return LogicalResponse(Status.ERR_AUTH_FAIL)
         }
 
-        storageManager.updateTransactionCounter(record.core.keyID!!, tempCounter)
         isComplete = true
         onLog("FastTx P3: Atomic Commit Success.")
 

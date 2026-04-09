@@ -138,7 +138,7 @@
                     android:textSize="12sp" />
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_control_start"
+                    android:id="@+id/btn_control_stop"
                     android:layout_width="0dp"
                     android:layout_height="80dp"
                     android:layout_columnWeight="1"

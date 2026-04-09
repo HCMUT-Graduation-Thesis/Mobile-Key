@@ -14,7 +14,7 @@ import java.nio.ByteBuffer
 
 /**
  * FastTransactionClient - Handles ACTIVE (Initiator) flow for BLE transactions.
- * Orchestrates the full process with "Update-Before-Send" policy for counter reliability.
+ * Refactored to fetch fresh data from storage to ensure counter synchronization.
  */
 class FastTransactionClient(
     private val storageManager: IKeyStorageManager,
@@ -26,33 +26,37 @@ class FastTransactionClient(
 
     /**
      * Executes the entire fast transaction flow.
-     * Increments and saves the counter BEFORE sending to prevent Replay Attack errors
-     * if the response is lost but the vehicle processed the command.
+     * Fetches the latest record from DB to prevent stale counter issues (e.g., after an NFC tx).
      */
     suspend fun execute(
         transport: IActiveTransport,
-        record: DigitalKeyRecord,
+        keyID: ByteArray, // Pass KeyID instead of potentially stale Record
         msgClass: Byte,
         targetIns: Byte
     ): Boolean {
         try {
-            onLog("BLE: Initiating action (INS: 0x%02X)".format(targetIns))
+            // 1. Fetch FRESH record from Database right before execution
+            val record = storageManager.getAllKeys().find { it.core.keyID?.contentEquals(keyID) == true }
+                ?: run {
+                    onLog("BLE Error: Key not found in storage")
+                    return false
+                }
 
-            // 1. Calculate and persist new counter immediately (Burn the counter)
+            onLog("BLE: Initiating action (Current Counter in DB: ${record.core.transactionCounter})")
+
+            // 2. Increment and persist new counter (Update-Before-Send)
             val nextCounter = record.core.transactionCounter + 1
-            storageManager.updateTransactionCounter(record.core.keyID!!, nextCounter)
-            
-            // Update the local record object to reflect the change for this session
-            record.core.transactionCounter = nextCounter
+            storageManager.updateTransactionCounter(keyID, nextCounter)
+            record.core.transactionCounter = nextCounter // Update local copy for current flow
 
-            // 2. Prepare Request (Phase 2 in spec) using the new counter
+            // 3. Prepare Request
             val authPayload = prepareActionRequest(record, targetIns, nextCounter) ?: return false
             
-            // 3. Exchange (Transmission)
+            // 4. Transmission
             val frame = LogicalFrame(msgClass, targetIns, authPayload)
             val response = transport.exchange(frame)
 
-            // 4. Process Response (Phase 3 in spec)
+            // 5. Process Response
             return if (response.status == Status.SUCCESS) {
                 verifyCommitMarker(record, response.data)
             } else {
@@ -65,15 +69,9 @@ class FastTransactionClient(
         }
     }
 
-    /**
-     * Prepares the encrypted payload for an action request.
-     */
     private fun prepareActionRequest(record: DigitalKeyRecord, targetIns: Byte, counter: Int): ByteArray? {
         try {
-            if (record.core.keyState != KeyState.ACTIVE) {
-                onLog("Error: Key is not ACTIVE")
-                return null
-            }
+            if (record.core.keyState != KeyState.ACTIVE) return null
 
             val fastAuthKey = record.core.fastAuthKey ?: return null
             val keyID = record.core.keyID ?: return null
@@ -99,25 +97,12 @@ class FastTransactionClient(
         }
     }
 
-    /**
-     * Just verifies the commit marker from the vehicle. 
-     * DB is already updated in the initiation step.
-     */
     private fun verifyCommitMarker(record: DigitalKeyRecord, encryptedResponse: ByteArray): Boolean {
         val fastAuthKey = record.core.fastAuthKey ?: return false
-        
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(encryptedResponse, fastAuthKey)
-            
-            if (decrypted.isNotEmpty() && decrypted[0] == 0x00.toByte()) {
-                onLog("BLE Fast Tx: Success confirmed by vehicle.")
-                true
-            } else {
-                onLog("BLE Fast Tx Warning: Invalid Marker, but counter was updated.")
-                false
-            }
+            decrypted.isNotEmpty() && decrypted[0] == 0x00.toByte()
         } catch (e: Exception) {
-            onLog("BLE Fast Tx Error: Response verification failed.")
             false
         }
     }
