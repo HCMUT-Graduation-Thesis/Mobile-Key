@@ -58,6 +58,8 @@ class BleCentralManager(
 
     private fun isBluetoothEnabled(): Boolean = bluetoothAdapter?.isEnabled == true
 
+    fun isConnected(): Boolean = isConnected
+
     fun scanAndConnect(record: DigitalKeyRecord) {
         targetRecord = record
         if (!isBluetoothEnabled() || isConnected || isScanning) return

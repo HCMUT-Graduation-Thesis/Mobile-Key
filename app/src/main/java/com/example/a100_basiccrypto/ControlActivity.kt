@@ -2,10 +2,12 @@ package com.example.a100_basiccrypto
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.Button
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.lifecycle.ViewModel
@@ -15,12 +17,18 @@ import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.digitalkey.core.SharingViewModel
 import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
+import com.example.a100_basiccrypto.digitalkey.transactions.FastTransactionClient
+import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
+import com.example.a100_basiccrypto.shared.command.MessageConstants.Class
+import com.example.a100_basiccrypto.shared.command.MessageConstants.Fast
+import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
+import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.launch
 
 /**
  * ControlActivity manages the individual key details and sharing features.
- * UI Feedback for NFC transactions is handled globally by GlobalDialogController.
+ * Handles Active BLE Transactions while NFC remains Passive and Always-On.
  */
 class ControlActivity : AppCompatActivity() {
 
@@ -34,17 +42,28 @@ class ControlActivity : AppCompatActivity() {
     private var currentKey: DigitalKeyRecord? = null
 
     private lateinit var sharingViewModel: SharingViewModel
+    private lateinit var fastTxClient: FastTransactionClient
+
+    private val bleStatusListener: (String) -> Unit = { message ->
+        runOnUiThread {
+            updateBleUi(message)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_control)
 
         sharingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
-            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+            override fun <T : ViewModel> create(modelClass: java.lang.Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
                 return SharingViewModel(DilithiumIdentityCryptoImpl(), storageManager) as T
             }
         })[SharingViewModel::class.java]
+
+        fastTxClient = FastTransactionClient(storageManager) { message ->
+            runOnUiThread { Log.d("ControlActivity", "FastTx: $message") }
+        }
 
         initViews()
         setupToolbar()
@@ -76,16 +95,18 @@ class ControlActivity : AppCompatActivity() {
     }
 
     private fun setupActionListeners() {
-        // These buttons can be used to show help or trigger specific wireless discovery
-        val actionClick = View.OnClickListener {
-            // In HCE mode, the user just needs to tap the phone to the reader.
-            // We can show a small hint or just let the GlobalDialog handle the NFC event.
+        findViewById<View>(R.id.btn_control_unlock).setOnClickListener { 
+            performFastAction(Class.FAST_ACTION, Fast.INS_UNLOCK) 
         }
-
-        findViewById<View>(R.id.btn_control_unlock).setOnClickListener(actionClick)
-        findViewById<View>(R.id.btn_control_lock).setOnClickListener(actionClick)
-        findViewById<View>(R.id.btn_control_start).setOnClickListener(actionClick)
-        findViewById<View>(R.id.btn_control_trunk).setOnClickListener(actionClick)
+        findViewById<View>(R.id.btn_control_lock).setOnClickListener { 
+            performFastAction(Class.FAST_ACTION, Fast.INS_LOCK) 
+        }
+        findViewById<View>(R.id.btn_control_start).setOnClickListener { 
+            performFastAction(Class.ENGINE_OP, Fast.INS_START_ENGINE) 
+        }
+        findViewById<View>(R.id.btn_control_trunk).setOnClickListener { 
+            performFastAction(Class.FAST_ACTION, Fast.INS_OPEN_TRUNK) 
+        }
 
         findViewById<View>(R.id.btn_ekeys).setOnClickListener { 
             val intent = Intent(this, EKeyManagerActivity::class.java)
@@ -98,6 +119,73 @@ class ControlActivity : AppCompatActivity() {
             intent.putExtra("KEY_ID", currentKey?.core?.keyID)
             startActivity(intent)
         }
+    }
+
+    private fun performFastAction(msgClass: Byte, targetIns: Byte) {
+        val record = currentKey ?: return
+        
+        if (!BleProvider.getManager().isConnected()) {
+            Toast.makeText(this, "BLE not connected. Use NFC or wait.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        lifecycleScope.launch {
+            try {
+                loadingOverlay.visibility = View.VISIBLE
+                
+                val authPayload = fastTxClient.prepareActionRequest(record, targetIns)
+                if (authPayload == null) {
+                    Toast.makeText(this@ControlActivity, "Security Error: Key not active", Toast.LENGTH_SHORT).show()
+                    loadingOverlay.visibility = View.GONE
+                    return@launch
+                }
+
+                val frame = LogicalFrame(msgClass, targetIns, authPayload)
+                val response = BleProvider.getTransport().exchange(frame)
+                
+                if (response.status == Status.SUCCESS) {
+                    val success = fastTxClient.processCommitResponse(record, response.data)
+                    if (success) {
+                        Toast.makeText(this@ControlActivity, "Action Successful!", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this@ControlActivity, "Vehicle rejected the action", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    Toast.makeText(this@ControlActivity, "Transaction failed (Status: ${response.status})", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@ControlActivity, "Communication Error: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                loadingOverlay.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun updateBleUi(status: String) {
+        val isConnected = try { BleProvider.getManager().isConnected() } catch(e: Exception) { false }
+        
+        if (isConnected) {
+            viewStatusDot.setBackgroundResource(R.drawable.shape_dot_green)
+            tvConnectionStatus.text = "Connected (${currentKey?.core?.role})"
+        } else if (status.contains("Searching") || status.contains("Initializing")) {
+            viewStatusDot.setBackgroundResource(R.drawable.shape_dot_orange)
+            tvConnectionStatus.text = "Searching..."
+        } else {
+            viewStatusDot.setBackgroundResource(R.drawable.shape_dot_grey)
+            tvConnectionStatus.text = "Disconnected"
+        }
+        
+        Log.d("ControlActivity", "BLE Status Update: $status (isConnected=$isConnected)")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        BleProvider.addStatusListener(bleStatusListener)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        BleProvider.removeStatusListener(bleStatusListener)
     }
 
     private fun observeViewModel() {
@@ -132,8 +220,7 @@ class ControlActivity : AppCompatActivity() {
         currentKey?.let {
             tvName.text = it.friendlyName.ifEmpty { it.carMetadata?.modelName ?: "Digital Key" }
             tvPlate.text = it.carMetadata?.licensePlate ?: "NO PLATE"
-            tvConnectionStatus.text = "Connected (${it.core.role})"
-            viewStatusDot.setBackgroundResource(R.drawable.shape_dot_green)
+            updateBleUi("Initial check")
         }
     }
 }
