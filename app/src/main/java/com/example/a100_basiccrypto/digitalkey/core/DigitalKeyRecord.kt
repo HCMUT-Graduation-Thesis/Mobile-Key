@@ -4,6 +4,7 @@ import com.example.a100_basiccrypto.shared.model.CoreDigitalKey
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.CarMetadata
 import com.example.a100_basiccrypto.shared.model.SyncStatus
+import com.example.a100_basiccrypto.shared.model.VehicleStatus
 
 /**
  * DigitalKeyRecord is the App-specific data model for a digital key.
@@ -33,7 +34,10 @@ data class DigitalKeyRecord(
     var invitationCode: String? = null,        // Plain code
 
     // 6. Local usage count to enforce limits independently
-    var currentUsageCount: Int = 0
+    var currentUsageCount: Int = 0,
+
+    // 7. Last known vehicle physical status (Telemetry)
+    var vehicleStatus: VehicleStatus? = null
 ) {
     /**
      * Delegates the access control check to the Core model.

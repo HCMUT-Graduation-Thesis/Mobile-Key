@@ -22,7 +22,6 @@ import java.nio.ByteOrder
 
 /**
  * BleCentralManager - Implements Secure L2CAP PSM exchange using AES-GCM and ImmoToken.
- * Updated to match Technical Spec: Little Endian PSM and 32-byte sliced ImmoToken.
  */
 @SuppressLint("MissingPermission")
 class BleCentralManager(
@@ -37,8 +36,6 @@ class BleCentralManager(
     }
 
     var onDataReceived: ((ByteArray) -> Unit)? = null
-    
-    // Callback to send dynamic vehicle info (MAC, PSM) back to UI
     var onVehicleInfoUpdated: ((moduleID: String, mac: String, psm: Int) -> Unit)? = null
 
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
@@ -53,21 +50,24 @@ class BleCentralManager(
     private var bluetoothSocket: BluetoothSocket? = null
     private var bluetoothGatt: BluetoothGatt? = null
     
-    // The record we are currently trying to verify against
     private var targetRecord: DigitalKeyRecord? = null
-
-    private fun isBluetoothEnabled(): Boolean = bluetoothAdapter?.isEnabled == true
+    
+    /**
+     * The KeyID of the currently connected and verified vehicle.
+     */
+    var connectedKeyID: ByteArray? = null
+        private set
 
     fun isConnected(): Boolean = isConnected
 
     fun scanAndConnect(record: DigitalKeyRecord) {
         targetRecord = record
-        if (!isBluetoothEnabled() || isConnected || isScanning) return
+        if (isConnected || isScanning) return
         startScanSequence()
     }
 
     private fun startScanSequence() {
-        if (isConnected || isScanning || !isBluetoothEnabled()) return
+        if (isConnected || isScanning || bluetoothAdapter?.isEnabled != true) return
         val scanner = bluetoothAdapter?.bluetoothLeScanner ?: return
 
         onLog("BLE: Searching for vehicle...")
@@ -124,8 +124,6 @@ class BleCentralManager(
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             val service = gatt.getService(BleConstants.SERVICE_UUID)
-            
-            // Step 1: Verify Module ID
             val moduleChar = service?.getCharacteristic(BleConstants.MODULE_ID_CHARACTERISTIC_UUID)
             if (moduleChar != null) {
                 gatt.readCharacteristic(moduleChar)
@@ -147,7 +145,6 @@ class BleCentralManager(
                     val receivedModuleId = characteristic.value
                     if (verifyVehicleIdentity(receivedModuleId)) {
                         onLog("BLE: Identity Verified! Syncing Secure PSM...")
-                        // Step 2: If identity is correct, read encrypted PSM
                         val psmChar = gatt.getService(BleConstants.SERVICE_UUID)
                             ?.getCharacteristic(BleConstants.PSM_CHARACTERISTIC_UUID)
                         if (psmChar != null) gatt.readCharacteristic(psmChar)
@@ -164,44 +161,30 @@ class BleCentralManager(
                         return
                     }
 
-                    // LOG RAW PSM INFO (18 bytes: 2 bytes Ciphertext + 16 bytes Tag)
-                    onLog("BLE: Received Payload (Length: ${receivedPayload.size} bytes)")
-                    Log.d(TAG, "Raw Payload: ${receivedPayload.toHex()}")
-
                     val fullToken = targetRecord?.immobilizerToken
                     if (fullToken == null || fullToken.size < 32) {
-                        onLog("BLE Error: Invalid or missing ImmoToken (Requires 32 bytes).")
+                        onLog("BLE Error: Invalid or missing ImmoToken.")
                         handleDisconnection()
                         return
                     }
 
                     try {
-                        // SPEC COMPLIANCE: Use only first 32 bytes of ImmoToken as AES-256 key
                         val aesKey = fullToken.sliceArray(0 until 32)
-                        
-                        // MTU OPTIMIZATION: Vehicle uses a static zero IV (12 bytes)
                         val zeroIv = ByteArray(GCM_IV_LENGTH) { 0 }
                         val fullCipherData = zeroIv + receivedPayload
 
-                        // Step 3: Decrypt using AES/GCM/NoPadding
                         val decryptedBytes = CryptoUtils.decryptAesGcm(fullCipherData, aesKey)
-                        
-                        // Step 4: Convert 2-byte plaintext to Int using LITTLE ENDIAN (as per spec)
-                        // Formula: (data[0] & 0xFF) | ((data[1] & 0xFF) << 8)
                         val psm = ByteBuffer.wrap(decryptedBytes).order(ByteOrder.LITTLE_ENDIAN).short.toInt() and 0xFFFF
                         
-                        onLog("BLE: PSM Decrypted (Value: 0x${Integer.toHexString(psm).uppercase()}, Int: $psm). Opening L2CAP...")
-                        Log.d(TAG, "Decrypted PSM: $psm (0x${Integer.toHexString(psm).uppercase()})")
+                        onLog("BLE: PSM Decrypted. Opening L2CAP...")
                         
-                        // BROADCAST INFO TO UI
                         targetRecord?.moduleID?.let { mid ->
                             onVehicleInfoUpdated?.invoke(mid.joinToString("") { "%02x".format(it) }, gatt.device.address, psm)
                         }
                         
                         openInsecureL2capChannel(gatt.device, psm)
                     } catch (e: Exception) {
-                        onLog("BLE Security Error: PSM Decryption failed (AEAD check failed).")
-                        Log.e(TAG, "Decryption error", e)
+                        onLog("BLE Security Error: PSM Decryption failed.")
                         handleDisconnection()
                     }
                 }
@@ -213,10 +196,10 @@ class BleCentralManager(
         if (receivedId == null) return false
         val savedKeys = storageManager.getAllKeys().filter { it.core.keyState == KeyState.ACTIVE }
         
-        // Check if the received Module ID exists in our local key database
         for (record in savedKeys) {
             if (record.moduleID.contentEquals(receivedId)) {
-                targetRecord = record // Update targetRecord to the matched one
+                targetRecord = record
+                connectedKeyID = record.core.keyID // Store the verified KeyID
                 return true
             }
         }
@@ -246,6 +229,7 @@ class BleCentralManager(
 
     private fun handleDisconnection() {
         isConnected = false
+        connectedKeyID = null // Reset on disconnection
         closeEverything()
         scheduleReconnect()
     }
@@ -266,6 +250,7 @@ class BleCentralManager(
 
     fun closeEverything() {
         isConnected = false
+        connectedKeyID = null
         stopScan()
         handler.removeCallbacksAndMessages(null)
         try { bluetoothSocket?.close() } catch (e: Exception) {}
@@ -273,6 +258,4 @@ class BleCentralManager(
         bluetoothSocket = null
         bluetoothGatt = null
     }
-
-    private fun ByteArray?.toHex(): String = this?.joinToString("") { "%02x".format(it) } ?: ""
 }

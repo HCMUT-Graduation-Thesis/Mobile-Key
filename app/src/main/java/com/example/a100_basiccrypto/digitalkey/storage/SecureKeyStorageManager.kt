@@ -6,6 +6,7 @@ import androidx.security.crypto.MasterKey
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.shared.model.SyncStatus
 import com.example.a100_basiccrypto.shared.model.KeyState
+import com.example.a100_basiccrypto.shared.model.VehicleStatus
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -84,6 +85,14 @@ class SecureKeyStorageManager(context: Context) : IKeyStorageManager {
         val record = getDigitalKey(keyID)
         record?.let {
             it.core.transactionCounter = counter
+            saveDigitalKey(it)
+        }
+    }
+
+    override fun updateVehicleStatus(keyID: ByteArray, status: VehicleStatus) {
+        val record = getDigitalKey(keyID)
+        record?.let {
+            it.vehicleStatus = status
             saveDigitalKey(it)
         }
     }

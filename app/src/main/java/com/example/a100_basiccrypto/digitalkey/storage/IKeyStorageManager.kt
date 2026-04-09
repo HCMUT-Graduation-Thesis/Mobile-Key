@@ -2,6 +2,7 @@ package com.example.a100_basiccrypto.digitalkey.storage
 
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.shared.model.SyncStatus
+import com.example.a100_basiccrypto.shared.model.VehicleStatus
 
 /**
  * Interface for managing digital key storage.
@@ -19,6 +20,11 @@ interface IKeyStorageManager {
     fun getPendingSyncKeys(): List<DigitalKeyRecord>
 
     fun updateTransactionCounter(keyID: ByteArray, counter: Int)
+
+    /**
+     * Updates the last known physical status of the vehicle.
+     */
+    fun updateVehicleStatus(keyID: ByteArray, status: VehicleStatus)
     
     /**
      * Atomic update for Fast Auth Key and Counter.
