@@ -20,7 +20,7 @@ import java.nio.ByteBuffer
 
 /**
  * FastTransactionClient - Handles ACTIVE (Initiator) flow for BLE transactions.
- * Updated to use Big Endian for consistency with NFC and existing Fast Tx logic.
+ * Updated to return Byte status for Hybrid Security Recovery support.
  */
 class FastTransactionClient(
     private val storageManager: IKeyStorageManager,
@@ -30,31 +30,35 @@ class FastTransactionClient(
         private const val TAG = "FastTxClient"
     }
 
+    /**
+     * Executes control actions and returns the Status code from Vehicle.
+     */
     suspend fun execute(
         transport: IActiveTransport,
         keyID: ByteArray,
         msgClass: Byte,
         targetIns: Byte
-    ): Boolean {
+    ): Byte {
         try {
             val record = storageManager.getAllKeys().find { it.core.keyID?.contentEquals(keyID) == true }
-                ?: return false
+                ?: return Status.ERR_GENERAL
 
             val nextCounter = record.core.transactionCounter + 1
             storageManager.updateTransactionCounter(keyID, nextCounter)
             record.core.transactionCounter = nextCounter
 
-            val authPayload = prepareActionRequest(record, targetIns, nextCounter) ?: return false
+            val authPayload = prepareActionRequest(record, targetIns, nextCounter) ?: return Status.ERR_GENERAL
             val frame = LogicalFrame(msgClass, targetIns, authPayload)
             val response = transport.exchange(frame)
 
-            return if (response.status == Status.SUCCESS) {
-                verifyCommitMarker(record, response.data)
-            } else {
-                false
+            if (response.status == Status.SUCCESS) {
+                val verified = verifyCommitMarker(record, response.data)
+                return if (verified) Status.SUCCESS else Status.ERR_AUTH_FAIL
             }
+            return response.status
         } catch (e: Exception) {
-            return false
+            onLog("BLE Fast Error: ${e.message}")
+            return Status.ERR_GENERAL
         }
     }
 
@@ -80,15 +84,7 @@ class FastTransactionClient(
             
             val status = parseVehicleStatus(decrypted)
             
-            // Log the updated status values to Logcat
-            Log.d(TAG, "Telemetry Received and Parsed Successfully:")
-            Log.d(TAG, " -> Doors: ${status.doorStates}")
-            Log.d(TAG, " -> Engine: ${status.engineState}")
-            Log.d(TAG, " -> Trunk: ${status.trunkState}")
-            Log.d(TAG, " -> Temperature: ${status.temperature}°C")
-            Log.d(TAG, " -> Battery: ${status.batteryLevel}%")
-            Log.d(TAG, " -> Odometer: ${status.odometer} km")
-
+            Log.d(TAG, "Telemetry Received: Engine=${status.engineState}, Battery=${status.batteryLevel}%")
             storageManager.updateVehicleStatus(keyID, status)
             return status
         } catch (e: Exception) {
@@ -98,9 +94,7 @@ class FastTransactionClient(
     }
 
     private fun parseVehicleStatus(data: ByteArray): VehicleStatus {
-        // ByteBuffer defaults to BIG_ENDIAN, matching NFC and existing Fast Tx
         val buffer = ByteBuffer.wrap(data)
-        
         val doorMask = buffer.get().toInt()
         val engineByte = buffer.get().toInt()
         val trunkByte = buffer.get().toInt()
@@ -129,7 +123,6 @@ class FastTransactionClient(
             val isEngineCmd = (targetIns == Fast.INS_START_ENGINE || targetIns == Fast.INS_STOP_ENGINE)
             val payloadSize = 4 + (if (isEngineCmd) CryptoConstants.IMMOBILIZER_TOKEN_SIZE else 0)
             
-            // ByteBuffer is BIG_ENDIAN here
             val plainPayload = ByteBuffer.allocate(payloadSize).apply {
                 putInt(counter)
                 if (isEngineCmd) put(record.immobilizerToken ?: ByteArray(64))

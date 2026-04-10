@@ -7,7 +7,6 @@ import com.example.a100_basiccrypto.shared.link.LogicalResponse
 import com.example.a100_basiccrypto.shared.link.ITransactionHandler
 import com.example.a100_basiccrypto.shared.link.IPassiveTransport
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Admin
-import com.example.a100_basiccrypto.shared.command.MessageConstants.Fast
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
@@ -20,7 +19,8 @@ import java.security.KeyPair
 import java.security.SecureRandom
 
 /**
- * Standard Transaction V1.3.0 Implementation - Updated for IPassiveTransport and Pure Sync flow.
+ * Standard Transaction (Passive Mode) - Used when the Phone acts as an HCE tag (NFC).
+ * Updated to support Hybrid Security Recovery (HSR) by ensuring full key rotation.
  */
 class StandardTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -34,9 +34,6 @@ class StandardTransaction(
     private var ephemeralKeyPair: KeyPair? = null
     private var appNonce: ByteArray? = null
     private var activeRecord: DigitalKeyRecord? = null
-
-    private var stagedFastKey: ByteArray? = null
-    private var stagedCounter: Int = 0
 
     private var isCarVerified = false
     private var isDeviceVerified = false
@@ -63,8 +60,6 @@ class StandardTransaction(
         ephemeralKeyPair = null
         appNonce = null
         activeRecord = null
-        stagedFastKey = null
-        stagedCounter = 0
         isCarVerified = false
         isDeviceVerified = false
         isComplete = false
@@ -74,45 +69,24 @@ class StandardTransaction(
 
     private fun handleAuthInit(payload: ByteArray): LogicalResponse {
         return try {
-            onLog("STD: Phase 1 - Key Exchange")
+            onLog("NFC STD: Initiating Security Recovery (Phase 1)")
             
-            // Find the starting position of the Public Key (0x04)
             val startIndex = payload.indexOf(0x04.toByte())
-            if (startIndex == -1 || payload.size - startIndex < 65) {
-                onLog("Error: Invalid AuthInit payload structure")
-                return LogicalResponse(Status.ERR_GENERAL)
-            }
+            if (startIndex == -1 || payload.size - startIndex < 65) return LogicalResponse(Status.ERR_GENERAL)
 
-            // 1. Extract ModuleID from the data preceding the Public Key
             val moduleId = payload.sliceArray(0 until startIndex)
-            if (moduleId.isEmpty()) {
-                onLog("Error: ModuleID missing in AuthInit. Vehicle must send ModuleID.")
-                return LogicalResponse(Status.ERR_AUTH_FAIL)
-            }
-
-            // 2. Look up and Store the Key record based on the provided ModuleID
             val record = storageManager.getAllKeys().find { it.moduleID?.contentEquals(moduleId) == true }
-                ?: run {
-                    onLog("Error: No paired key found for ModuleID: ${moduleId.toHex()}")
-                    return LogicalResponse(Status.ERR_AUTH_FAIL)
-                }
+                ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
             
-            activeRecord = record // Store active record for subsequent phases
-
-            // 3. Extract Vehicle Public Key
+            activeRecord = record
             val vehiclePKBytes = payload.sliceArray(startIndex until startIndex + 65)
             val vehicleEphemeralPK = HandshakeProtector.parseUncompressedPublicKey(vehiclePKBytes)
 
             ephemeralKeyPair = HandshakeProtector.generateEphemeralKeyPair()
-
-            // 4. Use Immobilizer Token from the identified record as Salt
-            val salt = record.immobilizerToken ?: throw IllegalStateException("Record missing Immobilizer Token")
+            val salt = record.immobilizerToken ?: return LogicalResponse(Status.ERR_GENERAL)
             
             currentSessionKey = HandshakeProtector.deriveSessionKey(
-                ephemeralKeyPair!!.private, 
-                vehicleEphemeralPK, 
-                salt, 
-                CryptoConstants.STD_SESSION_INFO
+                ephemeralKeyPair!!.private, vehicleEphemeralPK, salt, CryptoConstants.STD_SESSION_INFO
             )
 
             sharedSecret = CryptoUtils.generateSharedSecret(ephemeralKeyPair!!.private, vehicleEphemeralPK)
@@ -121,103 +95,72 @@ class StandardTransaction(
             val responseData = HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public) + appNonce!!
             LogicalResponse(Status.SUCCESS, responseData)
         } catch (e: Exception) {
-            Log.e("StandardTx", "AuthInit error: ${e.message}")
-            onLog("AuthInit Error: ${e.message}")
             LogicalResponse(Status.ERR_GENERAL)
         }
     }
 
     private fun handleMutualVerify(payload: ByteArray): LogicalResponse {
         val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
-        val record = activeRecord ?: return LogicalResponse(Status.ERR_AUTH_FAIL) // Use stored record
+        val record = activeRecord ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
         
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
             val buffer = ByteBuffer.wrap(decrypted)
 
-            // Adjusted size check: Sig (3309) + Challenge (16) = 3325 (ModuleID removed from Phase 2)
             if (buffer.remaining() < CryptoConstants.ML_DSA_65_SIG_SIZE + 16) return LogicalResponse(Status.ERR_GENERAL)
 
             val vehicleSig = ByteArray(CryptoConstants.ML_DSA_65_SIG_SIZE).also { buffer.get(it) }
             val readerChallenge = ByteArray(16).also { buffer.get(it) }
 
-            val vehiclePK = record.vehiclePublicKey ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
-            
-            if (!identityCrypto.verify(appNonce!!, vehicleSig, vehiclePK)) {
-                onLog("Error: Vehicle PQC Sig Invalid")
+            if (!identityCrypto.verify(appNonce!!, vehicleSig, record.vehiclePublicKey!!)) {
+                onLog("NFC Error: Vehicle identity mismatch")
                 return LogicalResponse(Status.ERR_AUTH_FAIL)
             }
             
             isCarVerified = true
-
-            val deviceSK = record.devicePrivateKey ?: return LogicalResponse(Status.ERR_GENERAL)
-            val appSig = identityCrypto.sign(readerChallenge, deviceSK)
-            
+            val appSig = identityCrypto.sign(readerChallenge, record.devicePrivateKey!!)
             isDeviceVerified = true
-            onLog("STD: Mutual Auth Success")
+
+            onLog("NFC STD: Identity Verified (Phase 2)")
             val encrypted = CryptoUtils.encryptAesGcm((record.core.keyID ?: ByteArray(8)) + appSig, sessionKey)
             LogicalResponse(Status.SUCCESS, encrypted)
         } catch (e: Exception) {
-            Log.e("StandardTx", "MutualVerify error: ${e.message}")
             LogicalResponse(Status.ERR_GENERAL)
         }
     }
 
     private fun handleActionSync(payload: ByteArray): LogicalResponse {
         val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
-
-        return try {
-            val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            
-            // Logic for NFC: Expecting empty payload for Pure Sync
-            if (decrypted.isEmpty()) {
-                onLog("STD: Pure Sync Request received.")
-            } else {
-                onLog("STD: Action Sync with command (Size: ${decrypted.size}B)")
-                // Advanced command logic can be handled here for BLE if needed
-            }
-            
-            val responseData = byteArrayOf(Admin.STD_MSG_SYNC_OK)
-            val encrypted = CryptoUtils.encryptAesGcm(responseData, sessionKey)
-            LogicalResponse(Status.SUCCESS, encrypted)
-        } catch (e: Exception) {
-            Log.e("StandardTx", "ActionSync error: ${e.message}")
-            LogicalResponse(Status.ERR_GENERAL)
-        }
+        val responseData = byteArrayOf(Admin.STD_MSG_SYNC_OK)
+        val encrypted = CryptoUtils.encryptAesGcm(responseData, sessionKey)
+        return LogicalResponse(Status.SUCCESS, encrypted)
     }
 
     private fun handleFinalCommit(payload: ByteArray): LogicalResponse {
         val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
         val record = activeRecord ?: return LogicalResponse(Status.ERR_GENERAL)
-        val secret = sharedSecret ?: return LogicalResponse(Status.ERR_GENERAL)
-        val immotoken = record.immobilizerToken ?: return LogicalResponse(Status.ERR_GENERAL)
+        
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
             if (decrypted.size < 2) return LogicalResponse(Status.ERR_GENERAL)
 
-            val execResult = decrypted[0]
-            val commitMarker = decrypted[1]
-
-            if (execResult == Admin.STD_EXEC_SUCCESS && commitMarker == Admin.STD_COMMIT_MARKER) {
-                // Always rotate the fast auth key during Standard Transaction
+            if (decrypted[0] == Admin.STD_EXEC_SUCCESS && decrypted[1] == Admin.STD_COMMIT_MARKER) {
+                // EXECUTE KEY ROTATION
                 val newFastKey = CryptoUtils.deriveSessionKey(
-                    secret,
-                    immotoken,
+                    sharedSecret!!,
+                    record.immobilizerToken!!,
                     CryptoConstants.FAST_KEY_REFRESH.toByteArray(),
                     32
                 )
-                stagedFastKey = newFastKey
-                stagedCounter = 0
-                storageManager.updateFastKeyAndCounter(record.core.keyID!!, newFastKey, stagedCounter)
+                
+                storageManager.updateFastKeyAndCounter(record.core.keyID!!, newFastKey, 0)
                 isComplete = true
-                onLog("STD: Final Commit Success. Key is now ACTIVE.")
+                onLog("NFC Sync Success: Security Restored for BLE & NFC.")
                 LogicalResponse(Status.SUCCESS)
             } else {
-                onLog("STD Error: Commit markers mismatch.")
                 LogicalResponse(Status.ERR_GENERAL)
             }
         } catch (e: Exception) {
-            Log.e("StandardTx", "FinalCommit error: ${e.message}")
             LogicalResponse(Status.ERR_GENERAL)
         }
     }

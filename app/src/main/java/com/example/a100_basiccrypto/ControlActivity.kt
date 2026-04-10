@@ -9,6 +9,7 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
@@ -20,6 +21,7 @@ import com.example.a100_basiccrypto.digitalkey.core.SharingViewModel
 import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.digitalkey.transactions.FastTransactionClient
+import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransactionClient
 import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Class
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Fast
@@ -30,11 +32,11 @@ import com.example.a100_basiccrypto.shared.model.EngineState
 import com.example.a100_basiccrypto.shared.model.TrunkState
 import com.example.a100_basiccrypto.shared.model.VehicleStatus
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * ControlActivity - Manages BLE Active control flow.
- * Ensures counter sync by passing only KeyID to the Transaction Client.
+ * ControlActivity - Manages BLE Active control flow and Hybrid Security Recovery (HSR).
  */
 class ControlActivity : AppCompatActivity() {
 
@@ -49,6 +51,7 @@ class ControlActivity : AppCompatActivity() {
 
     private lateinit var sharingViewModel: SharingViewModel
     private lateinit var fastTxClient: FastTransactionClient
+    private lateinit var standardTxClient: StandardTransactionClient
 
     private val bleStatusListener: (String) -> Unit = { message ->
         runOnUiThread {
@@ -67,8 +70,12 @@ class ControlActivity : AppCompatActivity() {
             }
         })[SharingViewModel::class.java]
 
-        fastTxClient = FastTransactionClient(storageManager) { message ->
-            Log.d("ControlActivity", "FastTx: $message")
+        fastTxClient = FastTransactionClient(storageManager) { 
+            Log.d("ControlActivity", "FastTx: $it") 
+        }
+        
+        standardTxClient = StandardTransactionClient(storageManager, DilithiumIdentityCryptoImpl()) {
+            Log.d("ControlActivity", "StandardTx: $it")
         }
 
         initViews()
@@ -100,16 +107,16 @@ class ControlActivity : AppCompatActivity() {
 
     private fun setupActionListeners() {
         findViewById<View>(R.id.btn_control_unlock).setOnClickListener { 
-            performFastAction(Class.FAST_ACTION, Fast.INS_UNLOCK) 
+            executeActionWithHsr(Class.FAST_ACTION, Fast.INS_UNLOCK) 
         }
         findViewById<View>(R.id.btn_control_lock).setOnClickListener { 
-            performFastAction(Class.FAST_ACTION, Fast.INS_LOCK) 
+            executeActionWithHsr(Class.FAST_ACTION, Fast.INS_LOCK) 
         }
         findViewById<View>(R.id.btn_control_stop).setOnClickListener {
-            performFastAction(Class.ENGINE_OP, Fast.INS_STOP_ENGINE)
+            executeActionWithHsr(Class.ENGINE_OP, Fast.INS_STOP_ENGINE)
         }
         findViewById<View>(R.id.btn_control_trunk).setOnClickListener { 
-            performFastAction(Class.FAST_ACTION, Fast.INS_OPEN_TRUNK) 
+            executeActionWithHsr(Class.FAST_ACTION, Fast.INS_OPEN_TRUNK) 
         }
 
         findViewById<View>(R.id.btn_car_info).setOnClickListener {
@@ -129,38 +136,85 @@ class ControlActivity : AppCompatActivity() {
         }
     }
 
-    private fun performFastAction(msgClass: Byte, targetIns: Byte) {
+    /**
+     * Implementation of Hybrid Security Recovery (HSR).
+     * Automatically attempts BLE Standard Sync on security failures (Replay/Auth error).
+     */
+    private fun executeActionWithHsr(msgClass: Byte, targetIns: Byte) {
         val keyID = currentKeyID ?: return
         
         if (!BleProvider.getManager().isConnected()) {
-            Toast.makeText(this, "BLE not connected. Use NFC or wait.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "BLE not connected.", Toast.LENGTH_SHORT).show()
             return
         }
 
         lifecycleScope.launch {
             loadingOverlay.visibility = View.VISIBLE
             
-            val success = fastTxClient.execute(
+            // 1. First attempt: Fast Transaction
+            val status = fastTxClient.execute(
                 transport = BleProvider.getTransport(),
                 keyID = keyID,
                 msgClass = msgClass,
                 targetIns = targetIns
             )
 
-            loadingOverlay.visibility = View.GONE
-            
-            if (success) {
-                Toast.makeText(this@ControlActivity, "Action Successful!", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this@ControlActivity, "Action Failed. Check log.", Toast.LENGTH_SHORT).show()
+            when (status) {
+                Status.SUCCESS -> {
+                    loadingOverlay.visibility = View.GONE
+                    Toast.makeText(this@ControlActivity, "Action Successful!", Toast.LENGTH_SHORT).show()
+                }
+                
+                Status.ERR_REPLAY_ATTACK, Status.ERR_AUTH_FAIL -> {
+                    // 2. SECURITY FAILURE: Initiate Remote Recovery over BLE
+                    Log.w("HSR", "Security issue detected (Status: 0x%02X). Starting BLE Recovery...".format(status))
+                    
+                    // Standard Transaction rotates keys and resets counter
+                    val syncSuccess = standardTxClient.executeSync(BleProvider.getTransport(), keyID)
+                    
+                    if (syncSuccess) {
+                        Log.i("HSR", "Remote Recovery Successful. Retrying command...")
+                        delay(1000) // Brief pause for persistence synchronization
+                        
+                        // 3. RETRY: Execute the original command with fresh credentials
+                        val retryStatus = fastTxClient.execute(
+                            transport = BleProvider.getTransport(),
+                            keyID = keyID,
+                            msgClass = msgClass,
+                            targetIns = targetIns
+                        )
+                        
+                        loadingOverlay.visibility = View.GONE
+                        if (retryStatus == Status.SUCCESS) {
+                            Toast.makeText(this@ControlActivity, "Security Restored & Executed!", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(this@ControlActivity, "Security Restored, but command failed (0x%02X).".format(retryStatus), Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        // 4. REMOTE RECOVERY FAILED: Fallback to Physical NFC Tap
+                        loadingOverlay.visibility = View.GONE
+                        Log.e("HSR", "BLE Recovery failed. NFC interaction required.")
+                        showNfcRecoveryDialog()
+                    }
+                }
+                
+                else -> {
+                    loadingOverlay.visibility = View.GONE
+                    Toast.makeText(this@ControlActivity, "Vehicle Error: 0x%02X".format(status), Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
 
-    /**
-     * Shows the BottomSheetDialog with vehicle telemetry information.
-     * Supports real-time updates via BleProvider telemetry listener.
-     */
+    private fun showNfcRecoveryDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Security Sync Required")
+            .setMessage("For your protection, a secure physical synchronization is needed. Please tap your phone to the vehicle's door handle.")
+            .setPositiveButton("I UNDERSTAND", null)
+            .setCancelable(false)
+            .show()
+    }
+
     private fun showVehicleInfoDialog() {
         val keyID = currentKeyID ?: return
         val initialRecord = storageManager.getDigitalKey(keyID) ?: return
@@ -169,38 +223,28 @@ class ControlActivity : AppCompatActivity() {
         val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_vehicle_info, null)
         dialog.setContentView(dialogView)
 
-        // Set static Header Info once
         dialogView.findViewById<TextView>(R.id.tv_dialog_vehicle_name).text = 
             initialRecord.friendlyName.ifEmpty { initialRecord.carMetadata?.modelName ?: "Vehicle" }
         dialogView.findViewById<TextView>(R.id.tv_dialog_vehicle_plate).text = 
             initialRecord.carMetadata?.licensePlate ?: "N/A"
 
-        // Telemetry listener for real-time updates
         val telemetryListener: (VehicleStatus) -> Unit = { status ->
             runOnUiThread {
                 refreshDialogUi(dialogView, status)
             }
         }
 
-        // Initial UI population
         initialRecord.vehicleStatus?.let { refreshDialogUi(dialogView, it) } ?: run {
-            Toast.makeText(this, "Waiting for telemetry sync...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Waiting for sync...", Toast.LENGTH_SHORT).show()
         }
 
-        // Start listening for updates while dialog is open
         BleProvider.addTelemetryListener(telemetryListener)
-
-        // Stop listening when dialog is closed
-        dialog.setOnDismissListener {
-            BleProvider.removeTelemetryListener(telemetryListener)
-        }
-
+        dialog.setOnDismissListener { BleProvider.removeTelemetryListener(telemetryListener) }
         dialogView.findViewById<Button>(R.id.btn_close_status).setOnClickListener { dialog.dismiss() }
         dialog.show()
     }
 
     private fun refreshDialogUi(view: View, status: VehicleStatus) {
-        // Engine UI
         val tvEngine = view.findViewById<TextView>(R.id.tv_status_engine)
         val ivEngine = view.findViewById<ImageView>(R.id.iv_engine_icon)
         if (status.engineState == EngineState.RUNNING) {
@@ -213,12 +257,10 @@ class ControlActivity : AppCompatActivity() {
             ivEngine.setColorFilter(ContextCompat.getColor(this, R.color.gray_text))
         }
 
-        // Core Telemetry
         view.findViewById<TextView>(R.id.tv_status_temp).text = getString(R.string.temp_format, status.temperature)
         view.findViewById<TextView>(R.id.tv_status_battery).text = getString(R.string.battery_format, status.batteryLevel)
         view.findViewById<TextView>(R.id.tv_status_odometer).text = getString(R.string.odo_format, status.odometer)
 
-        // Trunk UI
         val tvTrunk = view.findViewById<TextView>(R.id.tv_status_trunk)
         val ivTrunk = view.findViewById<ImageView>(R.id.iv_trunk_icon)
         if (status.trunkState == TrunkState.OPEN) {
@@ -231,7 +273,6 @@ class ControlActivity : AppCompatActivity() {
             ivTrunk.setColorFilter(ContextCompat.getColor(this, R.color.gray_text))
         }
 
-        // 4 Doors Detailed UI
         updateDoorStatusUi(view, R.id.tv_status_door_fl, R.id.iv_door_fl_icon, status.doorStates[DoorLocation.FRONT_LEFT])
         updateDoorStatusUi(view, R.id.tv_status_door_fr, R.id.iv_door_fr_icon, status.doorStates[DoorLocation.FRONT_RIGHT])
         updateDoorStatusUi(view, R.id.tv_status_door_rl, R.id.iv_door_rl_icon, status.doorStates[DoorLocation.REAR_LEFT])
