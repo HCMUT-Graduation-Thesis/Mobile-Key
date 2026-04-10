@@ -38,7 +38,6 @@ class L2capActiveTransport(
     override suspend fun exchange(frame: LogicalFrame): LogicalResponse {
         return exchangeMutex.withLock {
             val chunks = if (frame.payload.isEmpty()) listOf(byteArrayOf()) else chainer.fragment(frame.payload)
-            Log.d(TAG, ">>> START EXCHANGE: Class=0x%02X, INS=0x%02X, Chunks=%d".format(frame.msgClass, frame.msgId, chunks.size))
             
             for (i in chunks.indices) {
                 val chunk = chunks[i]
@@ -52,6 +51,9 @@ class L2capActiveTransport(
                 }.array()
                 
                 val packet = header + chunk
+                Log.d(TAG, ">>>SENT CHUNK: Class=0x%02X, INS=0x%02X, Ctrl=0x%02X, Len=%d".format(
+                    frame.msgClass, frame.msgId, if (isLast) 0x01 else 0x00, chunk.size
+                ))
                 
                 if (!isLast) {
                     val waiter = CompletableDeferred<Byte>()
@@ -74,11 +76,8 @@ class L2capActiveTransport(
                     bleCentralManager.sendData(packet)
                     
                     try {
-                        val response = withTimeout(15000) { waiter.await() }
-                        Log.d(TAG, "<<< EXCHANGE COMPLETE: Status=0x%02X, DataLen=%d".format(response.status, response.data.size))
-                        return response
+                        return withTimeout(15000) { waiter.await() }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Exchange Timeout/Error: ${e.message}")
                         return LogicalResponse(0xE0.toByte())
                     } finally {
                         responseDeferred = null
@@ -125,7 +124,7 @@ class L2capActiveTransport(
             rxStreamBuffer.write(remainingData)
             currentData = remainingData
 
-            Log.v(TAG, "<<< PARSED PACKET: Status=0x%02X, Control=0x%02X, Len=%d".format(status, control, length))
+            Log.d(TAG, "<<< RECEIVED RESPONSE CHUNK: Status=0x%02X, Ctrl=0x%02X, Len=%d".format(status, control, length))
 
             // Logic handling
             if (status == 0xA0.toByte() && length == 0) {

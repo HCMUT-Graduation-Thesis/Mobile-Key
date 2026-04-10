@@ -16,7 +16,7 @@ import java.security.SecureRandom
 
 /**
  * StandardTransactionClient - Manages the complex 4-phase synchronization flow over BLE.
- * Updated to send KeyID in Phase 1 for vehicle identification.
+ * Optimized: KeyID is sent in Phase 1 only. Phase 2 sends only the PQC Signature.
  */
 class StandardTransactionClient(
     private val storageManager: IKeyStorageManager,
@@ -88,7 +88,7 @@ class StandardTransactionClient(
     }
 
     private suspend fun performPhase2(transport: IActiveTransport, record: DigitalKeyRecord): Boolean {
-        // Send App PK + Nonce to Vehicle (Plaintext)
+        // Step 2.1: Send App PK + Nonce to Vehicle (Plaintext)
         val appPKBytes = HandshakeProtector.getRawUncompressedPublicKey(ephemeralKeyPair!!.public)
         val phase2Payload = appPKBytes + appNonce!!
         
@@ -96,7 +96,7 @@ class StandardTransactionClient(
         val response = transport.exchange(frame)
         if (response.status != Status.SUCCESS) return false
 
-        // Decrypt Response: [VehicleSig (3309B)] + [VehicleChallenge (16B)]
+        // Step 2.2: Decrypt Vehicle Signature: [VehicleSig (3309B)] + [VehicleChallenge (16B)]
         val decrypted = CryptoUtils.decryptAesGcm(response.data, sessionKey!!)
         val buffer = ByteBuffer.wrap(decrypted)
         
@@ -114,9 +114,9 @@ class StandardTransactionClient(
         val deviceSK = record.devicePrivateKey ?: return false
         val appSig = identityCrypto.sign(vehicleChallenge, deviceSK)
         
-        // Finalize Phase 2 by sending KeyID + App Sig (Encrypted)
-        val finalAuthData = (record.core.keyID ?: ByteArray(8)) + appSig
-        val encryptedAuth = CryptoUtils.encryptAesGcm(finalAuthData, sessionKey!!)
+        // Step 2.3: Finalize Phase 2 by sending ONLY App Sig (Encrypted)
+        // KeyID is removed here as it was already provided in Phase 1
+        val encryptedAuth = CryptoUtils.encryptAesGcm(appSig, sessionKey!!)
         
         val authFrame = LogicalFrame(Class.ADMIN, Admin.PHASE_MUTUAL_VERIFY, encryptedAuth)
         val authResponse = transport.exchange(authFrame)

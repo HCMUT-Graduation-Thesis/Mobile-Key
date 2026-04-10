@@ -22,7 +22,7 @@ class BleForegroundService : Service() {
     companion object {
         private const val CHANNEL_ID = "ble_connection_channel"
         private const val NOTIFICATION_ID = 101
-        private const val TELEMETRY_POLL_INTERVAL = 15000L //  15 seconds
+        private const val TELEMETRY_POLL_INTERVAL = 10000L //  10 seconds
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
