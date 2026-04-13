@@ -120,6 +120,8 @@ class ControlActivity : AppCompatActivity() {
         }
 
         findViewById<View>(R.id.btn_car_info).setOnClickListener {
+            // Trigger immediate sync and switch to fast polling when opening info
+            BleProvider.triggerImmediateSync()
             showVehicleInfoDialog()
         }
 
@@ -238,8 +240,16 @@ class ControlActivity : AppCompatActivity() {
             Toast.makeText(this, "Waiting for sync...", Toast.LENGTH_SHORT).show()
         }
 
+        // Enable fast polling while dialog is open
+        BleProvider.setFastPolling(true)
         BleProvider.addTelemetryListener(telemetryListener)
-        dialog.setOnDismissListener { BleProvider.removeTelemetryListener(telemetryListener) }
+        
+        dialog.setOnDismissListener { 
+            BleProvider.removeTelemetryListener(telemetryListener)
+            // Revert to normal polling when dialog closed
+            BleProvider.setFastPolling(false)
+        }
+
         dialogView.findViewById<Button>(R.id.btn_close_status).setOnClickListener { dialog.dismiss() }
         dialog.show()
     }

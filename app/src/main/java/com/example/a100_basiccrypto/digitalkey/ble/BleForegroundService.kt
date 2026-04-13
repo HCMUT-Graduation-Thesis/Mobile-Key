@@ -26,11 +26,13 @@ class BleForegroundService : Service() {
     companion object {
         private const val CHANNEL_ID = "ble_connection_channel"
         private const val NOTIFICATION_ID = 101
-        private const val TELEMETRY_POLL_INTERVAL = 20000L //  5 seconds
+        private const val NORMAL_INTERVAL = 15000L // 20 seconds
+        private const val FAST_INTERVAL = 3000L   // 3 seconds
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var telemetryJob: Job? = null
+    private var currentInterval = NORMAL_INTERVAL
     
     private val storageManager by lazy { SecureKeyStorageManager(this) }
     private val fastTxClient by lazy { 
@@ -62,6 +64,21 @@ class BleForegroundService : Service() {
         
         val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
         registerReceiver(bluetoothReceiver, filter)
+        
+        BleProvider.setSyncTriggerListener {
+            serviceScope.launch {
+                performSingleSync()
+            }
+        }
+
+        BleProvider.setPollingSpeedListener { isFast ->
+            val newInterval = if (isFast) FAST_INTERVAL else NORMAL_INTERVAL
+            if (currentInterval != newInterval) {
+                currentInterval = newInterval
+                Log.d("BleService", "Polling interval changed to: ${currentInterval}ms")
+                startTelemetryPolling() // Restart with new interval
+            }
+        }
         
         startTelemetryPolling()
     }
@@ -100,26 +117,31 @@ class BleForegroundService : Service() {
         telemetryJob?.cancel()
         telemetryJob = serviceScope.launch {
             while (isActive) {
-                val manager = BleProvider.getManager()
-                val activeKeyID = manager.connectedKeyID
-                
-                if (manager.isConnected() && activeKeyID != null) {
-                    Log.d("BleService", "Starting background telemetry sync for: ${activeKeyID.toHex()}")
-                    val status = fastTxClient.syncTelemetry(BleProvider.getTransport(), activeKeyID)
-                    
-                    // Broadcast the update to any active UI listeners
-                    if (status != null) {
-                        withContext(Dispatchers.Main) {
-                            BleProvider.notifyTelemetryUpdated(status)
-                        }
-                    }
+                performSingleSync()
+                delay(currentInterval)
+            }
+        }
+    }
+
+    private suspend fun performSingleSync() {
+        val manager = BleProvider.getManager()
+        val activeKeyID = manager.connectedKeyID
+        
+        if (manager.isConnected() && activeKeyID != null) {
+            Log.d("BleService", "Starting telemetry sync for: ${activeKeyID.toHex()}")
+            val status = fastTxClient.syncTelemetry(BleProvider.getTransport(), activeKeyID)
+            
+            if (status != null) {
+                withContext(Dispatchers.Main) {
+                    BleProvider.notifyTelemetryUpdated(status)
                 }
-                delay(TELEMETRY_POLL_INTERVAL)
             }
         }
     }
 
     override fun onDestroy() {
+        BleProvider.setSyncTriggerListener(null)
+        BleProvider.setPollingSpeedListener(null)
         unregisterReceiver(bluetoothReceiver)
         serviceScope.cancel()
         super.onDestroy()

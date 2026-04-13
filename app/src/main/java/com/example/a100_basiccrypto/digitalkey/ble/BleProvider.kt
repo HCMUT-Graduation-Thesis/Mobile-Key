@@ -18,6 +18,9 @@ object BleProvider {
     private val telemetryListeners = mutableSetOf<(VehicleStatus) -> Unit>()
     private val connectionStateListeners = mutableSetOf<(Boolean) -> Unit>()
     
+    private var onTriggerSyncRequest: (() -> Unit)? = null
+    private var onSpeedChangeRequest: ((Boolean) -> Unit)? = null
+    
     private var lastStatus: String = "BLE Idle"
     private var isCurrentlyConnected: Boolean = false
     
@@ -55,6 +58,22 @@ object BleProvider {
                 connectionStateListeners.forEach { it(isConnected) }
             }
         }
+    }
+
+    fun setSyncTriggerListener(listener: (() -> Unit)?) {
+        onTriggerSyncRequest = listener
+    }
+
+    fun triggerImmediateSync() {
+        onTriggerSyncRequest?.invoke()
+    }
+
+    fun setPollingSpeedListener(listener: ((Boolean) -> Unit)?) {
+        onSpeedChangeRequest = listener
+    }
+
+    fun setFastPolling(enabled: Boolean) {
+        onSpeedChangeRequest?.invoke(enabled)
     }
 
     /**
