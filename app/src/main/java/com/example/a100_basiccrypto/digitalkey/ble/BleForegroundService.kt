@@ -1,7 +1,11 @@
 package com.example.a100_basiccrypto.digitalkey.ble
 
 import android.app.*
+import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
@@ -22,7 +26,7 @@ class BleForegroundService : Service() {
     companion object {
         private const val CHANNEL_ID = "ble_connection_channel"
         private const val NOTIFICATION_ID = 101
-        private const val TELEMETRY_POLL_INTERVAL = 10000L //  10 seconds
+        private const val TELEMETRY_POLL_INTERVAL = 20000L //  5 seconds
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -33,10 +37,32 @@ class BleForegroundService : Service() {
         FastTransactionClient(storageManager) { Log.d("BleService", it) } 
     }
 
+    private val bluetoothReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                when (state) {
+                    BluetoothAdapter.STATE_ON -> {
+                        Log.d("BleService", "Bluetooth turned ON, restarting scan...")
+                        triggerAutoScan()
+                    }
+                    BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> {
+                        Log.d("BleService", "Bluetooth turned OFF, cleaning up connection.")
+                        BleProvider.getManager().closeEverything()
+                    }
+                }
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         BleProvider.init(this)
+        
+        val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+        registerReceiver(bluetoothReceiver, filter)
+        
         startTelemetryPolling()
     }
 
@@ -55,7 +81,12 @@ class BleForegroundService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        // Auto-scan for active keys if not already connected
+        triggerAutoScan()
+
+        return START_STICKY
+    }
+
+    private fun triggerAutoScan() {
         val manager = BleProvider.getManager()
         if (!manager.isConnected()) {
             val activeKeys = storageManager.getAllKeys().filter { it.core.keyState == KeyState.ACTIVE }
@@ -63,8 +94,6 @@ class BleForegroundService : Service() {
                 manager.scanAndConnect(activeKeys[0])
             }
         }
-
-        return START_STICKY
     }
 
     private fun startTelemetryPolling() {
@@ -91,6 +120,7 @@ class BleForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        unregisterReceiver(bluetoothReceiver)
         serviceScope.cancel()
         super.onDestroy()
     }

@@ -16,8 +16,10 @@ object BleProvider {
     private val statusListeners = mutableSetOf<(String) -> Unit>()
     private val vehicleInfoListeners = mutableSetOf<(moduleID: String, mac: String, psm: Int) -> Unit>()
     private val telemetryListeners = mutableSetOf<(VehicleStatus) -> Unit>()
+    private val connectionStateListeners = mutableSetOf<(Boolean) -> Unit>()
     
     private var lastStatus: String = "BLE Idle"
+    private var isCurrentlyConnected: Boolean = false
     
     // Sticky Cache
     private var lastVehicleInfo: Triple<String, String, Int>? = null
@@ -46,6 +48,11 @@ object BleProvider {
             bleCentralManager!!.onVehicleInfoUpdated = { mid, mac, psm ->
                 lastVehicleInfo = Triple(mid, mac, psm)
                 vehicleInfoListeners.forEach { it(mid, mac, psm) }
+            }
+
+            bleCentralManager!!.onConnectionStateChanged = { isConnected ->
+                isCurrentlyConnected = isConnected
+                connectionStateListeners.forEach { it(isConnected) }
             }
         }
     }
@@ -85,6 +92,15 @@ object BleProvider {
 
     fun removeTelemetryListener(listener: (VehicleStatus) -> Unit) {
         telemetryListeners.remove(listener)
+    }
+
+    fun addConnectionStateListener(listener: (Boolean) -> Unit) {
+        connectionStateListeners.add(listener)
+        listener(isCurrentlyConnected)
+    }
+
+    fun removeConnectionStateListener(listener: (Boolean) -> Unit) {
+        connectionStateListeners.remove(listener)
     }
 
     fun getManager(): BleCentralManager = bleCentralManager!!

@@ -36,14 +36,15 @@ class HomeActivity : AppCompatActivity() {
 
     // Track dynamic vehicle data (Cleared on disconnect)
     private val dynamicVehicleData = mutableMapOf<String, Pair<String, Int>>()
+    private var isL2capConnected = false
 
     private val bleStatusListener: (String) -> Unit = { message ->
         runOnUiThread {
             tvBleStatus.text = "Status: $message"
             // If link is lost, clear the technical info from cards
             if (message.contains("Link lost") || message.contains("Searching")) {
-                dynamicVehicleData.clear()
-                keyAdapter.notifyDataSetChanged()
+                // We keep dynamic data until L2CAP explicitly disconnects via connectionStateListener
+                // or keep existing logic if preferred. But requirement is L2CAP based icon.
             }
         }
     }
@@ -55,25 +56,35 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
+    private val connectionStateListener: (Boolean) -> Unit = { isConnected ->
+        runOnUiThread {
+            isL2capConnected = isConnected
+            if (!isConnected) {
+                dynamicVehicleData.clear()
+            }
+            keyAdapter.notifyDataSetChanged()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_home)
 
-        // 1. Initialize BleHomeHelper early (but don't use it yet)
+        // 1. Initialize BleHomeHelper early
         bleHomeHelper = BleHomeHelper(this) { isEnabled ->
             if (::tvBleStatus.isInitialized) {
                 updateBleStatus(isEnabled)
             }
         }
 
-        // 2. Initialize launcher (must be called before setupUI if setupUI triggers checks)
+        // 2. Initialize launcher
         bleHomeHelper.initLauncher {
             updateBleStatus(true)
             BleProvider.init(this)
             startBleBackgroundService()
         }
 
-        // 3. Initialize UI (setupUI now uses bleHomeHelper safely)
+        // 3. Initialize UI
         setupUI()
         initViewModel()
 
@@ -92,7 +103,6 @@ class HomeActivity : AppCompatActivity() {
         if (!isEnabled) {
             tvBleStatus.text = "Status: Bluetooth OFF"
         } else {
-            // Check if we are coming from an OFF state
             if (tvBleStatus.text.contains("OFF")) {
                 tvBleStatus.text = "Status: Initializing..."
             }
@@ -114,7 +124,6 @@ class HomeActivity : AppCompatActivity() {
         tvBleStatus = findViewById(R.id.tv_home_ble_status)
         tvHomeAppMac = findViewById(R.id.tv_home_app_mac)
 
-        // Initial update based on current state
         updateBleStatus(bleHomeHelper.isBluetoothEnabled())
 
         val appMac = bleIdentityManager.getAppBleAddress().joinToString(":") { "%02X".format(it) }
@@ -143,6 +152,7 @@ class HomeActivity : AppCompatActivity() {
         super.onResume()
         BleProvider.addStatusListener(bleStatusListener)
         BleProvider.addVehicleInfoListener(vehicleInfoListener)
+        BleProvider.addConnectionStateListener(connectionStateListener)
         updateBleStatus(bleHomeHelper.isBluetoothEnabled())
         refreshList()
     }
@@ -151,6 +161,7 @@ class HomeActivity : AppCompatActivity() {
         super.onPause()
         BleProvider.removeStatusListener(bleStatusListener)
         BleProvider.removeVehicleInfoListener(vehicleInfoListener)
+        BleProvider.removeConnectionStateListener(connectionStateListener)
     }
 
     override fun onDestroy() {
@@ -188,11 +199,10 @@ class HomeActivity : AppCompatActivity() {
             holder.tvName.text = if (item.friendlyName.isNotEmpty()) item.friendlyName else (item.carMetadata?.modelName ?: "Vehicle")
             holder.tvPlate.text = item.carMetadata?.licensePlate ?: "No Plate"
 
-            // Format ModuleID to hex for lookup
             val midHex = item.moduleID?.joinToString("") { "%02x".format(it) } ?: ""
             val dynamicData = dynamicVehicleData[midHex]
 
-            if (dynamicData != null) {
+            if (isL2capConnected && dynamicData != null) {
                 holder.tvMac.visibility = View.VISIBLE
                 holder.tvPsm.visibility = View.VISIBLE
                 holder.tvMac.text = "MAC: ${dynamicData.first}"

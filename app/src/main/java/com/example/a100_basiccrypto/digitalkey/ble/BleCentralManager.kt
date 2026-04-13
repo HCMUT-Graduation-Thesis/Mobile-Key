@@ -37,6 +37,7 @@ class BleCentralManager(
 
     var onDataReceived: ((ByteArray) -> Unit)? = null
     var onVehicleInfoUpdated: ((moduleID: String, mac: String, psm: Int) -> Unit)? = null
+    var onConnectionStateChanged: ((Boolean) -> Unit)? = null
 
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
         val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
@@ -213,6 +214,7 @@ class BleCentralManager(
                 bluetoothSocket?.connect()
                 isConnected = true
                 onLog("BLE: L2CAP Data pipe connected.")
+                handler.post { onConnectionStateChanged?.invoke(true) }
                 
                 val inputStream = bluetoothSocket?.inputStream ?: return@Thread
                 val buffer = ByteArray(8192)
@@ -228,9 +230,13 @@ class BleCentralManager(
     }
 
     private fun handleDisconnection() {
+        val wasConnected = isConnected
         isConnected = false
         connectedKeyID = null // Reset on disconnection
         closeEverything()
+        if (wasConnected) {
+            handler.post { onConnectionStateChanged?.invoke(false) }
+        }
         scheduleReconnect()
     }
 
@@ -249,6 +255,7 @@ class BleCentralManager(
     }
 
     fun closeEverything() {
+        val wasConnected = isConnected
         isConnected = false
         connectedKeyID = null
         stopScan()
@@ -257,5 +264,9 @@ class BleCentralManager(
         try { bluetoothGatt?.close() } catch (e: Exception) {}
         bluetoothSocket = null
         bluetoothGatt = null
+        
+        if (wasConnected) {
+            handler.post { onConnectionStateChanged?.invoke(false) }
+        }
     }
 }
