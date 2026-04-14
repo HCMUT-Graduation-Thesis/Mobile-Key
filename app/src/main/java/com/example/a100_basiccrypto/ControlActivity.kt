@@ -173,11 +173,11 @@ class ControlActivity : AppCompatActivity() {
                     
                     // Standard Transaction rotates keys and resets counter
                     val syncSuccess = standardTxClient.executeSync(BleProvider.getTransport(), keyID)
-                    
+
                     if (syncSuccess) {
                         Log.i("HSR", "Remote Recovery Successful. Retrying command...")
                         delay(1000) // Brief pause for persistence synchronization
-                        
+
                         // 3. RETRY: Execute the original command with fresh credentials
                         val retryStatus = fastTxClient.execute(
                             transport = BleProvider.getTransport(),
@@ -185,7 +185,7 @@ class ControlActivity : AppCompatActivity() {
                             msgClass = msgClass,
                             targetIns = targetIns
                         )
-                        
+
                         loadingOverlay.visibility = View.GONE
                         if (retryStatus == Status.SUCCESS) {
                             Toast.makeText(this@ControlActivity, "Security Restored & Executed!", Toast.LENGTH_SHORT).show()

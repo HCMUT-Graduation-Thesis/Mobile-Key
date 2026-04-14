@@ -12,10 +12,11 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * Implementation of IActiveTransport for BLE L2CAP.
- * Fixed: Added Stream Buffering to handle partial packet arrival.
+ * Optimized: Uses LITTLE_ENDIAN for headers to match project standards.
  */
 class L2capActiveTransport(
     private val bleCentralManager: BleCentralManager
@@ -27,7 +28,6 @@ class L2capActiveTransport(
 
     private val chainer = PayloadChainer(1024)
     private var responseDeferred: CompletableDeferred<LogicalResponse>? = null
-    private var ackDeferred: CompletableDeferred<Byte>? = null
     private val exchangeMutex = Mutex()
 
     // Persistent buffer to handle stream data across multiple callbacks
@@ -37,55 +37,35 @@ class L2capActiveTransport(
 
     override suspend fun exchange(frame: LogicalFrame): LogicalResponse {
         return exchangeMutex.withLock {
-            val chunks = if (frame.payload.isEmpty()) listOf(byteArrayOf()) else chainer.fragment(frame.payload)
+            // Build single packet framing using LITTLE_ENDIAN
+            val header = ByteBuffer.allocate(5).apply {
+                order(ByteOrder.LITTLE_ENDIAN)
+                put(frame.msgClass)
+                put(frame.msgId)
+                put(0x01.toByte()) // Marking as final packet
+                putShort(frame.payload.size.toShort())
+            }.array()
             
-            for (i in chunks.indices) {
-                val chunk = chunks[i]
-                val isLast = (i == chunks.size - 1)
-                
-                val header = ByteBuffer.allocate(5).apply {
-                    put(frame.msgClass)
-                    put(frame.msgId)
-                    put(if (isLast) 0x01.toByte() else 0x00.toByte())
-                    putShort(chunk.size.toShort())
-                }.array()
-                
-                val packet = header + chunk
-                Log.d(TAG, ">>>SENT CHUNK: Class=0x%02X, INS=0x%02X, Ctrl=0x%02X, Len=%d".format(
-                    frame.msgClass, frame.msgId, if (isLast) 0x01 else 0x00, chunk.size
-                ))
-                
-                if (!isLast) {
-                    val waiter = CompletableDeferred<Byte>()
-                    ackDeferred = waiter
-                    bleCentralManager.sendData(packet)
-                    
-                    try {
-                        withTimeout(3000) {
-                            val ackStatus = waiter.await()
-                            if (ackStatus != 0xA0.toByte()) throw Exception("Invalid ACK")
-                        }
-                    } catch (e: Exception) {
-                        return LogicalResponse(0xE0.toByte())
-                    } finally {
-                        ackDeferred = null
-                    }
-                } else {
-                    val waiter = CompletableDeferred<LogicalResponse>()
-                    responseDeferred = waiter
-                    bleCentralManager.sendData(packet)
-                    
-                    try {
-                        return withTimeout(15000) { waiter.await() }
-                    } catch (e: Exception) {
-                        return LogicalResponse(0xE0.toByte())
-                    } finally {
-                        responseDeferred = null
-                        chainer.reset()
-                    }
-                }
+            val packet = header + frame.payload
+            Log.d(TAG, ">>> SENDING: Class=0x%02X, INS=0x%02X, Len=%d (LE)".format(
+                frame.msgClass, frame.msgId, frame.payload.size
+            ))
+            
+            val waiter = CompletableDeferred<LogicalResponse>()
+            responseDeferred = waiter
+            
+            // Write entire payload to stream. Flow control is handled by L2CAP Credits.
+            bleCentralManager.sendData(packet)
+            
+            try {
+                return withTimeout(15000) { waiter.await() }
+            } catch (e: Exception) {
+                Log.e(TAG, "L2CAP Exchange failed/timeout: ${e.message}")
+                return LogicalResponse(0xE0.toByte())
+            } finally {
+                responseDeferred = null
+                chainer.reset()
             }
-            LogicalResponse(0xE0.toByte())
         }
     }
 
@@ -104,7 +84,8 @@ class L2capActiveTransport(
         var currentData = rxStreamBuffer.toByteArray()
         
         while (currentData.size >= 4) {
-            val buffer = ByteBuffer.wrap(currentData)
+            // Read header using LITTLE_ENDIAN
+            val buffer = ByteBuffer.wrap(currentData).order(ByteOrder.LITTLE_ENDIAN)
             val status = buffer.get()
             val control = buffer.get()
             val length = buffer.short.toInt() and 0xFFFF
@@ -124,21 +105,21 @@ class L2capActiveTransport(
             rxStreamBuffer.write(remainingData)
             currentData = remainingData
 
-            Log.d(TAG, "<<< RECEIVED RESPONSE CHUNK: Status=0x%02X, Ctrl=0x%02X, Len=%d".format(status, control, length))
+            Log.d(TAG, "<<< RECEIVED: Status=0x%02X, Ctrl=0x%02X, Len=%d (LE)".format(status, control, length))
 
             // Logic handling
             if (status == 0xA0.toByte() && length == 0) {
-                ackDeferred?.complete(status)
+                // Ignore pure ACKs if vehicle still sends them
+                continue
             } else {
                 val isLast = (control == 0x01.toByte())
+                // Still use chainer to assemble in case vehicle sends in chunks
                 val assembledData = chainer.append(payload, isLast)
                 
                 if (assembledData != null) {
                     responseDeferred?.complete(LogicalResponse(status, assembledData))
-                } else if (!isLast) {
-                    val ack = byteArrayOf(0xA0.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte())
-                    bleCentralManager.sendData(ack)
                 }
+                // No manual ACK 0xA0 sent back; L2CAP handles flow control
             }
         }
     }
