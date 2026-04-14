@@ -130,7 +130,7 @@ class BleForegroundService : Service() {
         if (manager.isConnected() && activeKeyID != null) {
             Log.d("BleService", "Starting telemetry sync for: ${activeKeyID.toHex()}")
             val status = fastTxClient.syncTelemetry(BleProvider.getTransport(), activeKeyID)
-            
+
             if (status != null) {
                 withContext(Dispatchers.Main) {
                     BleProvider.notifyTelemetryUpdated(status)

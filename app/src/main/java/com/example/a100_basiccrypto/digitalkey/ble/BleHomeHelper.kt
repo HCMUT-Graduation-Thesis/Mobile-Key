@@ -1,11 +1,14 @@
 package com.example.a100_basiccrypto.digitalkey.ble
 
+import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,7 +17,7 @@ import androidx.core.content.ContextCompat
 
 /**
  * BleHomeHelper - Encapsulates Bluetooth enablement logic and state monitoring.
- * Keeps HomeActivity clean.
+ * Fixed: Handles Android 12+ runtime permissions to prevent SecurityException.
  */
 class BleHomeHelper(
     private val activity: AppCompatActivity,
@@ -26,6 +29,7 @@ class BleHomeHelper(
     }
 
     private lateinit var enableBluetoothLauncher: ActivityResultLauncher<Intent>
+    private lateinit var requestPermissionLauncher: ActivityResultLauncher<Array<String>>
 
     private val bluetoothStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -36,7 +40,7 @@ class BleHomeHelper(
     }
 
     /**
-     * Must be called in Activity.onCreate() or before it starts.
+     * Must be called in Activity.onCreate()
      */
     fun initLauncher(onSuccess: () -> Unit) {
         enableBluetoothLauncher = activity.registerForActivityResult(
@@ -50,6 +54,19 @@ class BleHomeHelper(
                 activity.finish()
             }
         }
+
+        requestPermissionLauncher = activity.registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { permissions ->
+            val allGranted = permissions.entries.all { it.value }
+            if (allGranted) {
+                // Permissions granted, now safe to check Bluetooth state
+                checkBluetoothAndRequest()
+            } else {
+                Toast.makeText(activity, "Bluetooth permissions are required", Toast.LENGTH_LONG).show()
+                activity.finish()
+            }
+        }
     }
 
     fun checkBluetoothAndRequest() {
@@ -59,9 +76,28 @@ class BleHomeHelper(
             return
         }
 
+        // 1. Check Runtime Permissions for Android 12+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val hasConnectPermission = ContextCompat.checkSelfPermission(activity, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+            val hasScanPermission = ContextCompat.checkSelfPermission(activity, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+            
+            if (!hasConnectPermission || !hasScanPermission) {
+                requestPermissionLauncher.launch(arrayOf(
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                    Manifest.permission.BLUETOOTH_SCAN
+                ))
+                return
+            }
+        }
+
+        // 2. Request to Enable Bluetooth if OFF
         if (!bluetoothAdapter!!.isEnabled) {
-            val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-            enableBluetoothLauncher.launch(enableBtIntent)
+            try {
+                val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                enableBluetoothLauncher.launch(enableBtIntent)
+            } catch (e: SecurityException) {
+                Toast.makeText(activity, "Security Error: Missing Bluetooth Permissions", Toast.LENGTH_LONG).show()
+            }
         } else {
             onStateChanged(true)
         }
@@ -74,15 +110,13 @@ class BleHomeHelper(
             activity,
             bluetoothStateReceiver,
             IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
-            ContextCompat.RECEIVER_NOT_EXPORTED
+            ContextCompat.RECEIVER_EXPORTED
         )
     }
 
     fun unregisterReceiver() {
         try {
             activity.unregisterReceiver(bluetoothStateReceiver)
-        } catch (e: Exception) {
-            // Already unregistered
-        }
+        } catch (e: Exception) {}
     }
 }
