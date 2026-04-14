@@ -43,7 +43,7 @@ class FastTransactionClient(
             val record = storageManager.getAllKeys().find { it.core.keyID?.contentEquals(keyID) == true }
                 ?: return Status.ERR_GENERAL
 
-            val nextCounter = record.core.transactionCounter
+            val nextCounter = record.core.transactionCounter + 1
             storageManager.updateTransactionCounter(keyID, nextCounter)
             record.core.transactionCounter = nextCounter
 

@@ -1,6 +1,9 @@
 package com.example.a100_basiccrypto
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -16,13 +19,13 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
-import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.digitalkey.core.SharingViewModel
 import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.digitalkey.transactions.FastTransactionClient
 import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransactionClient
 import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
+import com.example.a100_basiccrypto.digitalkey.nfc.MyHostApduService
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Class
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Fast
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
@@ -59,6 +62,22 @@ class ControlActivity : AppCompatActivity() {
         }
     }
 
+    private val nfcResultReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val actionName = intent?.getStringExtra("action_name") ?: "Action"
+            val isSuccess = intent?.getBooleanExtra("is_success", false) ?: false
+            
+            runOnUiThread {
+                loadingOverlay.visibility = View.GONE
+                val message = if (isSuccess) 
+                    "NFC $actionName executed successfully." 
+                else 
+                    "NFC $actionName failed. Please try again."
+                showActionResultDialog(isSuccess, message)
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_control)
@@ -90,6 +109,10 @@ class ControlActivity : AppCompatActivity() {
         displayInitialInfo()
         setupActionListeners()
         observeViewModel()
+
+        // Register NFC Result receiver
+        val nfcFilter = IntentFilter(MyHostApduService.ACTION_NFC_RESULT)
+        registerReceiver(nfcResultReceiver, nfcFilter, RECEIVER_EXPORTED)
     }
 
     private fun initViews() {
@@ -164,7 +187,7 @@ class ControlActivity : AppCompatActivity() {
             when (status) {
                 Status.SUCCESS -> {
                     loadingOverlay.visibility = View.GONE
-                    Toast.makeText(this@ControlActivity, "Action Successful!", Toast.LENGTH_SHORT).show()
+                    showActionResultDialog(true, "Action executed successfully over BLE.")
                 }
                 
                 Status.ERR_REPLAY_ATTACK, Status.ERR_AUTH_FAIL -> {
@@ -188,9 +211,9 @@ class ControlActivity : AppCompatActivity() {
 
                         loadingOverlay.visibility = View.GONE
                         if (retryStatus == Status.SUCCESS) {
-                            Toast.makeText(this@ControlActivity, "Security Restored & Executed!", Toast.LENGTH_SHORT).show()
+                            showActionResultDialog(true, "Security Restored & Action Executed!")
                         } else {
-                            Toast.makeText(this@ControlActivity, "Security Restored, but command failed (0x%02X).".format(retryStatus), Toast.LENGTH_SHORT).show()
+                            showActionResultDialog(false, "Security Restored, but command failed (0x%02X).".format(retryStatus))
                         }
                     } else {
                         // 4. REMOTE RECOVERY FAILED: Fallback to Physical NFC Tap
@@ -202,10 +225,38 @@ class ControlActivity : AppCompatActivity() {
                 
                 else -> {
                     loadingOverlay.visibility = View.GONE
-                    Toast.makeText(this@ControlActivity, "Vehicle Error: 0x%02X".format(status), Toast.LENGTH_SHORT).show()
+                    showActionResultDialog(false, "Vehicle returned error code: 0x%02X".format(status))
                 }
             }
         }
+    }
+
+    private fun showActionResultDialog(success: Boolean, message: String) {
+        val dialog = BottomSheetDialog(this)
+        val view = LayoutInflater.from(this).inflate(R.layout.dialog_action_result, null)
+        dialog.setContentView(view)
+
+        val ivIcon = view.findViewById<ImageView>(R.id.iv_result_icon)
+        val tvTitle = view.findViewById<TextView>(R.id.tv_result_title)
+        val tvMessage = view.findViewById<TextView>(R.id.tv_result_message)
+        val btnClose = view.findViewById<Button>(R.id.btn_result_ok)
+
+        if (success) {
+            ivIcon.setImageResource(android.R.drawable.checkbox_on_background)
+            ivIcon.setColorFilter(ContextCompat.getColor(this, R.color.success_green))
+            tvTitle.text = "Success"
+            tvTitle.setTextColor(ContextCompat.getColor(this, R.color.success_green))
+        } else {
+            ivIcon.setImageResource(android.R.drawable.ic_delete)
+            ivIcon.setColorFilter(ContextCompat.getColor(this, R.color.error_red))
+            tvTitle.text = "Action Failed"
+            tvTitle.setTextColor(ContextCompat.getColor(this, R.color.error_red))
+        }
+
+        tvMessage.text = message
+        btnClose.setOnClickListener { dialog.dismiss() }
+        
+        dialog.show()
     }
 
     private fun showNfcRecoveryDialog() {
@@ -329,6 +380,11 @@ class ControlActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         BleProvider.removeStatusListener(bleStatusListener)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        unregisterReceiver(nfcResultReceiver)
     }
 
     private fun observeViewModel() {
