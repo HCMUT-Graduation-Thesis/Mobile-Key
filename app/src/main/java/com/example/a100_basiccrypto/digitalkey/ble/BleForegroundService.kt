@@ -12,6 +12,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.a100_basiccrypto.HomeActivity
+import com.example.a100_basiccrypto.digitalkey.core.AuthManager
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.digitalkey.transactions.FastTransactionClient
@@ -26,8 +27,9 @@ class BleForegroundService : Service() {
     companion object {
         private const val CHANNEL_ID = "ble_connection_channel"
         private const val NOTIFICATION_ID = 101
-        private const val NORMAL_INTERVAL = 15000L // 20 seconds
-        private const val FAST_INTERVAL = 3000L   // 3 seconds
+        private const val NORMAL_INTERVAL = 15000L 
+        private const val FAST_INTERVAL = 3000L   
+        const val ACTION_REFRESH_SCAN = "com.example.a100_basiccrypto.REFRESH_SCAN"
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -35,6 +37,7 @@ class BleForegroundService : Service() {
     private var currentInterval = NORMAL_INTERVAL
     
     private val storageManager by lazy { SecureKeyStorageManager(this) }
+    private val authManager by lazy { AuthManager(this) }
     private val fastTxClient by lazy { 
         FastTransactionClient(storageManager) { Log.d("BleService", it) } 
     }
@@ -76,7 +79,7 @@ class BleForegroundService : Service() {
             if (currentInterval != newInterval) {
                 currentInterval = newInterval
                 Log.d("BleService", "Polling interval changed to: ${currentInterval}ms")
-                startTelemetryPolling() // Restart with new interval
+                startTelemetryPolling() 
             }
         }
         
@@ -84,6 +87,13 @@ class BleForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_REFRESH_SCAN) {
+            Log.d("BleService", "Manual refresh scan requested. Forcing disconnect of old session...")
+            // FORCE CLOSE everything to ensure we don't stay connected to a previous user's vehicle
+            BleProvider.getManager().closeEverything()
+            triggerAutoScan()
+        }
+
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Digital Key Active")
             .setContentText("Scanning for your vehicle in the background...")
@@ -105,9 +115,16 @@ class BleForegroundService : Service() {
 
     private fun triggerAutoScan() {
         val manager = BleProvider.getManager()
+        // Note: Even if isConnected() is true, refresh might have closed it above.
         if (!manager.isConnected()) {
-            val activeKeys = storageManager.getAllKeys().filter { it.core.keyState == KeyState.ACTIVE }
+            val email = authManager.getUserEmail() ?: return
+            
+            val activeKeys = storageManager.getAllKeys().filter { 
+                it.core.keyState == KeyState.ACTIVE && it.accountEmail == email
+            }
+            
             if (activeKeys.isNotEmpty()) {
+                Log.i("BleService", "Found ${activeKeys.size} active keys for $email. Starting scan...")
                 manager.scanAndConnect(activeKeys[0])
             }
         }
@@ -128,9 +145,7 @@ class BleForegroundService : Service() {
         val activeKeyID = manager.connectedKeyID
         
         if (manager.isConnected() && activeKeyID != null) {
-            Log.d("BleService", "Starting telemetry sync for: ${activeKeyID.toHex()}")
             val status = fastTxClient.syncTelemetry(BleProvider.getTransport(), activeKeyID)
-
             if (status != null) {
                 withContext(Dispatchers.Main) {
                     BleProvider.notifyTelemetryUpdated(status)
@@ -143,6 +158,7 @@ class BleForegroundService : Service() {
         BleProvider.setSyncTriggerListener(null)
         BleProvider.setPollingSpeedListener(null)
         unregisterReceiver(bluetoothReceiver)
+        BleProvider.getManager().closeEverything() // Ensure cleanup on stop
         serviceScope.cancel()
         super.onDestroy()
     }

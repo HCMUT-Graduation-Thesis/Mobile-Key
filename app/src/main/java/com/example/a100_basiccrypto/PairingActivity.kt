@@ -16,11 +16,16 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import com.example.a100_basiccrypto.digitalkey.core.AuthManager
+import com.example.a100_basiccrypto.digitalkey.core.MockKeyServer
 import com.example.a100_basiccrypto.digitalkey.nfc.MyHostApduService
 import com.example.a100_basiccrypto.digitalkey.storage.PasswordManager
+import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.progressindicator.CircularProgressIndicator
 import com.google.android.material.textfield.TextInputEditText
+import kotlinx.coroutines.launch
 
 class PairingActivity : AppCompatActivity() {
 
@@ -33,6 +38,9 @@ class PairingActivity : AppCompatActivity() {
     private var tvPhaseStatus: TextView? = null
     private var progressIndicator: CircularProgressIndicator? = null
     private var ivSuccessIcon: ImageView? = null
+
+    private val authManager by lazy { AuthManager(this) }
+    private val storageManager by lazy { SecureKeyStorageManager(this) }
 
     private val nfcReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -123,22 +131,66 @@ class PairingActivity : AppCompatActivity() {
         // Immediate Success UI
         tvPhaseTitle?.text = "Pairing Successful!"
         tvPhaseTitle?.setTextColor(ContextCompat.getColor(this, R.color.success_green))
-        tvPhaseStatus?.text = "Redirecting to Home..."
+        tvPhaseStatus?.text = "Synchronizing with Cloud..."
         
-        progressIndicator?.visibility = View.GONE
-        ivSuccessIcon?.visibility = View.VISIBLE
+        progressIndicator?.visibility = View.VISIBLE // Re-show loading for sync
+        ivSuccessIcon?.visibility = View.GONE
+
+        // 2. Sync to Cloud
+        syncNewKeyToCloud()
+    }
+
+    private fun syncNewKeyToCloud() {
+        val token = authManager.getAuthToken()
+        val email = authManager.getUserEmail()
         
-        // Switch to HomeActivity immediately (small delay for visual feedback)
-        Handler(Looper.getMainLooper()).postDelayed({
-            if (nfcDialog?.isShowing == true) {
-                nfcDialog?.dismiss()
+        if (token == null || email == null) {
+            finishPairing()
+            return
+        }
+
+        // Get the most recent key (the one we just paired)
+        val allKeys = storageManager.getAllKeys()
+        val latestKey = allKeys.maxByOrNull { it.core.validityStart } ?: run {
+            finishPairing()
+            return
+        }
+
+        // TAG THE KEY with the current logged-in user email
+        latestKey.accountEmail = email
+        storageManager.saveDigitalKey(latestKey)
+
+        val keyIdHex = latestKey.core.keyID?.joinToString("") { "%02x".format(it) } ?: "unknown"
+        val metadata = latestKey.carMetadata ?: com.example.a100_basiccrypto.shared.model.CarMetadata(
+            modelName = "New Vehicle",
+            licensePlate = "PENDING"
+        )
+
+        lifecycleScope.launch {
+            val success = MockKeyServer.syncKeyToCloud(token, keyIdHex, metadata)
+            if (success) {
+                runOnUiThread { 
+                    tvPhaseStatus?.text = "Cloud Sync Complete!"
+                    progressIndicator?.visibility = View.GONE
+                    ivSuccessIcon?.visibility = View.VISIBLE
+                }
+            } else {
+                runOnUiThread { Toast.makeText(this@PairingActivity, "Cloud Sync Failed (Offline)", Toast.LENGTH_SHORT).show() }
             }
             
-            val homeIntent = Intent(this, HomeActivity::class.java)
-            homeIntent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            startActivity(homeIntent)
-            finish()
-        }, 800)
+            // Brief delay for user to see the "Sync Complete" message
+            Handler(Looper.getMainLooper()).postDelayed({ finishPairing() }, 1200)
+        }
+    }
+
+    private fun finishPairing() {
+        if (nfcDialog?.isShowing == true) {
+            nfcDialog?.dismiss()
+        }
+        val homeIntent = Intent(this, HomeActivity::class.java)
+        homeIntent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        startActivity(homeIntent)
+        finish()
     }
 
     override fun onStop() {

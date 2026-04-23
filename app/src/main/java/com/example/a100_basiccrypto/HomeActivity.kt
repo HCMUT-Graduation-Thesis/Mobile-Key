@@ -24,12 +24,12 @@ import com.example.a100_basiccrypto.shared.model.KeyState
 class HomeActivity : AppCompatActivity() {
 
     private lateinit var rvKeys: RecyclerView
-    private lateinit var tvNotificationBadge: TextView
     private lateinit var tvBleStatus: TextView
     private lateinit var tvHomeAppMac: TextView
 
     private val storageManager by lazy { SecureKeyStorageManager(this) }
     private val bleIdentityManager by lazy { BleIdentityManager(this) }
+    private val authManager by lazy { AuthManager(this) }
     private lateinit var sharingViewModel: SharingViewModel
 
     private lateinit var bleHomeHelper: BleHomeHelper
@@ -41,11 +41,6 @@ class HomeActivity : AppCompatActivity() {
     private val bleStatusListener: (String) -> Unit = { message ->
         runOnUiThread {
             tvBleStatus.text = "Status: $message"
-            // If link is lost, clear the technical info from cards
-            if (message.contains("Link lost") || message.contains("Searching")) {
-                // We keep dynamic data until L2CAP explicitly disconnects via connectionStateListener
-                // or keep existing logic if preferred. But requirement is L2CAP based icon.
-            }
         }
     }
 
@@ -68,6 +63,14 @@ class HomeActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // 0. Check Login Session
+        if (!authManager.isLoggedIn()) {
+            startActivity(Intent(this, LoginActivity::class.java))
+            finish()
+            return
+        }
+
         setContentView(R.layout.activity_home)
 
         // 1. Initialize BleHomeHelper early
@@ -137,11 +140,18 @@ class HomeActivity : AppCompatActivity() {
             storageManager.clearAll()
             refreshList()
         }
+        
+        findViewById<View>(R.id.btn_logout).setOnClickListener {
+            authManager.logout()
+            stopService(Intent(this, BleForegroundService::class.java))
+            startActivity(Intent(this, LoginActivity::class.java))
+            finish()
+        }
     }
 
     private fun initViewModel() {
         sharingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
-            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+            override fun <T : ViewModel> create(modelClass: java.lang.Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
                 return SharingViewModel(com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl(), storageManager) as T
             }
@@ -150,11 +160,20 @@ class HomeActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (!authManager.isLoggedIn()) return
         BleProvider.addStatusListener(bleStatusListener)
         BleProvider.addVehicleInfoListener(vehicleInfoListener)
         BleProvider.addConnectionStateListener(connectionStateListener)
         updateBleStatus(bleHomeHelper.isBluetoothEnabled())
         refreshList()
+        
+        // Trigger background service to scan immediately if not connected
+        if (bleHomeHelper.isBluetoothEnabled()) {
+            val refreshIntent = Intent(this, BleForegroundService::class.java).apply {
+                action = BleForegroundService.ACTION_REFRESH_SCAN
+            }
+            startService(refreshIntent)
+        }
     }
 
     override fun onPause() {
@@ -166,12 +185,15 @@ class HomeActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        bleHomeHelper.unregisterReceiver()
+        if (::bleHomeHelper.isInitialized) {
+            bleHomeHelper.unregisterReceiver()
+        }
     }
 
     private fun refreshList() {
+        val email = authManager.getUserEmail() ?: return
         val keys = storageManager.getAllKeys()
-        val activeKeys = keys.filter { it.core.keyState == KeyState.ACTIVE }
+        val activeKeys = keys.filter { it.core.keyState == KeyState.ACTIVE && it.accountEmail == email }
         keyAdapter.submitList(activeKeys)
     }
 

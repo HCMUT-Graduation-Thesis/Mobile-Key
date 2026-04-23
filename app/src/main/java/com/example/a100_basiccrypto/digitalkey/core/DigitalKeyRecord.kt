@@ -14,7 +14,7 @@ data class DigitalKeyRecord(
     var core: CoreDigitalKey = CoreDigitalKey(),
 
     // 2. App-Specific Identification & Cloud Metadata
-    var accountID: String? = null, // Link to User Account on server
+    var accountEmail: String? = null, // Link to User Account (Email)
 
     // 3. App-Specific Secrets & Identity
     var devicePublicKey: ByteArray? = null,  // Dilithium PK of the App

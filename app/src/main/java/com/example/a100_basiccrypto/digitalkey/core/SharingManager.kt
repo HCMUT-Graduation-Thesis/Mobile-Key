@@ -7,7 +7,7 @@ import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import com.example.a100_basiccrypto.shared.command.SharingConstants
 import com.example.a100_basiccrypto.shared.model.Role
 import com.example.a100_basiccrypto.shared.model.KeyState
-import java.nio.ByteBuffer
+import com.example.a100_basiccrypto.shared.model.AttestationMetadata
 import kotlin.random.Random
 
 /**
@@ -22,7 +22,7 @@ class SharingManager(
     }
 
     /**
-     * OWNER SIDE: Creates a new invitation using V1 version but with V2 metadata fields for development.
+     * OWNER SIDE: Creates a new invitation using AttestationMetadata.
      */
     suspend fun createInvitation(
         ownerRecord: DigitalKeyRecord,
@@ -49,22 +49,21 @@ class SharingManager(
             val now = System.currentTimeMillis() / 1000
             val validTo = if (validityDays > 0) now + (validityDays * 24L * 3600L) else 0L
 
-            // 3. Build Metadata Payload (68 bytes) - Keeping Version V1
-            val payload = ByteBuffer.allocate(SharingConstants.METADATA_SIZE).apply {
-                put(SharingConstants.AP_VERSION)              // Offset 0
-                put(ownerID)                                     // Offset 1
-                put(invCodeHash)                                 // Offset 9
-                put(role.value)                                  // Offset 41
-                putInt(permissions)                              // Offset 42
-                putLong(now)                                     // Offset 46
-                putLong(validTo)                                 // Offset 54
-                
-                // Extra Fields (V2 structure in V1 package for dev)
-                put(usageLimit.toByte())                         // Offset 62
-                put(daysOfWeek.toByte())                         // Offset 63
-                putShort(startTimeMinutes.toShort())             // Offset 64
-                putShort(endTimeMinutes.toShort())               // Offset 66
-            }.array()
+            // 3. Build Metadata object
+            val metadata = AttestationMetadata(
+                parentKeyID = ownerID,
+                invCodeHash = invCodeHash,
+                role = role,
+                permissions = permissions,
+                validFrom = now,
+                validTo = validTo,
+                usageLimit = usageLimit,
+                daysOfWeek = daysOfWeek,
+                startTimeMinutes = startTimeMinutes,
+                endTimeMinutes = endTimeMinutes
+            )
+
+            val payload = metadata.toByteArray()
 
             // 4. Sign with Owner's Dilithium Private Key
             val ownerSK = ownerRecord.devicePrivateKey ?: return null
@@ -76,7 +75,7 @@ class SharingManager(
 
             // 5. Create PENDING record for Owner to track
             val pendingRecord = DigitalKeyRecord().apply {
-                core.keyID = CryptoUtils.sha256(ap).sliceArray(0 until 16) // Temp ID
+                core.keyID = CryptoUtils.sha256(ap).sliceArray(0 until 16)
                 core.parentKeyID = ownerID
                 core.keyState = KeyState.PENDING
                 core.role = role
@@ -112,50 +111,32 @@ class SharingManager(
     }
 
     /**
-     * FRIEND SIDE: Processes an incoming AP.
+     * FRIEND SIDE: Processes an incoming AP using AttestationMetadata.
      */
     fun processIncomingInvitation(invitation: ShareInvitation): DigitalKeyRecord? {
         return try {
             val ap = invitation.ap
             if (ap.size < SharingConstants.METADATA_SIZE) return null
 
-            val buffer = ByteBuffer.wrap(ap)
-            val version = buffer.get()
-            val parentKeyID = ByteArray(8).apply { buffer.get(this) }
-            val invCodeHash = ByteArray(32).apply { buffer.get(this) }
-            val roleValue = buffer.get()
-            val permissions = buffer.int
-            val validFrom = buffer.long
-            val validTo = buffer.long
-            
-            var usageLimit = 0
-            var daysOfWeek = 0
-            var startM = -1
-            var endM = -1
-
-            // Support reading extra fields even in V1 during development
-            if (version >= 0x01) {
-                usageLimit = buffer.get().toInt()
-                daysOfWeek = buffer.get().toInt()
-                startM = buffer.short.toInt()
-                endM = buffer.short.toInt()
-            }
+            // Parse metadata from AP (first 68 bytes)
+            val metadataBytes = ap.sliceArray(0 until SharingConstants.METADATA_SIZE)
+            val metadata = AttestationMetadata.fromByteArray(metadataBytes)
 
             val newRecord = DigitalKeyRecord().apply {
                 core.keyID = CryptoUtils.sha256(ap).sliceArray(0 until 16)
                 core.keyState = KeyState.PROVISIONING 
-                core.parentKeyID = parentKeyID
-                core.role = if (roleValue == Role.OWNER.value) Role.OWNER else Role.FRIEND
-                core.permissions = permissions
-                core.validityStart = validFrom
-                core.validityEnd = validTo
-                core.usageLimit = usageLimit
-                core.daysOfWeek = daysOfWeek
-                core.startTimeMinutes = startM
-                core.endTimeMinutes = endM
+                core.parentKeyID = metadata.parentKeyID
+                core.role = metadata.role
+                core.permissions = metadata.permissions
+                core.validityStart = metadata.validFrom
+                core.validityEnd = metadata.validTo
+                core.usageLimit = metadata.usageLimit
+                core.daysOfWeek = metadata.daysOfWeek
+                core.startTimeMinutes = metadata.startTimeMinutes
+                core.endTimeMinutes = metadata.endTimeMinutes
                 
                 this.attestationPackage = ap
-                this.invitationCodeHash = invCodeHash
+                this.invitationCodeHash = metadata.invCodeHash
                 
                 this.friendlyName = invitation.friendlyName
             }

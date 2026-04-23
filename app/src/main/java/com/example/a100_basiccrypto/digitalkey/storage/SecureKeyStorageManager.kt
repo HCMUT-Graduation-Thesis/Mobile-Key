@@ -65,8 +65,8 @@ class SecureKeyStorageManager(context: Context) : IKeyStorageManager {
         }
     }
 
-    override fun getKeysByAccount(accountID: String): List<DigitalKeyRecord> {
-        return getAllKeys().filter { it.accountID == accountID }
+    override fun getKeysByAccount(email: String): List<DigitalKeyRecord> {
+        return getAllKeys().filter { it.accountEmail == email }
     }
 
     override fun updateSyncStatus(keyID: ByteArray, status: SyncStatus) {

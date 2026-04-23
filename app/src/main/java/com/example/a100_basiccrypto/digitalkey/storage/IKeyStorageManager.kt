@@ -13,7 +13,7 @@ interface IKeyStorageManager {
     fun getAllKeys(): List<DigitalKeyRecord>
     
     // Account-based queries
-    fun getKeysByAccount(accountID: String): List<DigitalKeyRecord>
+    fun getKeysByAccount(email: String): List<DigitalKeyRecord>
     
     // Synchronization support
     fun updateSyncStatus(keyID: ByteArray, status: SyncStatus)

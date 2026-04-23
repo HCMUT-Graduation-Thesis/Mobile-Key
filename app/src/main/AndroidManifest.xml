@@ -43,6 +43,7 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".LoginActivity" android:label="Login" />
         <activity android:name=".PairingActivity" android:label="Add New Key" />
         <activity android:name=".ControlActivity" android:label="Vehicle Control" />
         <activity android:name=".NotificationActivity" android:label="Notifications" />

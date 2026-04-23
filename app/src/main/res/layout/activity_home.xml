@@ -21,9 +21,9 @@
             android:layout_height="match_parent"
             android:paddingHorizontal="16dp">
 
-            <!-- Notification Bell with Badge -->
+            <!-- Logout Button -->
             <FrameLayout
-                android:id="@+id/btn_notifications"
+                android:id="@+id/btn_logout"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:layout_alignParentStart="true"
@@ -36,23 +36,8 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:layout_gravity="center"
-                    android:src="@android:drawable/ic_popup_reminder"
-                    app:tint="@color/white" />
-
-                <TextView
-                    android:id="@+id/tv_notification_badge"
-                    android:layout_width="16dp"
-                    android:layout_height="16dp"
-                    android:layout_gravity="top|end"
-                    android:layout_marginTop="4dp"
-                    android:layout_marginEnd="4dp"
-                    android:background="@drawable/shape_badge_red"
-                    android:gravity="center"
-                    android:text="0"
-                    android:textColor="@color/white"
-                    android:textSize="10sp"
-                    android:textStyle="bold"
-                    android:visibility="gone" />
+                    android:src="@android:drawable/ic_lock_power_off"
+                    app:tint="@color/error_red" />
             </FrameLayout>
 
             <!-- Logo and App Title -->
