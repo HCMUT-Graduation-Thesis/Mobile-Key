@@ -6,7 +6,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
@@ -193,7 +192,7 @@ class HomeActivity : AppCompatActivity() {
     private fun refreshList() {
         val email = authManager.getUserEmail() ?: return
         val keys = storageManager.getAllKeys()
-        val activeKeys = keys.filter { it.core.keyState == KeyState.ACTIVE && it.accountEmail == email }
+        val activeKeys = keys.filter { it.accountEmail == email && it.core.keyState == KeyState.ACTIVE }
         keyAdapter.submitList(activeKeys)
     }
 

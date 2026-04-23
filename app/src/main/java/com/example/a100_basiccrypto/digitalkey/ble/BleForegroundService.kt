@@ -119,10 +119,10 @@ class BleForegroundService : Service() {
         if (!manager.isConnected()) {
             val email = authManager.getUserEmail() ?: return
             
-            val activeKeys = storageManager.getAllKeys().filter { 
+            val activeKeys = storageManager.getAllKeys().filter {
                 it.core.keyState == KeyState.ACTIVE && it.accountEmail == email
             }
-            
+
             if (activeKeys.isNotEmpty()) {
                 Log.i("BleService", "Found ${activeKeys.size} active keys for $email. Starting scan...")
                 manager.scanAndConnect(activeKeys[0])

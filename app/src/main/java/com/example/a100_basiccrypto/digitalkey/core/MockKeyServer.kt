@@ -2,6 +2,8 @@ package com.example.a100_basiccrypto.digitalkey.core
 
 import android.util.Log
 import com.example.a100_basiccrypto.shared.model.CarMetadata
+import com.example.a100_basiccrypto.shared.model.KeyState
+import com.example.a100_basiccrypto.shared.model.Role
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -33,11 +35,21 @@ data class ShareInvitation(
 }
 
 /**
- * Metadata stored on the cloud for each key.
+ * Enhanced Metadata stored on the cloud for each key.
  */
 data class CloudKeyRecord(
-    val keyId: String,
-    val metadata: CarMetadata
+    val keyId: String,               // Local ID
+    val moduleID: String,            // Vehicle Hardware ID (Hex)
+    val devicePublicKey: String,     // Phone's Dilithium PK (Hex)
+    val vehiclePublicKey: String,    // Vehicle's Dilithium PK (Hex)
+    val role: Role,                  // OWNER / FRIEND
+    val permissions: Int,            // Bitmask
+    val keyState: KeyState,          // ACTIVE, REVOKED, etc.
+    val validityStart: Long,
+    val validityEnd: Long,
+    val usageLimit: Int,
+    val friendlyName: String,
+    val metadata: CarMetadata        // Brand, Plate, Color, etc.
 )
 
 /**
@@ -47,7 +59,6 @@ object MockKeyServer {
     private const val TAG = "MockKeyServer"
 
     // --- AUTH STORAGE ---
-    // Pre-populate with two test accounts for easier multi-user testing
     private val userDatabase = mutableMapOf<String, String>().apply {
         put("test@gmail.com", "123456")
         put("test2@gmail.com", "123456")
@@ -66,73 +77,89 @@ object MockKeyServer {
     // --- AUTH & CLOUD METHODS ---
 
     suspend fun register(email: String, pass: String): Boolean {
-        Log.d(TAG, "Registering user: $email")
+        Log.d(TAG, "☁️ [SERVER] Registering user: $email")
         delay(800)
-        if (userDatabase.containsKey(email)) return false
+        if (userDatabase.containsKey(email)) {
+            Log.e(TAG, "❌ [SERVER] Registration failed: Email $email already exists.")
+            return false
+        }
         userDatabase[email] = pass
+        Log.i(TAG, "✅ [SERVER] User registered successfully: $email")
         return true
     }
 
     suspend fun login(email: String, pass: String): AuthManager.UserProfile? {
-        Log.d(TAG, "Login attempt: $email")
+        Log.d(TAG, "☁️ [SERVER] Login attempt for user: $email")
         delay(1000)
         if (userDatabase[email] == pass) {
-            return AuthManager.UserProfile(
+            val profile = AuthManager.UserProfile(
                 email = email,
                 displayName = email.substringBefore("@").replaceFirstChar { it.uppercase() },
                 token = "mock_jwt_" + UUID.randomUUID().toString().take(8)
             )
+            Log.i(TAG, "✅ [SERVER] Login success: ${profile.displayName} (Token: ${profile.token})")
+            return profile
         }
+        Log.e(TAG, "❌ [SERVER] Login failed: Invalid credentials for $email")
         return null
     }
 
     /**
-     * Synchronizes key metadata to the user's cloud account after successful pairing.
+     * Synchronizes a full key record to the user's cloud account.
      */
-    suspend fun syncKeyToCloud(token: String, keyId: String, metadata: CarMetadata): Boolean {
-        Log.d(TAG, "Syncing Key [$keyId] to cloud for token [$token]...")
+    suspend fun syncKeyToCloud(token: String, record: CloudKeyRecord): Boolean {
+        Log.d(TAG, "☁️ [SERVER] Syncing Key [${record.keyId}] for vehicle [${record.metadata.modelName}]...")
         delay(1200)
         
         val keys = userKeyCloud.getOrPut(token) { mutableListOf() }
-        keys.removeAll { it.keyId == keyId }
-        keys.add(CloudKeyRecord(keyId, metadata))
+        keys.removeAll { it.keyId == record.keyId || it.moduleID == record.moduleID }
+        keys.add(record)
         
-        Log.i(TAG, "Cloud Sync Complete for vehicle: ${metadata.modelName}. Total keys for this session: ${keys.size}")
+        Log.i(TAG, "✅ [SERVER] Cloud Sync Complete. User [Token: $token] now owns ${keys.size} key(s).")
+        Log.d(TAG, "   └─ ModuleID: ${record.moduleID}, Role: ${record.role}, Permissions: ${record.permissions}")
         return true
     }
 
     suspend fun fetchUserKeys(token: String): List<CloudKeyRecord> {
-        Log.d(TAG, "Fetching all keys for token: $token")
+        Log.d(TAG, "☁️ [SERVER] Fetching keys for token: $token")
         delay(1000)
-        return userKeyCloud[token] ?: emptyList()
+        val keys = userKeyCloud[token] ?: emptyList()
+        Log.i(TAG, "✅ [SERVER] Found ${keys.size} key(s) for this account.")
+        return keys
     }
 
     // --- SHARING METHODS ---
 
     suspend fun uploadInvitation(invitation: ShareInvitation): Boolean {
-        Log.d(TAG, "Uploading Invitation to Mock Server for ${invitation.recipient}...")
+        Log.d(TAG, "☁️ [SERVER] Receiving Invitation from Owner for Recipient: ${invitation.recipient}")
         delay(1000)
         pendingInvitation = invitation
         _invitationFlow.emit(invitation)
+        Log.i(TAG, "✅ [SERVER] Invitation uploaded and broadcasted. Waiting for friend to claim...")
         return true
     }
 
     suspend fun downloadInvitation(): ShareInvitation? {
-        Log.d(TAG, "Checking for invitations on Mock Server...")
+        Log.d(TAG, "☁️ [SERVER] Friend is checking for pending invitations...")
         delay(500)
-        return pendingInvitation
+        val inv = pendingInvitation
+        if (inv != null) {
+            Log.i(TAG, "✅ [SERVER] Found invitation for vehicle: ${inv.friendlyName}")
+        } else {
+            Log.w(TAG, "ℹ️ [SERVER] No pending invitations found.")
+        }
+        return inv
     }
 
     suspend fun notifyActivation(ap: ByteArray) {
-        Log.d(TAG, "Notifying Owner of Key Activation...")
+        Log.d(TAG, "☁️ [SERVER] Key Activated by Friend. Notifying Owner...")
         delay(500)
         _activationFlow.emit(ap)
+        Log.i(TAG, "✅ [SERVER] Owner notified of successful activation.")
     }
 
-    /**
-     * Clears session data but keeps core test accounts.
-     */
     fun reset() {
+        Log.w(TAG, "⚠️ [SERVER] Hard Resetting Mock Server Data...")
         pendingInvitation = null
         userDatabase.clear()
         userDatabase["test@gmail.com"] = "123456"

@@ -7,6 +7,7 @@ import android.content.IntentFilter
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.Button
@@ -16,15 +17,19 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.lifecycleScope
 import com.example.a100_basiccrypto.digitalkey.core.AuthManager
+import com.example.a100_basiccrypto.digitalkey.core.CloudKeyRecord
 import com.example.a100_basiccrypto.digitalkey.core.MockKeyServer
 import com.example.a100_basiccrypto.digitalkey.nfc.MyHostApduService
 import com.example.a100_basiccrypto.digitalkey.storage.PasswordManager
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.shared.model.SyncStatus
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.progressindicator.CircularProgressIndicator
 import com.google.android.material.textfield.TextInputEditText
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class PairingActivity : AppCompatActivity() {
@@ -108,15 +113,15 @@ class PairingActivity : AppCompatActivity() {
             when {
                 message.contains("Phase 1") -> {
                     tvPhaseTitle?.text = "Step 1: Security Handshake"
-                    tvPhaseStatus?.text = "Establishing a secure post-quantum encrypted channel..."
+                    tvPhaseStatus?.text = "Establishing secure channel..."
                 }
                 message.contains("Phase 2") -> {
                     tvPhaseTitle?.text = "Step 2: Key Exchange"
-                    tvPhaseStatus?.text = "Generating and exchanging digital identity keys..."
+                    tvPhaseStatus?.text = "Generating digital identity..."
                 }
                 message.contains("Phase 3") -> {
                     tvPhaseTitle?.text = "Step 3: Verification"
-                    tvPhaseStatus?.text = "Verifying vehicle authority and proof-of-possession..."
+                    tvPhaseStatus?.text = "Verifying vehicle authority..."
                 }
                 message.contains("Phase 4") -> {
                     handlePairingSuccess()
@@ -128,58 +133,65 @@ class PairingActivity : AppCompatActivity() {
     private fun handlePairingSuccess() {
         MyHostApduService.isPairingModeEnabled = false
         
-        // Immediate Success UI
+        // Immediate UI feedback for local success
         tvPhaseTitle?.text = "Pairing Successful!"
         tvPhaseTitle?.setTextColor(ContextCompat.getColor(this, R.color.success_green))
-        tvPhaseStatus?.text = "Synchronizing with Cloud..."
+        tvPhaseStatus?.text = "Your digital key is ready to use."
         
-        progressIndicator?.visibility = View.VISIBLE // Re-show loading for sync
-        ivSuccessIcon?.visibility = View.GONE
+        progressIndicator?.visibility = View.GONE
+        ivSuccessIcon?.visibility = View.VISIBLE
 
-        // 2. Sync to Cloud
-        syncNewKeyToCloud()
+        // Trigger background sync and tagging
+        startBackgroundSync()
+
+        // Switch to HomeActivity after a short visual confirmation delay
+        Handler(Looper.getMainLooper()).postDelayed({ finishPairing() }, 1500)
     }
 
-    private fun syncNewKeyToCloud() {
+    private fun startBackgroundSync() {
         val token = authManager.getAuthToken()
         val email = authManager.getUserEmail()
         
-        if (token == null || email == null) {
-            finishPairing()
-            return
-        }
+        if (token == null || email == null) return
 
-        // Get the most recent key (the one we just paired)
         val allKeys = storageManager.getAllKeys()
-        val latestKey = allKeys.maxByOrNull { it.core.validityStart } ?: run {
-            finishPairing()
-            return
-        }
+        val latestKey = allKeys.maxByOrNull { it.core.validityStart } ?: return
 
-        // TAG THE KEY with the current logged-in user email
+        // 1. Mark as pending sync and tag with current owner locally
         latestKey.accountEmail = email
+        latestKey.syncStatus = SyncStatus.PENDING_UPLOAD
         storageManager.saveDigitalKey(latestKey)
 
-        val keyIdHex = latestKey.core.keyID?.joinToString("") { "%02x".format(it) } ?: "unknown"
-        val metadata = latestKey.carMetadata ?: com.example.a100_basiccrypto.shared.model.CarMetadata(
-            modelName = "New Vehicle",
-            licensePlate = "PENDING"
-        )
+        // 2. Perform Sync in a separate scope (non-blocking, invisible to user)
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val cloudRecord = CloudKeyRecord(
+                    keyId = latestKey.core.keyID?.toHex() ?: "unknown",
+                    moduleID = latestKey.moduleID?.toHex() ?: "unknown",
+                    devicePublicKey = latestKey.devicePublicKey?.toHex() ?: "",
+                    vehiclePublicKey = latestKey.vehiclePublicKey?.toHex() ?: "",
+                    role = latestKey.core.role,
+                    permissions = latestKey.core.permissions,
+                    keyState = latestKey.core.keyState,
+                    validityStart = latestKey.core.validityStart,
+                    validityEnd = latestKey.core.validityEnd,
+                    usageLimit = latestKey.core.usageLimit,
+                    friendlyName = latestKey.friendlyName.ifEmpty { latestKey.carMetadata?.modelName ?: "My Vehicle" },
+                    metadata = latestKey.carMetadata ?: com.example.a100_basiccrypto.shared.model.CarMetadata(
+                        modelName = "New Vehicle",
+                        licensePlate = "PENDING"
+                    )
+                )
 
-        lifecycleScope.launch {
-            val success = MockKeyServer.syncKeyToCloud(token, keyIdHex, metadata)
-            if (success) {
-                runOnUiThread { 
-                    tvPhaseStatus?.text = "Cloud Sync Complete!"
-                    progressIndicator?.visibility = View.GONE
-                    ivSuccessIcon?.visibility = View.VISIBLE
+                val success = MockKeyServer.syncKeyToCloud(token, cloudRecord)
+                if (success) {
+                    latestKey.syncStatus = SyncStatus.SYNCED
+                    storageManager.saveDigitalKey(latestKey)
+                    Log.i("PairingActivity", "Background Sync Successful for ${latestKey.friendlyName}")
                 }
-            } else {
-                runOnUiThread { Toast.makeText(this@PairingActivity, "Cloud Sync Failed (Offline)", Toast.LENGTH_SHORT).show() }
+            } catch (e: Exception) {
+                Log.e("PairingActivity", "Background Sync failed: ${e.message}")
             }
-            
-            // Brief delay for user to see the "Sync Complete" message
-            Handler(Looper.getMainLooper()).postDelayed({ finishPairing() }, 1200)
         }
     }
 
