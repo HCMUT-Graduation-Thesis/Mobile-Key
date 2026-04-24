@@ -13,7 +13,8 @@ import kotlinx.coroutines.launch
 
 class SharingViewModel(
     private val identityCrypto: IIdentityCrypto,
-    private val storageManager: IKeyStorageManager
+    private val storageManager: IKeyStorageManager,
+    private val authManager: AuthManager // Added to track current user
 ) : ViewModel() {
 
     private val sharingManager = SharingManager(identityCrypto, storageManager)
@@ -23,6 +24,16 @@ class SharingViewModel(
 
     // Flow for observing proactive invitations from Server (Stage 1 Push)
     val incomingInvitations = MockKeyServer.invitationFlow
+    
+    // Flow for the Owner to observe status updates of their sent invitations
+    val sentInvitationUpdates = MockKeyServer.statusUpdateFlow
+
+    init {
+        // Sync NotificationStore with current user on initialization
+        authManager.getUserEmail()?.let { email ->
+            NotificationStore.setCurrentUser(email)
+        }
+    }
 
     /**
      * OWNER SIDE: Stage 1.1 - Check and Share key.
@@ -81,11 +92,12 @@ class SharingViewModel(
         viewModelScope.launch {
             val pendingList = MockKeyServer.fetchPendingInvitations(email)
             pendingList.forEach { invitation ->
-                // Add to notification store so it persists and shows red dot
+                // Add to notification store managed by user email
                 NotificationStore.addNotification(
-                    "Missed Key Shared",
-                    "${invitation.senderName} shared ${invitation.friendlyName} with you.",
-                    invitation
+                    ownerEmail = email,
+                    title = "Missed Key Shared",
+                    message = "${invitation.senderName} shared ${invitation.friendlyName} with you.",
+                    invitation = invitation
                 )
             }
         }
@@ -100,15 +112,21 @@ class SharingViewModel(
     }
 
     /**
-     * FRIEND SIDE: Verify PIN with attempt counting.
+     * FRIEND SIDE: Verify PIN with attempt counting and report results to server.
      */
     fun verifyPinAndActivate(record: DigitalKeyRecord, pin: String, invitation: ShareInvitation) {
         viewModelScope.launch {
             _uiState.value = SharingUiState.Loading
             val success = sharingManager.verifyPinAndFinalize(record, pin)
             if (success) {
-                // Success: Remove from server inbox and local store
-                MockKeyServer.removeInvitation(record.accountEmail ?: "", invitation.ap)
+                // Success: Report CLAIMED status to server
+                MockKeyServer.reportInvitationOutcome(
+                    recipientEmail = record.accountEmail ?: "",
+                    ap = record.attestationPackage ?: byteArrayOf(),
+                    status = InvitationStatus.CLAIMED,
+                    senderEmail = invitation.senderEmail
+                )
+                
                 MockKeyServer.notifyActivation(record.attestationPackage ?: byteArrayOf())
                 NotificationStore.markAsUsed(invitation)
                 _uiState.value = SharingUiState.ActivationSuccess
@@ -116,7 +134,13 @@ class SharingViewModel(
                 // Failure: Increment attempts
                 val attempts = NotificationStore.incrementAttempts(invitation)
                 if (attempts >= 3) {
-                    MockKeyServer.removeInvitation(record.accountEmail ?: "", invitation.ap)
+                    // Report FAILED status to server
+                    MockKeyServer.reportInvitationOutcome(
+                        recipientEmail = record.accountEmail ?: "",
+                        ap = record.attestationPackage ?: byteArrayOf(),
+                        status = InvitationStatus.FAILED,
+                        senderEmail = invitation.senderEmail
+                    )
                     _uiState.value = SharingUiState.Error("Too many failed attempts. Invitation cancelled.")
                 } else {
                     _uiState.value = SharingUiState.Error("Invalid PIN code. ${3 - attempts} attempts left.")

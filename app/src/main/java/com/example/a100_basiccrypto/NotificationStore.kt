@@ -1,46 +1,62 @@
 package com.example.a100_basiccrypto
 
 import com.example.a100_basiccrypto.digitalkey.core.ShareInvitation
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.*
 
 object NotificationStore {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
     data class NotificationItem(
+        val ownerEmail: String, // Link notification to a specific user
         val title: String, 
         val message: String, 
         val invitation: ShareInvitation? = null,
         var isUsed: Boolean = false,
-        var attempts: Int = 0, // Track PIN entry attempts
+        var attempts: Int = 0, 
         val timestamp: Long = System.currentTimeMillis()
     )
 
     private val _notifications = MutableStateFlow<List<NotificationItem>>(emptyList())
-    val notifications: StateFlow<List<NotificationItem>> = _notifications
+    private val currentUserEmail = MutableStateFlow<String>("")
 
-    // StateFlow to track if there are any unread/unused invitations
-    val hasUnread: StateFlow<Boolean> = _notifications.map { list ->
-        list.any { !it.isUsed && it.attempts < 3 }
-    }.run {
-        val flow = MutableStateFlow(false)
-        // We'll update this manually in addNotification/markAsUsed for simplicity in this mock
-        flow
+    /**
+     * Public Flow that provides notifications ONLY for the current user.
+     */
+    val notifications: StateFlow<List<NotificationItem>> = combine(_notifications, currentUserEmail) { list, email ->
+        if (email.isEmpty()) emptyList() 
+        else list.filter { it.ownerEmail.equals(email, ignoreCase = true) }
+    }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * Call this when user logs in or switches account
+     */
+    fun setCurrentUser(email: String) {
+        currentUserEmail.value = email
     }
-    
-    // A simpler way for the badge logic in a singleton
+
     private val _unreadCount = MutableStateFlow(false)
     val unreadBadgeVisible: StateFlow<Boolean> = _unreadCount
 
     private val _pendingInvitation = MutableStateFlow<ShareInvitation?>(null)
     val pendingInvitation: StateFlow<ShareInvitation?> = _pendingInvitation
 
-    fun addNotification(title: String, message: String, invitation: ShareInvitation? = null) {
+    init {
+        // Automatically update the badge whenever the filtered notifications change
+        notifications.onEach { list ->
+            _unreadCount.value = list.any { !it.isUsed && it.attempts < 3 }
+        }.launchIn(scope)
+    }
+
+    fun addNotification(ownerEmail: String, title: String, message: String, invitation: ShareInvitation? = null) {
         val newList = _notifications.value.toMutableList()
-        if (newList.any { it.invitation == invitation }) return
+        // Prevent duplicates for the same invitation for the same user
+        if (newList.any { it.invitation == invitation && it.ownerEmail == ownerEmail }) return
         
-        newList.add(0, NotificationItem(title, message, invitation))
+        newList.add(0, NotificationItem(ownerEmail, title, message, invitation))
         _notifications.value = newList
-        updateBadge()
     }
 
     fun markAsUsed(invitation: ShareInvitation) {
@@ -48,7 +64,6 @@ object NotificationStore {
             if (it.invitation == invitation) it.copy(isUsed = true) else it 
         }
         _notifications.value = newList
-        updateBadge()
     }
 
     fun incrementAttempts(invitation: ShareInvitation): Int {
@@ -62,20 +77,14 @@ object NotificationStore {
             } else it 
         }
         _notifications.value = newList
-        updateBadge()
         return currentAttempts
-    }
-
-    private fun updateBadge() {
-        _unreadCount.value = _notifications.value.any { !it.isUsed && it.attempts < 3 }
     }
 
     fun setPendingInvitation(invitation: ShareInvitation?) {
         _pendingInvitation.value = invitation
     }
 
-    fun clear() {
+    fun clearAll() {
         _notifications.value = emptyList()
-        updateBadge()
     }
 }

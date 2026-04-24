@@ -128,6 +128,7 @@ class HomeActivity : AppCompatActivity() {
         lifecycleScope.launch {
             sharingViewModel.incomingInvitations.collect { invitation ->
                 NotificationStore.addNotification(
+                    email, // Fixed to use user email
                     "New Key Shared",
                     "${invitation.senderName} shared ${invitation.friendlyName} with you.",
                     invitation
@@ -272,7 +273,11 @@ class HomeActivity : AppCompatActivity() {
         sharingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: java.lang.Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
-                return SharingViewModel(com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl(), storageManager) as T
+                return SharingViewModel(
+                    com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl(), 
+                    storageManager,
+                    authManager // Fixed: Added authManager
+                ) as T
             }
         })[SharingViewModel::class.java]
     }

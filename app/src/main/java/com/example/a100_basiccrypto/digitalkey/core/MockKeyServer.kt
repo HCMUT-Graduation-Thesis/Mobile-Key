@@ -22,6 +22,25 @@ data class CloudUserProfile(
 )
 
 /**
+ * Possible outcomes of an invitation after interaction.
+ */
+enum class InvitationStatus {
+    CLAIMED,    // Success: PIN was correct
+    FAILED,     // Failure: Too many wrong PIN attempts
+    REVOKED     // Cancelled by Owner
+}
+
+/**
+ * Status update payload sent back to the Owner.
+ */
+data class InvitationStatusUpdate(
+    val ap: ByteArray,
+    val status: InvitationStatus,
+    val recipientEmail: String,
+    val message: String = ""
+)
+
+/**
  * Data wrapper for a Key Invitation. 
  * Updated to include recipientEmail and proactive carMetadata.
  */
@@ -88,11 +107,16 @@ object MockKeyServer {
 
     // --- SESSION & PUSH ---
     private val onlineUsers = mutableSetOf<String>()
+    
     private val _invitationFlow = MutableSharedFlow<ShareInvitation>(replay = 0)
     val invitationFlow = _invitationFlow.asSharedFlow()
     
     private val _activationFlow = MutableSharedFlow<ByteArray>(replay = 0)
     val activationFlow = _activationFlow.asSharedFlow()
+
+    // Real-time flow for Owner to receive status updates about their shared keys
+    private val _statusUpdateFlow = MutableSharedFlow<InvitationStatusUpdate>(replay = 0)
+    val statusUpdateFlow = _statusUpdateFlow.asSharedFlow()
 
     // --- AUTH METHODS ---
 
@@ -136,7 +160,8 @@ object MockKeyServer {
      */
     suspend fun checkInvitationLegality(senderEmail: String, recipientEmail: String, parentKeyIdHex: String): String? {
         delay(500)
-        if (senderEmail == recipientEmail) return "You cannot share a key with yourself."
+        // Ensure user doesn't share with themselves
+        if (senderEmail.equals(recipientEmail, ignoreCase = true)) return "You cannot share a key with yourself."
         if (!userDatabase.containsKey(recipientEmail)) return "Recipient account does not exist."
         
         // Check if an invitation for this car to this recipient is already pending in the inbox
@@ -180,6 +205,20 @@ object MockKeyServer {
             _invitationFlow.emit(invitation)
         }
         return true
+    }
+
+    /**
+     * FRIEND SIDE: Reports the outcome back to the server.
+     * This simulates an API call that notifies the Owner.
+     */
+    suspend fun reportInvitationOutcome(recipientEmail: String, ap: ByteArray, status: InvitationStatus, senderEmail: String) {
+        Log.i(TAG, "📢 [SERVER] Invitation Outcome: $status for $recipientEmail. Notifying $senderEmail")
+        
+        // 1. Cleanup inbox after successful claim or final failure
+        invitationInbox[recipientEmail]?.removeAll { it.ap.contentEquals(ap) }
+
+        // 2. Notify Owner (In a real app, this would be an FCM push to senderEmail)
+        _statusUpdateFlow.emit(InvitationStatusUpdate(ap, status, recipientEmail))
     }
 
     /**

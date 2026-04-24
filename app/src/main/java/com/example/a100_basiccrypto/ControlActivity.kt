@@ -20,6 +20,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.example.a100_basiccrypto.digitalkey.core.SharingViewModel
+import com.example.a100_basiccrypto.digitalkey.core.AuthManager
 import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.digitalkey.transactions.FastTransactionClient
@@ -50,6 +51,7 @@ class ControlActivity : AppCompatActivity() {
     private lateinit var loadingOverlay: View
     
     private val storageManager by lazy { SecureKeyStorageManager(this) }
+    private val authManager by lazy { AuthManager(this) } // Added
     private var currentKeyID: ByteArray? = null
 
     private lateinit var sharingViewModel: SharingViewModel
@@ -85,7 +87,11 @@ class ControlActivity : AppCompatActivity() {
         sharingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: java.lang.Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
-                return SharingViewModel(DilithiumIdentityCryptoImpl(), storageManager) as T
+                return SharingViewModel(
+                    DilithiumIdentityCryptoImpl(), 
+                    storageManager,
+                    authManager // Added authManager
+                ) as T
             }
         })[SharingViewModel::class.java]
 
