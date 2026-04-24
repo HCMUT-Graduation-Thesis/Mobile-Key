@@ -128,7 +128,7 @@ class HomeActivity : AppCompatActivity() {
         lifecycleScope.launch {
             sharingViewModel.incomingInvitations.collect { invitation ->
                 NotificationStore.addNotification(
-                    email, // Fixed to use user email
+                    email,
                     "New Key Shared",
                     "${invitation.senderName} shared ${invitation.friendlyName} with you.",
                     invitation
@@ -204,7 +204,6 @@ class HomeActivity : AppCompatActivity() {
             val pin = etCode.text.toString()
             if (pin.length == 6 && record != null) {
                 sharingViewModel.verifyPinAndActivate(record, pin, invitation)
-                // Note: markAsUsed is now handled inside verifyPinAndActivate in ViewModel
                 dialog.dismiss()
             } else {
                 Toast.makeText(this, "Please enter 6-digit code", Toast.LENGTH_SHORT).show()
@@ -276,7 +275,7 @@ class HomeActivity : AppCompatActivity() {
                 return SharingViewModel(
                     com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl(), 
                     storageManager,
-                    authManager // Fixed: Added authManager
+                    authManager
                 ) as T
             }
         })[SharingViewModel::class.java]
@@ -313,7 +312,7 @@ class HomeActivity : AppCompatActivity() {
     private fun refreshList() {
         val email = authManager.getUserEmail() ?: return
         val keys = storageManager.getAllKeys()
-        val visibleKeys = keys.filter { 
+        val visibleKeys = keys.filter {
             it.accountEmail == email && 
             (it.core.keyState == KeyState.ACTIVE || it.core.keyState == KeyState.PROVISIONING) 
         }
@@ -321,12 +320,13 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private val keyAdapter = KeyAdapter { record ->
-        if (record.core.keyState == KeyState.ACTIVE) {
+        // Logic Adjustment: Allow opening ControlActivity for both ACTIVE and PROVISIONING keys
+        if (record.core.keyState == KeyState.ACTIVE || record.core.keyState == KeyState.PROVISIONING) {
             val intent = Intent(this, ControlActivity::class.java)
             intent.putExtra("KEY_ID", record.core.keyID)
             startActivity(intent)
         } else {
-            Toast.makeText(this, "Stand near vehicle to finish pairing", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Key not ready. Current state: ${record.core.keyState}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -348,7 +348,7 @@ class HomeActivity : AppCompatActivity() {
             holder.tvName.text = if (item.friendlyName.isNotEmpty()) item.friendlyName else (item.carMetadata?.modelName ?: "Vehicle")
             
             if (item.core.keyState == KeyState.PROVISIONING) {
-                holder.tvPlate.text = "TAP TO PAIR WITH VEHICLE"
+                holder.tvPlate.text = "PROVISIONING - READY TO PAIR"
                 holder.tvPlate.setTextColor(ContextCompat.getColor(this@HomeActivity, android.R.color.holo_orange_dark))
                 holder.ivCarIcon.alpha = 0.5f
             } else {

@@ -97,78 +97,131 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
-            <!-- Control Grid 2x2 -->
-            <GridLayout
+            <!-- Container for Control Grid OR Setup Wizard -->
+            <FrameLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="24dp"
-                android:columnCount="2"
-                android:rowCount="2">
+                android:layout_marginTop="24dp">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_control_unlock"
-                    android:layout_width="0dp"
-                    android:layout_height="80dp"
-                    android:layout_columnWeight="1"
-                    android:layout_margin="6dp"
-                    android:text="UNLOCK"
-                    android:textColor="@color/white"
-                    android:backgroundTint="@color/primary_blue"
-                    app:icon="@android:drawable/ic_lock_idle_lock"
-                    app:iconGravity="top"
-                    app:iconPadding="4dp"
-                    app:iconSize="24dp"
-                    app:cornerRadius="12dp"
-                    android:textSize="12sp" />
+                <!-- 1. Normal Control Grid (Owner/Active) -->
+                <GridLayout
+                    android:id="@+id/layout_control_grid"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:columnCount="2"
+                    android:rowCount="2">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_control_lock"
-                    android:layout_width="0dp"
-                    android:layout_height="80dp"
-                    android:layout_columnWeight="1"
-                    android:layout_margin="6dp"
-                    android:text="LOCK"
-                    android:textColor="@color/white"
-                    android:backgroundTint="@color/primary_blue"
-                    app:icon="@android:drawable/ic_lock_lock"
-                    app:iconGravity="top"
-                    app:iconPadding="4dp"
-                    app:iconSize="24dp"
-                    app:cornerRadius="12dp"
-                    android:textSize="12sp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_control_unlock"
+                        android:layout_width="0dp"
+                        android:layout_height="80dp"
+                        android:layout_columnWeight="1"
+                        android:layout_margin="6dp"
+                        android:text="UNLOCK"
+                        android:textColor="@color/white"
+                        android:backgroundTint="@color/primary_blue"
+                        app:icon="@android:drawable/ic_lock_idle_lock"
+                        app:iconGravity="top"
+                        app:iconPadding="4dp"
+                        app:iconSize="24dp"
+                        app:cornerRadius="12dp"
+                        android:textSize="12sp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_control_stop"
-                    android:layout_width="0dp"
-                    android:layout_height="80dp"
-                    android:layout_columnWeight="1"
-                    android:layout_margin="6dp"
-                    android:text="STOP ENGINE"
-                    android:textColor="@color/white"
-                    android:backgroundTint="@color/error_red"
-                    app:icon="@android:drawable/ic_media_pause"
-                    app:iconGravity="top"
-                    app:iconPadding="4dp"
-                    app:iconSize="24dp"
-                    app:cornerRadius="12dp"
-                    android:textSize="12sp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_control_lock"
+                        android:layout_width="0dp"
+                        android:layout_height="80dp"
+                        android:layout_columnWeight="1"
+                        android:layout_margin="6dp"
+                        android:text="LOCK"
+                        android:textColor="@color/white"
+                        android:backgroundTint="@color/primary_blue"
+                        app:icon="@android:drawable/ic_lock_lock"
+                        app:iconGravity="top"
+                        app:iconPadding="4dp"
+                        app:iconSize="24dp"
+                        app:cornerRadius="12dp"
+                        android:textSize="12sp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_control_trunk"
-                    android:layout_width="0dp"
-                    android:layout_height="80dp"
-                    android:layout_columnWeight="1"
-                    android:layout_margin="6dp"
-                    android:text="TRUNK"
-                    android:textColor="@color/white"
-                    android:backgroundTint="@color/primary_blue"
-                    app:icon="@android:drawable/btn_star"
-                    app:iconGravity="top"
-                    app:iconPadding="4dp"
-                    app:iconSize="24dp"
-                    app:cornerRadius="12dp"
-                    android:textSize="12sp" />
-            </GridLayout>
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_control_stop"
+                        android:layout_width="0dp"
+                        android:layout_height="80dp"
+                        android:layout_columnWeight="1"
+                        android:layout_margin="6dp"
+                        android:text="STOP ENGINE"
+                        android:textColor="@color/white"
+                        android:backgroundTint="@color/error_red"
+                        app:icon="@android:drawable/ic_media_pause"
+                        app:iconGravity="top"
+                        app:iconPadding="4dp"
+                        app:iconSize="24dp"
+                        app:cornerRadius="12dp"
+                        android:textSize="12sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_control_trunk"
+                        android:layout_width="0dp"
+                        android:layout_height="80dp"
+                        android:layout_columnWeight="1"
+                        android:layout_margin="6dp"
+                        android:text="TRUNK"
+                        android:textColor="@color/white"
+                        android:backgroundTint="@color/primary_blue"
+                        app:icon="@android:drawable/btn_star"
+                        app:iconGravity="top"
+                        app:iconPadding="4dp"
+                        app:iconSize="24dp"
+                        app:cornerRadius="12dp"
+                        android:textSize="12sp" />
+                </GridLayout>
+
+                <!-- 2. Setup Wizard Overlay (Friend Provisioning) -->
+                <LinearLayout
+                    android:id="@+id/layout_setup_wizard"
+                    android:layout_width="match_parent"
+                    android:layout_height="172dp"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:background="@drawable/card_bg"
+                    android:padding="16dp"
+                    android:visibility="gone">
+
+                    <ImageView
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:src="@android:drawable/stat_sys_data_bluetooth"
+                        app:tint="@color/primary_blue" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="One Last Step!"
+                        android:textColor="@color/white"
+                        android:textStyle="bold"
+                        android:textSize="16sp"
+                        android:layout_marginTop="8dp"/>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Stand near the vehicle and activate your key."
+                        android:textColor="@color/gray_text"
+                        android:textSize="12sp"
+                        android:layout_marginTop="4dp"
+                        android:gravity="center"/>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_pair_vehicle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:text="PAIR WITH VEHICLE"
+                        android:textColor="@color/white"
+                        android:backgroundTint="@color/primary_blue"
+                        app:cornerRadius="24dp"/>
+                </LinearLayout>
+            </FrameLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"

@@ -99,7 +99,8 @@ class SharingManager(
                 ap = ap,
                 friendlyName = pendingRecord.friendlyName,
                 recipientEmail = recipientEmail,
-                senderName = senderName
+                senderName = senderName,
+                senderEmail = ownerRecord.accountEmail ?: ""
                 // carMetadata is null here, Server will proactively attach it
             )
 
@@ -142,6 +143,9 @@ class SharingManager(
                 this.attestationPackage = ap
                 this.invitationCodeHash = metadata.invCodeHash
                 
+                // CRITICAL FIX: Assign recipient email to ensure it's filtered correctly in HomeActivity
+                this.accountEmail = invitation.recipientEmail
+                
                 // Use carMetadata provided proactively by server
                 this.carMetadata = invitation.carMetadata
                 this.friendlyName = invitation.friendlyName
@@ -165,6 +169,12 @@ class SharingManager(
             // Keep state as PROVISIONING because it hasn't been exchanged with the vehicle yet.
             record.core.keyState = KeyState.PROVISIONING
             record.invitationCode = enteredPin // Save PIN for future pairing with vehicle
+            
+            // Ensure accountEmail is set (extra safety check)
+            if (record.accountEmail.isNullOrEmpty()) {
+                 Log.w(TAG, "Warning: record.accountEmail was empty during PIN finalization.")
+            }
+
             storageManager.saveDigitalKey(record)
             true
         } else {
