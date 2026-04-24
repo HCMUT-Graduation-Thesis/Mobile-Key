@@ -95,12 +95,13 @@ class EKeyManagerActivity : AppCompatActivity() {
         val statusStr = when(record.core.keyState) {
             KeyState.PENDING -> "PENDING (Code: ${record.invitationCode})"
             KeyState.ACTIVE -> "ACTIVE"
+            KeyState.PROVISIONING -> "PROVISIONING"
             else -> record.core.keyState.name
         }
 
         AlertDialog.Builder(this)
             .setTitle("eKey Details")
-            .setMessage("Friendly Name: ${record.friendlyName}\nStatus: $statusStr\nRole: ${record.core.role}\nUsage: ${if(record.core.usageLimit == 0) "Unlimited" else record.core.usageLimit.toString()}")
+            .setMessage("Key Holder: ${record.keyHolderName}\nVehicle: ${record.friendlyName}\nStatus: $statusStr\nRole: ${record.core.role}\nUsage: ${if(record.core.usageLimit == 0) "Unlimited" else record.core.usageLimit.toString()}")
             .setPositiveButton("Edit Name") { _, _ ->
                 Toast.makeText(this, "Edit feature coming soon", Toast.LENGTH_SHORT).show()
             }
@@ -114,7 +115,7 @@ class EKeyManagerActivity : AppCompatActivity() {
     private fun showDeleteConfirmation(record: DigitalKeyRecord) {
         AlertDialog.Builder(this)
             .setTitle("Revoke Access")
-            .setMessage("Are you sure you want to revoke access for ${record.friendlyName}?")
+            .setMessage("Are you sure you want to revoke access for ${record.keyHolderName}?")
             .setPositiveButton("Revoke") { _, _ ->
                 storageManager.deleteKey(record.core.keyID!!)
                 refreshRecyclerView()
@@ -148,9 +149,15 @@ class EKeyManagerActivity : AppCompatActivity() {
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val item = items[position]
             val context = holder.itemView.context
-            holder.tvName.text = item.friendlyName.ifEmpty { "Guest Key" }
+            // Display Holder Nickname instead of car name
+            holder.tvName.text = item.keyHolderName.ifEmpty { "Guest Key" }
             
-            val statusText = if (item.core.keyState == KeyState.PENDING) "PENDING [${item.invitationCode}]" else "ACTIVE"
+            val statusText = when(item.core.keyState) {
+                KeyState.PENDING -> "PENDING [${item.invitationCode}]"
+                KeyState.PROVISIONING -> "PROVISIONING"
+                KeyState.ACTIVE -> "ACTIVE"
+                else -> item.core.keyState.name
+            }
             holder.tvType.text = "${if (item.core.usageLimit == 1) "One-Time" else "Normal"} | $statusText"
             
             if (item.core.keyState == KeyState.PENDING) {

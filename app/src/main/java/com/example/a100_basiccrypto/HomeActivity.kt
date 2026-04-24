@@ -46,14 +46,11 @@ class HomeActivity : AppCompatActivity() {
 
     private lateinit var bleHomeHelper: BleHomeHelper
 
-    // Track dynamic vehicle data (Cleared on disconnect)
     private val dynamicVehicleData = mutableMapOf<String, Pair<String, Int>>()
     private var isL2capConnected = false
 
     private val bleStatusListener: (String) -> Unit = { message ->
-        runOnUiThread {
-            tvBleStatus.text = "Status: $message"
-        }
+        runOnUiThread { tvBleStatus.text = "Status: $message" }
     }
 
     private val vehicleInfoListener: (String, String, Int) -> Unit = { mid, mac, psm ->
@@ -66,85 +63,60 @@ class HomeActivity : AppCompatActivity() {
     private val connectionStateListener: (Boolean) -> Unit = { isConnected ->
         runOnUiThread {
             isL2capConnected = isConnected
-            if (!isConnected) {
-                dynamicVehicleData.clear()
-            }
+            if (!isConnected) dynamicVehicleData.clear()
             keyAdapter.notifyDataSetChanged()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // 0. Check Login Session
         if (!authManager.isLoggedIn()) {
             startActivity(Intent(this, LoginActivity::class.java))
             finish()
             return
         }
 
-        // Inform Mock Server that user is online
         val email = authManager.getUserEmail()
-        if (email != null) {
-            MockKeyServer.setOnline(email)
-        }
+        if (email != null) MockKeyServer.setOnline(email)
 
         setContentView(R.layout.activity_home)
 
-        // 1. Initialize BleHomeHelper early
         bleHomeHelper = BleHomeHelper(this) { isEnabled ->
-            if (::tvBleStatus.isInitialized) {
-                updateBleStatus(isEnabled)
-            }
+            if (::tvBleStatus.isInitialized) updateBleStatus(isEnabled)
         }
 
-        // 2. Initialize launcher
         bleHomeHelper.initLauncher {
             updateBleStatus(true)
             BleProvider.init(this)
             startBleBackgroundService()
         }
 
-        // 3. Initialize UI
         setupUI()
         initViewModel()
         setupSharingObservers()
 
-        // 4. Perform Bluetooth checks
         bleHomeHelper.checkBluetoothAndRequest()
-
-        // 5. Follow-up original onCreate logic
         BleProvider.init(this)
         startBleBackgroundService()
-
-        // 6. Register state changed receiver
         bleHomeHelper.registerReceiver()
     }
 
     private fun setupSharingObservers() {
         val email = authManager.getUserEmail() ?: return
 
-        // 1. Listen for Push Invitations (Real-time)
         lifecycleScope.launch {
             sharingViewModel.incomingInvitations.collect { invitation ->
-                NotificationStore.addNotification(
-                    email,
-                    "New Key Shared",
-                    "${invitation.senderName} shared ${invitation.friendlyName} with you.",
-                    invitation
-                )
+                NotificationStore.addNotification(email, "New Key Shared", "${invitation.senderName} shared a key with you.", invitation)
                 showReceiveInvitationDialog(invitation)
             }
         }
 
-        // 2. Listen for Red Dot badge visibility
         lifecycleScope.launch {
             NotificationStore.unreadBadgeVisible.collect { isVisible ->
                 vNotificationBadge.visibility = if (isVisible) View.VISIBLE else View.GONE
             }
         }
 
-        // 3. Listen for clicks from Notification List
         lifecycleScope.launch {
             NotificationStore.pendingInvitation.collect { invitation ->
                 invitation?.let {
@@ -154,12 +126,11 @@ class HomeActivity : AppCompatActivity() {
             }
         }
 
-        // 4. Listen for UI State (Errors, Success)
         lifecycleScope.launch {
             sharingViewModel.uiState.collect { state ->
                 when (state) {
                     is SharingViewModel.SharingUiState.ActivationSuccess -> {
-                        Toast.makeText(this@HomeActivity, "Key added! Ready for vehicle pairing.", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@HomeActivity, "Key added successfully!", Toast.LENGTH_LONG).show()
                         refreshList()
                     }
                     is SharingViewModel.SharingUiState.Error -> {
@@ -170,7 +141,6 @@ class HomeActivity : AppCompatActivity() {
             }
         }
 
-        // 5. Fetch missed invitations when entering Home
         sharingViewModel.fetchInvitationsFromCloud(email)
     }
 
@@ -185,7 +155,6 @@ class HomeActivity : AppCompatActivity() {
         val btnProvision = dialogView.findViewById<MaterialButton>(R.id.btn_accept_invitation)
 
         val record = sharingViewModel.onInvitationReceived(invitation)
-        
         tvOwner.text = "Sender: ${invitation.senderName}"
         
         val permissions = record?.core?.permissions ?: 0
@@ -197,8 +166,7 @@ class HomeActivity : AppCompatActivity() {
         
         val validityEnd = record?.core?.validityEnd ?: 0L
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val expiryText = if (validityEnd > 0L) sdf.format(Date(validityEnd * 1000)) else "Never"
-        tvValidity.text = "Expires: $expiryText"
+        tvValidity.text = "Expires: ${if (validityEnd > 0L) sdf.format(Date(validityEnd * 1000)) else "Never"}"
 
         btnProvision.setOnClickListener {
             val pin = etCode.text.toString()
@@ -209,18 +177,11 @@ class HomeActivity : AppCompatActivity() {
                 Toast.makeText(this, "Please enter 6-digit code", Toast.LENGTH_SHORT).show()
             }
         }
-
         dialog.show()
     }
 
     private fun updateBleStatus(isEnabled: Boolean) {
-        if (!isEnabled) {
-            tvBleStatus.text = "Status: Bluetooth OFF"
-        } else {
-            if (tvBleStatus.text.contains("OFF")) {
-                tvBleStatus.text = "Status: Initializing..."
-            }
-        }
+        tvBleStatus.text = if (!isEnabled) "Status: Bluetooth OFF" else "Status: Initializing..."
     }
 
     private fun startBleBackgroundService() {
@@ -239,8 +200,6 @@ class HomeActivity : AppCompatActivity() {
         tvHomeAppMac = findViewById(R.id.tv_home_app_mac)
         vNotificationBadge = findViewById(R.id.v_notification_badge)
 
-        updateBleStatus(bleHomeHelper.isBluetoothEnabled())
-
         val appMac = bleIdentityManager.getAppBleAddress().joinToString(":") { "%02X".format(it) }
         tvHomeAppMac.text = "App MAC: $appMac"
 
@@ -258,9 +217,7 @@ class HomeActivity : AppCompatActivity() {
         }
         
         findViewById<View>(R.id.btn_logout).setOnClickListener {
-            authManager.getUserEmail()?.let { email ->
-                MockKeyServer.setOffline(email)
-            }
+            authManager.getUserEmail()?.let { MockKeyServer.setOffline(it) }
             authManager.logout()
             stopService(Intent(this, BleForegroundService::class.java))
             startActivity(Intent(this, LoginActivity::class.java))
@@ -270,13 +227,9 @@ class HomeActivity : AppCompatActivity() {
 
     private fun initViewModel() {
         sharingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
-            override fun <T : ViewModel> create(modelClass: java.lang.Class<T>): T {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
-                return SharingViewModel(
-                    com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl(), 
-                    storageManager,
-                    authManager
-                ) as T
+                return SharingViewModel(com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl(), storageManager, authManager) as T
             }
         })[SharingViewModel::class.java]
     }
@@ -287,12 +240,8 @@ class HomeActivity : AppCompatActivity() {
         BleProvider.addStatusListener(bleStatusListener)
         BleProvider.addVehicleInfoListener(vehicleInfoListener)
         BleProvider.addConnectionStateListener(connectionStateListener)
-        updateBleStatus(bleHomeHelper.isBluetoothEnabled())
         refreshList()
-
-        if (bleHomeHelper.isBluetoothEnabled()) {
-            startBleBackgroundService()
-        }
+        if (bleHomeHelper.isBluetoothEnabled()) startBleBackgroundService()
     }
 
     override fun onPause() {
@@ -302,17 +251,9 @@ class HomeActivity : AppCompatActivity() {
         BleProvider.removeConnectionStateListener(connectionStateListener)
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        if (::bleHomeHelper.isInitialized) {
-            bleHomeHelper.unregisterReceiver()
-        }
-    }
-
     private fun refreshList() {
         val email = authManager.getUserEmail() ?: return
-        val keys = storageManager.getAllKeys()
-        val visibleKeys = keys.filter {
+        val visibleKeys = storageManager.getAllKeys().filter {
             it.accountEmail == email && 
             (it.core.keyState == KeyState.ACTIVE || it.core.keyState == KeyState.PROVISIONING) 
         }
@@ -320,13 +261,12 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private val keyAdapter = KeyAdapter { record ->
-        // Logic Adjustment: Allow opening ControlActivity for both ACTIVE and PROVISIONING keys
         if (record.core.keyState == KeyState.ACTIVE || record.core.keyState == KeyState.PROVISIONING) {
             val intent = Intent(this, ControlActivity::class.java)
             intent.putExtra("KEY_ID", record.core.keyID)
             startActivity(intent)
         } else {
-            Toast.makeText(this, "Key not ready. Current state: ${record.core.keyState}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Key not ready.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -345,21 +285,22 @@ class HomeActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val item = items[position]
-            holder.tvName.text = if (item.friendlyName.isNotEmpty()) item.friendlyName else (item.carMetadata?.modelName ?: "Vehicle")
+            // UPDATED UI: Holder Name as Title, Car Name as Subtitle
+            holder.tvName.text = item.keyHolderName.ifEmpty { "My Digital Key" }
+
+            val statusLabel = if (item.core.keyState == KeyState.PROVISIONING) " [PROVISIONING]" else ""
+            holder.tvPlate.text = "${item.friendlyName}$statusLabel"
             
             if (item.core.keyState == KeyState.PROVISIONING) {
-                holder.tvPlate.text = "PROVISIONING - READY TO PAIR"
                 holder.tvPlate.setTextColor(ContextCompat.getColor(this@HomeActivity, android.R.color.holo_orange_dark))
                 holder.ivCarIcon.alpha = 0.5f
             } else {
-                holder.tvPlate.text = item.carMetadata?.licensePlate ?: "No Plate"
                 holder.tvPlate.setTextColor(ContextCompat.getColor(this@HomeActivity, android.R.color.darker_gray))
                 holder.ivCarIcon.alpha = 1.0f
             }
 
             val midHex = item.moduleID?.joinToString("") { "%02x".format(it) } ?: ""
             val dynamicData = dynamicVehicleData[midHex]
-
             if (isL2capConnected && dynamicData != null) {
                 holder.tvMac.visibility = View.VISIBLE
                 holder.tvPsm.visibility = View.VISIBLE
@@ -371,7 +312,6 @@ class HomeActivity : AppCompatActivity() {
                 holder.tvPsm.visibility = View.GONE
                 holder.ivCarIcon.setColorFilter(ContextCompat.getColor(this@HomeActivity, android.R.color.darker_gray))
             }
-
             holder.itemView.setOnClickListener { onClick(item) }
         }
 
@@ -382,7 +322,7 @@ class HomeActivity : AppCompatActivity() {
             val tvPlate: TextView = view.findViewById(R.id.tv_item_plate)
             val tvMac: TextView = view.findViewById(R.id.tv_item_mac)
             val tvPsm: TextView = view.findViewById(R.id.tv_item_psm)
-            val ivCarIcon: android.widget.ImageView = view.findViewById(R.id.iv_car_icon)
+            val ivCarIcon: ImageView = view.findViewById(R.id.iv_car_icon)
         }
     }
 }

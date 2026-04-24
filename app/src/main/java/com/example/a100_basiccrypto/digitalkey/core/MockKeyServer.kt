@@ -42,14 +42,14 @@ data class InvitationStatusUpdate(
 
 /**
  * Data wrapper for a Key Invitation. 
- * Updated to include recipientEmail and proactive carMetadata.
  */
 data class ShareInvitation(
     val ap: ByteArray,
-    val friendlyName: String,
-    val recipientEmail: String = "", // Matches the account identifier
+    val friendlyName: String,         // Car's Friendly Name (legacy compatibility)
+    val holderNickname: String = "", // NEW: Specific field for the holder's name
+    val recipientEmail: String = "", 
     val senderName: String = "Owner",
-    val senderEmail: String = "",    // Added to track who sent it
+    val senderEmail: String = "",    
     var carMetadata: CarMetadata? = null 
 ) {
     override fun equals(other: Any?): Boolean {
@@ -70,21 +70,22 @@ data class ShareInvitation(
  * 2. Cloud Key Record
  */
 data class CloudKeyRecord(
-    val keyId: String,               // Local unique ID (Hex)
-    val moduleID: String,            // Vehicle Hardware ID (Hex/VIN)
-    val ownerEmail: String,          // Email of the original vehicle owner
-    val holderEmail: String,         // Email of the person currently holding this key
-    val parentKeyId: String? = null, // ID of the parent key that granted this one (null for Owner)
-    val devicePublicKey: String,     // Phone's Dilithium PK (Hex)
-    val vehiclePublicKey: String,    // Vehicle's Dilithium PK (Hex)
-    val role: Role,                  // OWNER / FRIEND
-    val permissions: Int,            // Bitmask
-    val keyState: KeyState,          // ACTIVE, REVOKED, etc.
+    val keyId: String,
+    val moduleID: String,
+    val ownerEmail: String,
+    val holderEmail: String,
+    val holderNickname: String = "", // NEW
+    val parentKeyId: String? = null,
+    val devicePublicKey: String,
+    val vehiclePublicKey: String,
+    val role: Role,
+    val permissions: Int,
+    val keyState: KeyState,
     val validityStart: Long,
     val validityEnd: Long,
     val usageLimit: Int,
-    val friendlyName: String,        // User-defined name for the car
-    val metadata: CarMetadata,       // Brand, Plate, Color, etc.
+    val friendlyName: String,        
+    val metadata: CarMetadata,       
     val lastSyncedAt: Long = System.currentTimeMillis()
 )
 
@@ -156,19 +157,16 @@ object MockKeyServer {
         delay(500)
         Log.d(TAG, "🛡️ [LEGALITY] Checking: $senderEmail -> $recipientEmail for Car: $parentKeyIdHex")
         
-        // 1. Requirement: No self-sharing
         if (senderEmail.equals(recipientEmail, ignoreCase = true)) {
             Log.e(TAG, "🚫 [LEGALITY] DENIED: User $senderEmail tried to share with themselves.")
             return "You cannot share a key with yourself."
         }
         
-        // 2. Recipient existence
         if (!userDatabase.containsKey(recipientEmail)) {
             Log.w(TAG, "🚫 [LEGALITY] DENIED: Recipient $recipientEmail does not exist.")
             return "Recipient account does not exist."
         }
         
-        // 3. Duplicate check
         val pending = invitationInbox[recipientEmail] ?: emptyList<ShareInvitation>()
         val isDuplicate = pending.any { inv ->
             val invParentId = inv.ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
@@ -220,7 +218,6 @@ object MockKeyServer {
 
     /**
      * OWNER SIDE: Revokes an active or pending invitation.
-     * Synchronizes both the Invitation Inbox and the Cloud Key List.
      */
     suspend fun revokeInvitation(senderEmail: String, recipientEmail: String, ap: ByteArray) {
         Log.i(TAG, "🛡️ [SERVER] Owner $senderEmail is revoking key for $recipientEmail")

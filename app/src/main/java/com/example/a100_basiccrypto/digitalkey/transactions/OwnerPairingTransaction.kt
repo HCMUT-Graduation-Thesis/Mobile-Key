@@ -22,7 +22,6 @@ import java.security.KeyPair
 
 /**
  * Owner Pairing Transaction - Updated for BLE L2CAP Insecure flow.
- * Removed Level 4 OOB security parameters and BLE routing parameters from payload.
  */
 class OwnerPairingTransaction(
     private val context: Context,
@@ -89,7 +88,6 @@ class OwnerPairingTransaction(
         val sessionKey = currentSessionKey ?: return LogicalResponse(Status.ERR_GENERAL)
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
-            // Echo nonce (16b)
             val responseData = decrypted.sliceArray(0 until 16)
             LogicalResponse(Status.SUCCESS, CryptoUtils.encryptAesGcm(responseData, sessionKey))
         } catch (e: Exception) { 
@@ -107,7 +105,7 @@ class OwnerPairingTransaction(
             val buffer = ByteBuffer.wrap(decryptedData)
             val record = DigitalKeyRecord()
 
-            // 1. Dilithium PK (1952)
+            // 1. Dilithium PK
             val vehiclePK = ByteArray(CryptoConstants.ML_DSA_65_PK_SIZE)
             buffer.get(vehiclePK)
             record.vehiclePublicKey = vehiclePK
@@ -115,7 +113,6 @@ class OwnerPairingTransaction(
             // 2. Metadata & Identifiers
             val kid = ByteArray(8); buffer.get(kid)
             record.core.keyID = kid
-
             val mid = ByteArray(16); buffer.get(mid)
             record.moduleID = mid
 
@@ -128,19 +125,21 @@ class OwnerPairingTransaction(
             val token = ByteArray(64); buffer.get(token)
             record.immobilizerToken = token
 
-            // 3. BLE Connectivity - REMOVED Address and PSM from payload
-
-            // 4. Metadata JSON (Remaining)
+            // 4. Metadata JSON
             val metaLen = buffer.remaining()
             if (metaLen > 0) {
                 val metaBytes = ByteArray(metaLen); buffer.get(metaBytes)
                 try {
                     record.carMetadata = gson.fromJson(String(metaBytes), CarMetadata::class.java)
+                    // friendlyName = Car's Name
                     record.friendlyName = record.carMetadata?.modelName ?: "My Vehicle"
                 } catch (e: Exception) {
                     onLog("Metadata parse warning: ${e.message}")
                 }
             }
+
+            // NEW: Assign default holder name for Owner
+            record.keyHolderName = "Main Key (Owner)"
 
             // 5. Fast Auth Key Derivation
             onLog("Phase 3: Deriving Fast Auth Key...")
@@ -156,7 +155,7 @@ class OwnerPairingTransaction(
 
             // 6. Prepare Response: App -> Vehicle (Simplified)
             onLog("Phase 3: Sending App Identity...")
-            
+
             // Response: PK(1952) only - Address removed
             val response = ByteBuffer.allocate(CryptoConstants.ML_DSA_65_PK_SIZE).apply {
                 put(record.devicePublicKey!!)

@@ -75,7 +75,7 @@ class SharingViewModel(
         daysOfWeek: Int = 0,
         startTimeMinutes: Int = -1,
         endTimeMinutes: Int = -1,
-        friendlyName: String = "",
+        holderNickname: String = "", // Changed from friendlyName
         recipientEmail: String = "",
         senderEmail: String = ""
     ) {
@@ -101,7 +101,7 @@ class SharingViewModel(
                 daysOfWeek = daysOfWeek,
                 startTimeMinutes = startTimeMinutes,
                 endTimeMinutes = endTimeMinutes,
-                friendlyName = friendlyName,
+                holderNickname = holderNickname, // Updated parameter name
                 recipientEmail = recipientEmail,
                 senderName = "Owner Device"
             )
@@ -146,7 +146,7 @@ class SharingViewModel(
                 NotificationStore.addNotification(
                     ownerEmail = email,
                     title = "Missed Key Shared",
-                    message = "${invitation.senderName} shared ${invitation.friendlyName} with you.",
+                    message = "${invitation.senderName} shared a key with you.",
                     invitation = invitation
                 )
             }

@@ -33,8 +33,8 @@ class SharingManager(
         daysOfWeek: Int = 0,
         startTimeMinutes: Int = -1,
         endTimeMinutes: Int = -1,
-        friendlyName: String = "",
-        recipientEmail: String = "", // Matches the Account identifier
+        holderNickname: String = "", // Holder Name from UI (e.g. "Friend A")
+        recipientEmail: String = "", 
         senderName: String = "Owner"
     ): DigitalKeyRecord? {
         return try {
@@ -85,23 +85,26 @@ class SharingManager(
                 core.daysOfWeek = daysOfWeek
                 core.startTimeMinutes = startTimeMinutes
                 core.endTimeMinutes = endTimeMinutes
+                
+                // Set the correct identities
                 this.carMetadata = ownerRecord.carMetadata
+                this.friendlyName = ownerRecord.friendlyName // Car's name
+                this.keyHolderName = holderNickname.ifEmpty { "Guest Key" } // User's nickname
                 
                 this.invitationCode = invitationCode
                 this.invitationCodeHash = invCodeHash
                 this.attestationPackage = ap
-                this.friendlyName = if(friendlyName.isNotEmpty()) friendlyName else "Guest Key (Pending)"
                 this.accountEmail = recipientEmail
             }
             
             // Build the invitation package for the server
             val invitation = ShareInvitation(
                 ap = ap,
-                friendlyName = pendingRecord.friendlyName,
+                friendlyName = ownerRecord.friendlyName, // Passing car's name for compatibility
+                holderNickname = pendingRecord.keyHolderName, // Passing user's nickname
                 recipientEmail = recipientEmail,
                 senderName = senderName,
                 senderEmail = ownerRecord.accountEmail ?: ""
-                // carMetadata is null here, Server will proactively attach it
             )
 
             if (MockKeyServer.uploadInvitation(invitation)) {
@@ -116,14 +119,12 @@ class SharingManager(
 
     /**
      * FRIEND SIDE: Processes an incoming AP using AttestationMetadata.
-     * This is called when the Push Notification is received.
      */
     fun processIncomingInvitation(invitation: ShareInvitation): DigitalKeyRecord? {
         return try {
             val ap = invitation.ap
             if (ap.size < SharingConstants.METADATA_SIZE) return null
 
-            // Parse metadata from AP (first 68 bytes)
             val metadataBytes = ap.sliceArray(0 until SharingConstants.METADATA_SIZE)
             val metadata = AttestationMetadata.fromByteArray(metadataBytes)
 
@@ -142,13 +143,12 @@ class SharingManager(
                 
                 this.attestationPackage = ap
                 this.invitationCodeHash = metadata.invCodeHash
-                
-                // CRITICAL FIX: Assign recipient email to ensure it's filtered correctly in HomeActivity
                 this.accountEmail = invitation.recipientEmail
                 
-                // Use carMetadata provided proactively by server
+                // Map identities from Server
                 this.carMetadata = invitation.carMetadata
-                this.friendlyName = invitation.friendlyName
+                this.friendlyName = invitation.friendlyName // Map car name
+                this.keyHolderName = invitation.holderNickname // Map user nickname
             }
             return newRecord
         } catch (e: Exception) {
@@ -158,23 +158,15 @@ class SharingManager(
     }
 
     /**
-     * Call this ONLY after the friend has successfully entered the 6-digit PIN.
-     * Stage 1 completion: the key is now locally "PROVISIONING" and ready for Stage 2 (Vehicle pairing).
+     * Finalize Stage 1 after successful PIN entry.
      */
     fun verifyPinAndFinalize(record: DigitalKeyRecord, enteredPin: String): Boolean {
         val ownerID = record.core.parentKeyID ?: return false
         val computedHash = CryptoUtils.hmacSha256(ownerID, enteredPin.toByteArray())
         
         return if (computedHash.contentEquals(record.invitationCodeHash)) {
-            // Keep state as PROVISIONING because it hasn't been exchanged with the vehicle yet.
             record.core.keyState = KeyState.PROVISIONING
-            record.invitationCode = enteredPin // Save PIN for future pairing with vehicle
-            
-            // Ensure accountEmail is set (extra safety check)
-            if (record.accountEmail.isNullOrEmpty()) {
-                 Log.w(TAG, "Warning: record.accountEmail was empty during PIN finalization.")
-            }
-
+            record.invitationCode = enteredPin
             storageManager.saveDigitalKey(record)
             true
         } else {

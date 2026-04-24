@@ -10,40 +10,37 @@ import com.example.a100_basiccrypto.shared.model.VehicleStatus
  * DigitalKeyRecord is the App-specific data model for a digital key.
  */
 data class DigitalKeyRecord(
-    // 1. Core "Contract" Data (The Single Source of Truth shared with MCU)
+    // 1. Core "Contract" Data
     var core: CoreDigitalKey = CoreDigitalKey(),
 
     // 2. App-Specific Identification & Cloud Metadata
-    var accountEmail: String? = null, // Link to User Account (Email)
+    var accountEmail: String? = null, 
 
     // 3. App-Specific Secrets & Identity
-    var devicePublicKey: ByteArray? = null,  // Dilithium PK of the App
-    var vehiclePublicKey: ByteArray? = null, // Dilithium PK of the Vehicle
-    var devicePrivateKey: ByteArray? = null, // Unique Private Key per vehicle
-    var immobilizerToken: ByteArray? = null, // Token for BLE PSM decryption & Engine Start
-    var carMetadata: CarMetadata? = null,    // Vehicle Identity (App-only storage)
-    var moduleID: ByteArray? = null,         // Unique ID of the vehicle module
+    var devicePublicKey: ByteArray? = null,  
+    var vehiclePublicKey: ByteArray? = null, 
+    var devicePrivateKey: ByteArray? = null, 
+    var immobilizerToken: ByteArray? = null, 
+    var carMetadata: CarMetadata? = null,    
+    var moduleID: ByteArray? = null,         
 
     // 4. Lifecycle & UI Metadata
     var syncStatus: SyncStatus = SyncStatus.PENDING_UPLOAD,
-    var friendlyName: String = "",
+    var friendlyName: String = "",       // Car's Friendly Name (e.g. "My VF8")
+    var keyHolderName: String = "",     // NEW: Holder's Nickname (e.g. "John's Key")
 
-    // 5. Sharing & Attestation Data (Used during provisioning flows)
-    var attestationPackage: ByteArray? = null, // The signed blob for Friend Pairing
-    var invitationCodeHash: ByteArray? = null, // SHA-256 of the invitation code
-    var invitationCode: String? = null,        // Plain code
+    // 5. Sharing & Attestation Data
+    var attestationPackage: ByteArray? = null, 
+    var invitationCodeHash: ByteArray? = null, 
+    var invitationCode: String? = null,        
 
-    // 6. Local usage count to enforce limits independently
+    // 6. Local usage count
     var currentUsageCount: Int = 0,
 
-    // 7. Last known vehicle physical status (Telemetry)
+    // 7. Last known vehicle physical status
     var vehicleStatus: VehicleStatus? = null
 ) {
-    /**
-     * Delegates the access control check to the Core model.
-     */
     fun isAccessAllowedNow(): Boolean {
-        // Sync the local usage count to core before checking
         core.currentUsageCount = currentUsageCount
         return core.isAccessAllowedNow()
     }
