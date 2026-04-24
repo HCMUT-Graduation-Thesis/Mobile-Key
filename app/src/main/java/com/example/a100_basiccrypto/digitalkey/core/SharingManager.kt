@@ -76,7 +76,8 @@ class SharingManager(
 
             // 5. Create PENDING record for Owner to track
             val pendingRecord = DigitalKeyRecord().apply {
-                core.keyID = CryptoUtils.sha256(ap).sliceArray(0 until 16)
+                // FIXED: Use 8 bytes for consistency with Owner Pairing
+                core.keyID = CryptoUtils.sha256(ap).sliceArray(0 until 8)
                 core.parentKeyID = ownerID
                 core.keyState = KeyState.PENDING
                 core.role = role
@@ -129,8 +130,8 @@ class SharingManager(
             val metadata = AttestationMetadata.fromByteArray(metadataBytes)
 
             val newRecord = DigitalKeyRecord().apply {
-                core.keyID = CryptoUtils.sha256(ap).sliceArray(0 until 16)
-                core.keyState = KeyState.PROVISIONING 
+                core.keyID = CryptoUtils.sha256(ap).sliceArray(0 until 8)
+                core.keyState = KeyState.PENDING
                 core.parentKeyID = metadata.parentKeyID
                 core.role = metadata.role
                 core.permissions = metadata.permissions

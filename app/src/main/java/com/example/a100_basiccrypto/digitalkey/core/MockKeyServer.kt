@@ -74,7 +74,7 @@ data class CloudKeyRecord(
     val moduleID: String,
     val ownerEmail: String,
     val holderEmail: String,
-    val holderNickname: String = "", // NEW
+    val holderNickname: String = "",
     val parentKeyId: String? = null,
     val devicePublicKey: String,
     val vehiclePublicKey: String,
@@ -168,11 +168,11 @@ object MockKeyServer {
         }
         
         val pending = invitationInbox[recipientEmail] ?: emptyList<ShareInvitation>()
-        val isDuplicate = pending.any { inv ->
-            val invParentId = inv.ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
+        if (pending.any { inv ->
+            // FIX: Using 0 until 8 to match KeyID length
+            val invParentId = inv.ap.sliceArray(0 until 8).joinToString("") { "%02x".format(it) }
             invParentId == parentKeyIdHex
-        }
-        if (isDuplicate) {
+        }) {
             Log.w(TAG, "🚫 [LEGALITY] DENIED: Car $parentKeyIdHex already has a pending invitation for $recipientEmail.")
             return "An invitation for this vehicle is already pending for this recipient."
         }
@@ -190,14 +190,17 @@ object MockKeyServer {
 
         // 1. Proactively attach car metadata
         val ap = invitation.ap
-        if (invitation.carMetadata == null && ap.size >= 9) {
-            val parentKeyIdHex = ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
+        if (invitation.carMetadata == null && ap.size >= 8) {
+            // FIX: Using 0 until 8 to correctly identify the Parent KeyID
+            val parentKeyIdHex = ap.sliceArray(0 until 8).joinToString("") { "%02x".format(it) }
             val foundMetadata = userKeyCloud.values.flatten()
                 .find { it.keyId.startsWith(parentKeyIdHex) }?.metadata
             
             if (foundMetadata != null) {
                 invitation.carMetadata = foundMetadata
                 Log.d(TAG, "📦 [UPLOAD] Attached car metadata: ${foundMetadata.modelName}")
+            } else {
+                Log.w(TAG, "⚠️ [UPLOAD] Metadata NOT found for Parent KeyID: $parentKeyIdHex")
             }
         }
 
@@ -229,23 +232,22 @@ object MockKeyServer {
             Log.d(TAG, "🗑️ [INBOX] Removed invitation from $recipientEmail's inbox.")
         }
 
-        // 2. Synchronization: Remove from Cloud Key Records (Status: PROVISIONING or ACTIVE)
-        if (ap.size >= 9) {
-            val parentKeyIdHex = ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
+        // 2. Synchronization: Remove from Cloud Key Records
+        if (ap.size >= 8) {
+            // FIX: Using 0 until 8
+            val parentKeyIdHex = ap.sliceArray(0 until 8).joinToString("") { "%02x".format(it) }
             
-            // Remove from recipient's cloud list (Soft-wipe simulation)
             userKeyCloud[recipientEmail]?.removeAll { 
                 it.parentKeyId == parentKeyIdHex || it.ownerEmail == senderEmail 
             }
             
-            // Remove from owner's cloud list (the record of the shared key)
             userKeyCloud[senderEmail]?.removeAll { 
                 it.holderEmail == recipientEmail && it.parentKeyId == parentKeyIdHex 
             }
             Log.d(TAG, "☁️ [SYNC] Revoked key records for $parentKeyIdHex removed from Cloud storage.")
         }
 
-        // 3. Notify Friend (simulates real-time push for soft-wipe on App side)
+        // 3. Notify Friend
         _statusUpdateFlow.emit(InvitationStatusUpdate(ap, InvitationStatus.REVOKED, recipientEmail))
         Log.d(TAG, "🔔 [STATUS] REVOKED status update emitted to parties.")
     }
@@ -262,13 +264,11 @@ object MockKeyServer {
             else -> {}
         }
 
-        // 1. Cleanup inbox after successful claim or final failure
         val removed = invitationInbox[recipientEmail]?.removeAll { it.ap.contentEquals(ap) } ?: false
         if (removed) {
             Log.d(TAG, "🗑️ [INBOX] Cleaned up AP from $recipientEmail's inbox.")
         }
 
-        // 2. Notify Owner
         _statusUpdateFlow.emit(InvitationStatusUpdate(ap, status, recipientEmail))
         Log.d(TAG, "🔔 [STATUS] Update emitted for Owner $senderEmail.")
     }

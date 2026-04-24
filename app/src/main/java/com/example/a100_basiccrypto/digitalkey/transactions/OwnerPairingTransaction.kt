@@ -173,7 +173,7 @@ class OwnerPairingTransaction(
         return try {
             val decrypted = CryptoUtils.decryptAesGcm(payload, sessionKey)
             if (decrypted.size == 1 && decrypted[0] == 0x01.toByte()) {
-                pendingRecord?.let { 
+                pendingRecord?.let {
                     it.core.keyState = KeyState.ACTIVE
                     storageManager.saveDigitalKey(it)
                     onLog("Phase 4: Pairing Active!")

@@ -24,6 +24,7 @@ import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
 import com.example.a100_basiccrypto.digitalkey.ble.BleForegroundService
 import com.example.a100_basiccrypto.digitalkey.ble.BleHomeHelper
 import com.example.a100_basiccrypto.shared.model.KeyState
+import com.example.a100_basiccrypto.shared.model.Role
 import com.example.a100_basiccrypto.shared.command.DigitalKeyPermissions
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
@@ -285,11 +286,24 @@ class HomeActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val item = items[position]
-            // UPDATED UI: Holder Name as Title, Car Name as Subtitle
-            holder.tvName.text = item.keyHolderName.ifEmpty { "My Digital Key" }
+            
+            // Title: keyHolderName (e.g. "Friend A's Phone")
+            holder.tvName.text = item.keyHolderName.ifEmpty { "My Key" }
 
+            // ROLE BADGE LOGIC
+            if (item.core.role == Role.OWNER) {
+                holder.tvRoleBadge.text = "OWNER"
+                holder.tvRoleBadge.setTextColor(android.graphics.Color.parseColor("#4285F4")) // Blue
+            } else {
+                holder.tvRoleBadge.text = "FRIEND"
+                holder.tvRoleBadge.setTextColor(android.graphics.Color.parseColor("#FF9800")) // Orange
+            }
+
+            // Subtitle: friendlyName (Car Name) | Plate [Status]
+            val carName = item.friendlyName.ifEmpty { "Vehicle" }
+            val plate = item.carMetadata?.licensePlate ?: "N/A"
             val statusLabel = if (item.core.keyState == KeyState.PROVISIONING) " [PROVISIONING]" else ""
-            holder.tvPlate.text = "${item.friendlyName}$statusLabel"
+            holder.tvPlate.text = "$carName | $plate$statusLabel"
             
             if (item.core.keyState == KeyState.PROVISIONING) {
                 holder.tvPlate.setTextColor(ContextCompat.getColor(this@HomeActivity, android.R.color.holo_orange_dark))
@@ -319,6 +333,7 @@ class HomeActivity : AppCompatActivity() {
 
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val tvName: TextView = view.findViewById(R.id.tv_item_name)
+            val tvRoleBadge: TextView = view.findViewById(R.id.tv_item_role_badge) // Added reference
             val tvPlate: TextView = view.findViewById(R.id.tv_item_plate)
             val tvMac: TextView = view.findViewById(R.id.tv_item_mac)
             val tvPsm: TextView = view.findViewById(R.id.tv_item_psm)
