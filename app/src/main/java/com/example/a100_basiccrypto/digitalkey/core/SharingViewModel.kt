@@ -64,12 +64,13 @@ class SharingViewModel(
     /**
      * Stage 1.3: Friend receives push invitation and starts verification.
      */
-    fun onInvitationReceived(invitation: ShareInvitation) {
+    fun onInvitationReceived(invitation: ShareInvitation): DigitalKeyRecord? {
         val record = sharingManager.processIncomingInvitation(invitation)
         if (record != null) {
             // Transition to state where UI shows PIN input dialog
             _uiState.value = SharingUiState.ReceivedInvitation(record)
         }
+        return record
     }
 
     /**
@@ -80,7 +81,7 @@ class SharingViewModel(
             _uiState.value = SharingUiState.Loading
             val success = sharingManager.verifyPinAndFinalize(record, pin)
             if (success) {
-                // Mock: Notify server that the key is successfully claimed (optional)
+                // Mock: Notify server that the key is successfully claimed
                 MockKeyServer.notifyActivation(record.attestationPackage ?: byteArrayOf())
                 _uiState.value = SharingUiState.ActivationSuccess
             } else {
