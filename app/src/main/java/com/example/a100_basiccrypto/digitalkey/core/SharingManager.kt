@@ -155,13 +155,15 @@ class SharingManager(
 
     /**
      * Call this ONLY after the friend has successfully entered the 6-digit PIN.
+     * Stage 1 completion: the key is now locally "PROVISIONING" and ready for Stage 2 (Vehicle pairing).
      */
     fun verifyPinAndFinalize(record: DigitalKeyRecord, enteredPin: String): Boolean {
         val ownerID = record.core.parentKeyID ?: return false
         val computedHash = CryptoUtils.hmacSha256(ownerID, enteredPin.toByteArray())
         
         return if (computedHash.contentEquals(record.invitationCodeHash)) {
-            record.core.keyState = KeyState.ACTIVE
+            // Keep state as PROVISIONING because it hasn't been exchanged with the vehicle yet.
+            record.core.keyState = KeyState.PROVISIONING
             record.invitationCode = enteredPin // Save PIN for future pairing with vehicle
             storageManager.saveDigitalKey(record)
             true

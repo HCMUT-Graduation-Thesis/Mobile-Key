@@ -19,8 +19,12 @@ class SharingViewModel(
     private val _uiState = MutableStateFlow<SharingUiState>(SharingUiState.Idle)
     val uiState: StateFlow<SharingUiState> = _uiState
 
+    // Flow for observing proactive invitations from Server (Stage 1)
     val incomingInvitations = MockKeyServer.invitationFlow
 
+    /**
+     * Stage 1.1: Owner creates and uploads invitation to Server.
+     */
     fun shareKey(
         ownerRecord: DigitalKeyRecord,
         permissions: Int,
@@ -30,7 +34,7 @@ class SharingViewModel(
         startTimeMinutes: Int = -1,
         endTimeMinutes: Int = -1,
         friendlyName: String = "",
-        recipientEmail: String = "" // Updated to recipientEmail
+        recipientEmail: String = ""
     ) {
         viewModelScope.launch {
             _uiState.value = SharingUiState.Loading
@@ -44,8 +48,8 @@ class SharingViewModel(
                 startTimeMinutes = startTimeMinutes,
                 endTimeMinutes = endTimeMinutes,
                 friendlyName = friendlyName,
-                recipientEmail = recipientEmail, // Updated to recipientEmail
-                senderName = "Owner Device" // In real app, get from User Profile
+                recipientEmail = recipientEmail,
+                senderName = "Owner Device"
             )
             if (updatedRecord != null) {
                 _uiState.value = SharingUiState.ShareSuccess(
@@ -57,13 +61,30 @@ class SharingViewModel(
         }
     }
 
-    fun processInvitation(invitation: ShareInvitation) {
+    /**
+     * Stage 1.3: Friend receives push invitation and starts verification.
+     */
+    fun onInvitationReceived(invitation: ShareInvitation) {
+        val record = sharingManager.processIncomingInvitation(invitation)
+        if (record != null) {
+            // Transition to state where UI shows PIN input dialog
+            _uiState.value = SharingUiState.ReceivedInvitation(record)
+        }
+    }
+
+    /**
+     * Stage 1.4: Finalize local record after PIN verification.
+     */
+    fun verifyPinAndActivate(record: DigitalKeyRecord, pin: String) {
         viewModelScope.launch {
-            val record = sharingManager.processIncomingInvitation(invitation)
-            if (record != null) {
-                // Mock: After friend accepts, notify the server/owner
-                MockKeyServer.notifyActivation(invitation.ap)
-                _uiState.value = SharingUiState.ReceivedInvitation(record)
+            _uiState.value = SharingUiState.Loading
+            val success = sharingManager.verifyPinAndFinalize(record, pin)
+            if (success) {
+                // Mock: Notify server that the key is successfully claimed (optional)
+                MockKeyServer.notifyActivation(record.attestationPackage ?: byteArrayOf())
+                _uiState.value = SharingUiState.ActivationSuccess
+            } else {
+                _uiState.value = SharingUiState.Error("Invalid PIN code. Please try again.")
             }
         }
     }
@@ -77,6 +98,7 @@ class SharingViewModel(
         object Loading : SharingUiState()
         data class ShareSuccess(val code: String) : SharingUiState()
         data class ReceivedInvitation(val record: DigitalKeyRecord) : SharingUiState()
+        object ActivationSuccess : SharingUiState()
         data class Error(val message: String) : SharingUiState()
     }
 }
