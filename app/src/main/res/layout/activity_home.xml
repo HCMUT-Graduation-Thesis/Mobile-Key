@@ -47,23 +47,40 @@
                         app:tint="@color/error_red" />
                 </FrameLayout>
 
-                <!-- Notifications Button (Moved to left for balance) -->
+                <!-- Notifications Button Container -->
                 <FrameLayout
                     android:id="@+id/btn_notifications"
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
                     android:layout_marginStart="4dp"
-                    android:background="@drawable/shape_rect_rounded_blue"
-                    android:backgroundTint="#1A1A2A"
                     android:clickable="true"
                     android:focusable="true">
 
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
+                    <FrameLayout
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
                         android:layout_gravity="center"
-                        android:src="@android:drawable/ic_popup_reminder"
-                        app:tint="@color/white" />
+                        android:background="@drawable/shape_rect_rounded_blue"
+                        android:backgroundTint="#1A1A2A">
+
+                        <ImageView
+                            android:layout_width="20dp"
+                            android:layout_height="20dp"
+                            android:layout_gravity="center"
+                            android:src="@android:drawable/ic_popup_reminder"
+                            app:tint="@color/white" />
+                    </FrameLayout>
+
+                    <!-- Red Dot Badge -->
+                    <View
+                        android:id="@+id/v_notification_badge"
+                        android:layout_width="10dp"
+                        android:layout_height="10dp"
+                        android:layout_gravity="top|end"
+                        android:layout_marginTop="6dp"
+                        android:layout_marginEnd="6dp"
+                        android:background="@drawable/shape_badge_red"
+                        android:visibility="gone" />
                 </FrameLayout>
             </LinearLayout>
 

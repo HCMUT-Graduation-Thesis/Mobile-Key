@@ -28,20 +28,20 @@ data class CloudUserProfile(
 data class ShareInvitation(
     val ap: ByteArray,
     val friendlyName: String,
-    val recipientEmail: String = "", // Changed from 'recipient' for account consistency
+    val recipientEmail: String = "", // Matches the account identifier
     val senderName: String = "Owner",
+    val senderEmail: String = "",    // Added to track who sent it
     var carMetadata: CarMetadata? = null 
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (javaClass != other?.javaClass) return false
         other as ShareInvitation
-        return ap.contentEquals(other.ap) && friendlyName == other.friendlyName && recipientEmail == other.recipientEmail
+        return ap.contentEquals(other.ap) && recipientEmail == other.recipientEmail
     }
 
     override fun hashCode(): Int {
         var result = ap.contentHashCode()
-        result = 31 * result + friendlyName.hashCode()
         result = 31 * result + recipientEmail.hashCode()
         return result
     }
@@ -54,25 +54,19 @@ data class ShareInvitation(
 data class CloudKeyRecord(
     val keyId: String,               // Local unique ID (Hex)
     val moduleID: String,            // Vehicle Hardware ID (Hex/VIN)
-    
-    // Ownership & Genealogy for Sharing Management
     val ownerEmail: String,          // Email of the original vehicle owner
     val holderEmail: String,         // Email of the person currently holding this key
     val parentKeyId: String? = null, // ID of the parent key that granted this one (null for Owner)
-
     val devicePublicKey: String,     // Phone's Dilithium PK (Hex)
     val vehiclePublicKey: String,    // Vehicle's Dilithium PK (Hex)
     val role: Role,                  // OWNER / FRIEND
     val permissions: Int,            // Bitmask
     val keyState: KeyState,          // ACTIVE, REVOKED, etc.
-    
     val validityStart: Long,
     val validityEnd: Long,
     val usageLimit: Int,
-    
     val friendlyName: String,        // User-defined name for the car
     val metadata: CarMetadata,       // Brand, Plate, Color, etc.
-    
     val lastSyncedAt: Long = System.currentTimeMillis()
 )
 
@@ -88,6 +82,9 @@ object MockKeyServer {
     }
     
     private val userKeyCloud = mutableMapOf<String, MutableList<CloudKeyRecord>>()
+    
+    // INBOX: Stores invitations for users, ensuring they don't get lost when offline
+    private val invitationInbox = mutableMapOf<String, MutableList<ShareInvitation>>()
 
     // --- SESSION & PUSH ---
     private val onlineUsers = mutableSetOf<String>()
@@ -99,17 +96,11 @@ object MockKeyServer {
 
     // --- AUTH METHODS ---
 
-    /**
-     * Mark a user as online to receive push notifications.
-     */
     fun setOnline(email: String) {
         onlineUsers.add(email)
         Log.i(TAG, "📱 [SERVER] User $email is now ONLINE")
     }
 
-    /**
-     * Mark a user as offline to stop receiving push notifications.
-     */
     fun setOffline(email: String) {
         onlineUsers.remove(email)
         Log.i(TAG, "📱 [SERVER] User $email is now OFFLINE")
@@ -119,7 +110,7 @@ object MockKeyServer {
         delay(1000)
         val user = userDatabase[email]
         if (user != null && user.password == pass) {
-            setOnline(email) // Mark user as online
+            setOnline(email)
             return AuthManager.UserProfile(
                 email = email,
                 displayName = user.displayName,
@@ -129,56 +120,85 @@ object MockKeyServer {
         return null
     }
 
-    /**
-     * Register a new user on the mock server.
-     */
     suspend fun register(email: String, pass: String, displayName: String = ""): Boolean {
-        Log.d(TAG, "☁️ [SERVER] Registering user: $email")
         delay(800)
-        if (userDatabase.containsKey(email)) {
-            Log.e(TAG, "❌ [SERVER] Registration failed: Email $email already exists.")
-            return false
-        }
+        if (userDatabase.containsKey(email)) return false
         val name = if (displayName.isNotEmpty()) displayName else email.substringBefore("@")
         userDatabase[email] = CloudUserProfile(email, name, pass)
-        Log.i(TAG, "✅ [SERVER] User registered successfully: $email")
         return true
     }
 
     // --- SHARING METHODS ---
 
     /**
-     * Owner uploads invitation. Server attaches CarMetadata and pushes to Friend if online.
+     * OWNER SIDE: Pre-check before sending an invitation.
+     * Checks for: self-sharing, recipient existence, and duplicate invitations.
+     */
+    suspend fun checkInvitationLegality(senderEmail: String, recipientEmail: String, parentKeyIdHex: String): String? {
+        delay(500)
+        if (senderEmail == recipientEmail) return "You cannot share a key with yourself."
+        if (!userDatabase.containsKey(recipientEmail)) return "Recipient account does not exist."
+        
+        // Check if an invitation for this car to this recipient is already pending in the inbox
+        val pending = invitationInbox[recipientEmail] ?: emptyList<ShareInvitation>()
+        val isDuplicate = pending.any { inv ->
+            val invParentId = inv.ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
+            invParentId == parentKeyIdHex
+        }
+        if (isDuplicate) return "An invitation for this vehicle is already pending for this recipient."
+        
+        return null // All good
+    }
+
+    /**
+     * Owner uploads invitation. Server saves to Inbox and pushes if online.
      */
     suspend fun uploadInvitation(invitation: ShareInvitation): Boolean {
         Log.d(TAG, "☁️ [SERVER] Processing Invitation for: ${invitation.recipientEmail}")
         delay(1000)
 
-        // 1. Proactively attach car metadata by looking up the Parent Key ID in the AP
+        // 1. Proactively attach car metadata
         val ap = invitation.ap
         if (invitation.carMetadata == null && ap.size >= 9) {
-            // Extract ParentKeyID from AP (Offset 1 to 9)
             val parentKeyIdHex = ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
-            
-            // Search all cloud records for the matching parent key
             val foundMetadata = userKeyCloud.values.flatten()
                 .find { it.keyId.startsWith(parentKeyIdHex) }?.metadata
             
             if (foundMetadata != null) {
                 invitation.carMetadata = foundMetadata
-                Log.i(TAG, "☁️ [SERVER] Proactively attached CarMetadata for: ${foundMetadata.modelName}")
             }
         }
 
-        // 2. Check if Friend is online to "Push" the invitation
+        // 2. SAVE TO INBOX (Crucial for Offline Support)
+        val inbox = invitationInbox.getOrPut(invitation.recipientEmail) { mutableListOf() }
+        inbox.add(invitation)
+        Log.i(TAG, "📦 [SERVER] Invitation saved to ${invitation.recipientEmail}'s inbox. Count: ${inbox.size}")
+
+        // 3. Emit for real-time push if online
         if (onlineUsers.contains(invitation.recipientEmail)) {
-            Log.i(TAG, "🚀 [SERVER] Friend is ONLINE. Pushing invitation immediately...")
+            Log.i(TAG, "🚀 [SERVER] Recipient is ONLINE. Pushing notification...")
             _invitationFlow.emit(invitation)
-            return true
-        } else {
-            Log.w(TAG, "⌛ [SERVER] Friend is OFFLINE. Invitation stored (Mocked).")
-            return false
         }
+        return true
+    }
+
+    /**
+     * FRIEND SIDE: Fetch all pending invitations from the inbox (called on login/refresh).
+     */
+    suspend fun fetchPendingInvitations(email: String): List<ShareInvitation> {
+        delay(800)
+        val pending = invitationInbox[email] ?: emptyList<ShareInvitation>()
+        Log.i(TAG, "📩 [SERVER] User $email fetched ${pending.size} pending invitations.")
+        return pending
+    }
+
+    /**
+     * FRIEND SIDE: Remove invitation from inbox after successful claim/PIN entry.
+     */
+    fun removeInvitation(email: String, ap: ByteArray) {
+        val inbox = invitationInbox[email] ?: return
+        inbox.removeAll { it.ap.contentEquals(ap) }
+        Log.d(TAG, "🗑️ [SERVER] Removed invitation from $email's inbox after claim.")
     }
 
     suspend fun notifyActivation(ap: ByteArray) {
@@ -201,5 +221,6 @@ object MockKeyServer {
     fun reset() {
         onlineUsers.clear()
         userKeyCloud.clear()
+        invitationInbox.clear()
     }
 }

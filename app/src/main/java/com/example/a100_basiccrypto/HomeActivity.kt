@@ -37,6 +37,7 @@ class HomeActivity : AppCompatActivity() {
     private lateinit var rvKeys: RecyclerView
     private lateinit var tvBleStatus: TextView
     private lateinit var tvHomeAppMac: TextView
+    private lateinit var vNotificationBadge: View
 
     private val storageManager by lazy { SecureKeyStorageManager(this) }
     private val bleIdentityManager by lazy { BleIdentityManager(this) }
@@ -82,8 +83,9 @@ class HomeActivity : AppCompatActivity() {
             return
         }
 
-        // Inform Mock Server that user is online to receive push notifications
-        authManager.getUserEmail()?.let { email ->
+        // Inform Mock Server that user is online
+        val email = authManager.getUserEmail()
+        if (email != null) {
             MockKeyServer.setOnline(email)
         }
 
@@ -120,7 +122,9 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private fun setupSharingObservers() {
-        // Observe proactive invitations from Server (Stage 1 Push)
+        val email = authManager.getUserEmail() ?: return
+
+        // 1. Listen for Push Invitations (Real-time)
         lifecycleScope.launch {
             sharingViewModel.incomingInvitations.collect { invitation ->
                 NotificationStore.addNotification(
@@ -132,7 +136,14 @@ class HomeActivity : AppCompatActivity() {
             }
         }
 
-        // Observe clicks from NotificationActivity
+        // 2. Listen for Red Dot badge visibility
+        lifecycleScope.launch {
+            NotificationStore.unreadBadgeVisible.collect { isVisible ->
+                vNotificationBadge.visibility = if (isVisible) View.VISIBLE else View.GONE
+            }
+        }
+
+        // 3. Listen for clicks from Notification List
         lifecycleScope.launch {
             NotificationStore.pendingInvitation.collect { invitation ->
                 invitation?.let {
@@ -142,12 +153,12 @@ class HomeActivity : AppCompatActivity() {
             }
         }
 
-        // Observe Activation state to refresh list
+        // 4. Listen for UI State (Errors, Success)
         lifecycleScope.launch {
             sharingViewModel.uiState.collect { state ->
                 when (state) {
                     is SharingViewModel.SharingUiState.ActivationSuccess -> {
-                        Toast.makeText(this@HomeActivity, "Key authorized! Ready for vehicle pairing.", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@HomeActivity, "Key added! Ready for vehicle pairing.", Toast.LENGTH_LONG).show()
                         refreshList()
                     }
                     is SharingViewModel.SharingUiState.Error -> {
@@ -157,6 +168,9 @@ class HomeActivity : AppCompatActivity() {
                 }
             }
         }
+
+        // 5. Fetch missed invitations when entering Home
+        sharingViewModel.fetchInvitationsFromCloud(email)
     }
 
     private fun showReceiveInvitationDialog(invitation: ShareInvitation) {
@@ -173,22 +187,23 @@ class HomeActivity : AppCompatActivity() {
         
         tvOwner.text = "Sender: ${invitation.senderName}"
         
-        val p = record?.core?.permissions ?: 0
+        val permissions = record?.core?.permissions ?: 0
         val permsList = mutableListOf<String>()
-        if (p and DigitalKeyPermissions.UNLOCK != 0) permsList.add("Unlock")
-        if (p and DigitalKeyPermissions.LOCK != 0) permsList.add("Lock")
-        if (p and DigitalKeyPermissions.START != 0) permsList.add("Start")
+        if (permissions and DigitalKeyPermissions.UNLOCK != 0) permsList.add("Unlock")
+        if (permissions and DigitalKeyPermissions.LOCK != 0) permsList.add("Lock")
+        if (permissions and DigitalKeyPermissions.START != 0) permsList.add("Start")
         tvPerms.text = "Permissions: ${if(permsList.isEmpty()) "Basic" else permsList.joinToString(", ")}"
         
+        val validityEnd = record?.core?.validityEnd ?: 0L
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val expiry = record?.core?.validityEnd?.let { if (it > 0) sdf.format(Date(it * 1000)) else "Never" } ?: "N/A"
-        tvValidity.text = "Expires: $expiry"
+        val expiryText = if (validityEnd > 0L) sdf.format(Date(validityEnd * 1000)) else "Never"
+        tvValidity.text = "Expires: $expiryText"
 
         btnProvision.setOnClickListener {
             val pin = etCode.text.toString()
             if (pin.length == 6 && record != null) {
-                sharingViewModel.verifyPinAndActivate(record, pin)
-                NotificationStore.markAsUsed(invitation)
+                sharingViewModel.verifyPinAndActivate(record, pin, invitation)
+                // Note: markAsUsed is now handled inside verifyPinAndActivate in ViewModel
                 dialog.dismiss()
             } else {
                 Toast.makeText(this, "Please enter 6-digit code", Toast.LENGTH_SHORT).show()
@@ -222,6 +237,7 @@ class HomeActivity : AppCompatActivity() {
 
         tvBleStatus = findViewById(R.id.tv_home_ble_status)
         tvHomeAppMac = findViewById(R.id.tv_home_app_mac)
+        vNotificationBadge = findViewById(R.id.v_notification_badge)
 
         updateBleStatus(bleHomeHelper.isBluetoothEnabled())
 
@@ -237,12 +253,11 @@ class HomeActivity : AppCompatActivity() {
             refreshList()
         }
 
-        findViewById<View>(R.id.btn_notifications)?.setOnClickListener {
+        findViewById<View>(R.id.btn_notifications).setOnClickListener {
             startActivity(Intent(this, NotificationActivity::class.java))
         }
         
         findViewById<View>(R.id.btn_logout).setOnClickListener {
-            // Notify server about offline status before clearing session
             authManager.getUserEmail()?.let { email ->
                 MockKeyServer.setOffline(email)
             }
@@ -271,7 +286,6 @@ class HomeActivity : AppCompatActivity() {
         updateBleStatus(bleHomeHelper.isBluetoothEnabled())
         refreshList()
 
-        // FIX: Removed manual REFRESH_SCAN call. Service will maintain connection automatically.
         if (bleHomeHelper.isBluetoothEnabled()) {
             startBleBackgroundService()
         }
@@ -294,7 +308,6 @@ class HomeActivity : AppCompatActivity() {
     private fun refreshList() {
         val email = authManager.getUserEmail() ?: return
         val keys = storageManager.getAllKeys()
-        // SHOW BOTH ACTIVE AND PROVISIONING KEYS
         val visibleKeys = keys.filter { 
             it.accountEmail == email && 
             (it.core.keyState == KeyState.ACTIVE || it.core.keyState == KeyState.PROVISIONING) 
@@ -329,7 +342,6 @@ class HomeActivity : AppCompatActivity() {
             val item = items[position]
             holder.tvName.text = if (item.friendlyName.isNotEmpty()) item.friendlyName else (item.carMetadata?.modelName ?: "Vehicle")
             
-            // Show special text for Provisioning state
             if (item.core.keyState == KeyState.PROVISIONING) {
                 holder.tvPlate.text = "TAP TO PAIR WITH VEHICLE"
                 holder.tvPlate.setTextColor(ContextCompat.getColor(this@HomeActivity, android.R.color.holo_orange_dark))
