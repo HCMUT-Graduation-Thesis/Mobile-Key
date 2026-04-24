@@ -34,11 +34,11 @@ class SharingManager(
         startTimeMinutes: Int = -1,
         endTimeMinutes: Int = -1,
         friendlyName: String = "",
-        recipient: String = "",
+        recipientEmail: String = "", // Matches the Account identifier
         senderName: String = "Owner"
     ): DigitalKeyRecord? {
         return try {
-            // 1. Generate 6-digit invitation code
+            // 1. Generate 6-digit invitation code (PIN)
             val invitationCode = (100000 + Random.nextInt(900000)).toString()
             
             // Use Owner's KeyID as salt for HMAC
@@ -71,6 +71,7 @@ class SharingManager(
             
             if (signature.isEmpty()) return null
 
+            // AP = Metadata (68b) + Signature
             val ap = payload + signature
 
             // 5. Create PENDING record for Owner to track
@@ -90,14 +91,16 @@ class SharingManager(
                 this.invitationCodeHash = invCodeHash
                 this.attestationPackage = ap
                 this.friendlyName = if(friendlyName.isNotEmpty()) friendlyName else "Guest Key (Pending)"
+                this.accountEmail = recipientEmail
             }
             
             // Build the invitation package for the server
             val invitation = ShareInvitation(
                 ap = ap,
                 friendlyName = pendingRecord.friendlyName,
-                recipient = recipient,
+                recipientEmail = recipientEmail,
                 senderName = senderName
+                // carMetadata is null here, Server will proactively attach it
             )
 
             if (MockKeyServer.uploadInvitation(invitation)) {
@@ -112,6 +115,7 @@ class SharingManager(
 
     /**
      * FRIEND SIDE: Processes an incoming AP using AttestationMetadata.
+     * This is called when the Push Notification is received.
      */
     fun processIncomingInvitation(invitation: ShareInvitation): DigitalKeyRecord? {
         return try {
@@ -138,6 +142,8 @@ class SharingManager(
                 this.attestationPackage = ap
                 this.invitationCodeHash = metadata.invCodeHash
                 
+                // Use carMetadata provided proactively by server
+                this.carMetadata = invitation.carMetadata
                 this.friendlyName = invitation.friendlyName
             }
             return newRecord
@@ -148,10 +154,19 @@ class SharingManager(
     }
 
     /**
-     * Call this ONLY after the user has successfully entered the Invitation Code.
+     * Call this ONLY after the friend has successfully entered the 6-digit PIN.
      */
-    fun finalizeProvisioning(record: DigitalKeyRecord) {
-        record.core.keyState = KeyState.ACTIVE
-        storageManager.saveDigitalKey(record)
+    fun verifyPinAndFinalize(record: DigitalKeyRecord, enteredPin: String): Boolean {
+        val ownerID = record.core.parentKeyID ?: return false
+        val computedHash = CryptoUtils.hmacSha256(ownerID, enteredPin.toByteArray())
+        
+        return if (computedHash.contentEquals(record.invitationCodeHash)) {
+            record.core.keyState = KeyState.ACTIVE
+            record.invitationCode = enteredPin // Save PIN for future pairing with vehicle
+            storageManager.saveDigitalKey(record)
+            true
+        } else {
+            false
+        }
     }
 }

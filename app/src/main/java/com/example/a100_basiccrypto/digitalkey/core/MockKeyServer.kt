@@ -10,46 +10,70 @@ import kotlinx.coroutines.flow.asSharedFlow
 import java.util.UUID
 
 /**
- * Data wrapper for a Key Invitation to include UI metadata without changing the AP.
+ * 1. Cloud User Profile
+ * Manages personal information and account status.
+ */
+data class CloudUserProfile(
+    val email: String,               // Unique identifier
+    val displayName: String,         // Name to show in UI
+    val password: String,            // Plain text password for mock auth
+    val lastLoginAt: Long = 0L,
+    val fcmToken: String? = null     // Token for Push Notifications
+)
+
+/**
+ * Data wrapper for a Key Invitation. 
+ * Updated to include recipientEmail and proactive carMetadata.
  */
 data class ShareInvitation(
     val ap: ByteArray,
     val friendlyName: String,
-    val recipient: String = "",
+    val recipientEmail: String = "", // Changed from 'recipient' for account consistency
     val senderName: String = "Owner",
-    val carMetadata: CarMetadata? = null 
+    var carMetadata: CarMetadata? = null 
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (javaClass != other?.javaClass) return false
         other as ShareInvitation
-        return ap.contentEquals(other.ap) && friendlyName == other.friendlyName && recipient == other.recipient
+        return ap.contentEquals(other.ap) && friendlyName == other.friendlyName && recipientEmail == other.recipientEmail
     }
 
     override fun hashCode(): Int {
         var result = ap.contentHashCode()
         result = 31 * result + friendlyName.hashCode()
-        result = 31 * result + recipient.hashCode()
+        result = 31 * result + recipientEmail.hashCode()
         return result
     }
 }
 
 /**
- * Enhanced Metadata stored on the cloud for each key.
+ * 2. Cloud Key Record
+ * Enhanced Metadata stored on the cloud for each key, optimized for management and sharing.
  */
 data class CloudKeyRecord(
-    val keyId: String,               // Local ID
-    val moduleID: String,            // Vehicle Hardware ID (Hex)
+    val keyId: String,               // Local unique ID (Hex)
+    val moduleID: String,            // Vehicle Hardware ID (Hex/VIN)
+    
+    // Ownership & Genealogy for Sharing Management
+    val ownerEmail: String,          // Email of the original vehicle owner
+    val holderEmail: String,         // Email of the person currently holding this key
+    val parentKeyId: String? = null, // ID of the parent key that granted this one (null for Owner)
+
     val devicePublicKey: String,     // Phone's Dilithium PK (Hex)
     val vehiclePublicKey: String,    // Vehicle's Dilithium PK (Hex)
     val role: Role,                  // OWNER / FRIEND
     val permissions: Int,            // Bitmask
     val keyState: KeyState,          // ACTIVE, REVOKED, etc.
+    
     val validityStart: Long,
     val validityEnd: Long,
     val usageLimit: Int,
-    val friendlyName: String,
-    val metadata: CarMetadata        // Brand, Plate, Color, etc.
+    
+    val friendlyName: String,        // User-defined name for the car
+    val metadata: CarMetadata,       // Brand, Plate, Color, etc.
+    
+    val lastSyncedAt: Long = System.currentTimeMillis()
 )
 
 /**
@@ -58,112 +82,124 @@ data class CloudKeyRecord(
 object MockKeyServer {
     private const val TAG = "MockKeyServer"
 
-    // --- AUTH STORAGE ---
-    private val userDatabase = mutableMapOf<String, String>().apply {
-        put("test@gmail.com", "123456")
-        put("test2@gmail.com", "123456")
+    private val userDatabase = mutableMapOf<String, CloudUserProfile>().apply {
+        put("test@gmail.com", CloudUserProfile("test@gmail.com", "Owner User", "123456"))
+        put("test2@gmail.com", CloudUserProfile("test2@gmail.com", "Friend User", "123456"))
     }
     
-    // Maps Email (Unique ID) to a list of CloudKeyRecords to maintain persistence across logins
     private val userKeyCloud = mutableMapOf<String, MutableList<CloudKeyRecord>>()
 
-    // --- SHARING STORAGE ---
-    private var pendingInvitation: ShareInvitation? = null
+    // --- SESSION & PUSH ---
+    private val onlineUsers = mutableSetOf<String>()
     private val _invitationFlow = MutableSharedFlow<ShareInvitation>(replay = 0)
     val invitationFlow = _invitationFlow.asSharedFlow()
+    
     private val _activationFlow = MutableSharedFlow<ByteArray>(replay = 0)
     val activationFlow = _activationFlow.asSharedFlow()
 
-    // --- AUTH & CLOUD METHODS ---
+    // --- AUTH METHODS ---
 
-    suspend fun register(email: String, pass: String): Boolean {
+    /**
+     * Mark a user as online to receive push notifications.
+     */
+    fun setOnline(email: String) {
+        onlineUsers.add(email)
+        Log.i(TAG, "📱 [SERVER] User $email is now ONLINE")
+    }
+
+    /**
+     * Mark a user as offline to stop receiving push notifications.
+     */
+    fun setOffline(email: String) {
+        onlineUsers.remove(email)
+        Log.i(TAG, "📱 [SERVER] User $email is now OFFLINE")
+    }
+
+    suspend fun login(email: String, pass: String): AuthManager.UserProfile? {
+        delay(1000)
+        val user = userDatabase[email]
+        if (user != null && user.password == pass) {
+            setOnline(email) // Mark user as online
+            return AuthManager.UserProfile(
+                email = email,
+                displayName = user.displayName,
+                token = "mock_jwt_" + UUID.randomUUID().toString().take(8)
+            )
+        }
+        return null
+    }
+
+    /**
+     * Register a new user on the mock server.
+     */
+    suspend fun register(email: String, pass: String, displayName: String = ""): Boolean {
         Log.d(TAG, "☁️ [SERVER] Registering user: $email")
         delay(800)
         if (userDatabase.containsKey(email)) {
             Log.e(TAG, "❌ [SERVER] Registration failed: Email $email already exists.")
             return false
         }
-        userDatabase[email] = pass
+        val name = if (displayName.isNotEmpty()) displayName else email.substringBefore("@")
+        userDatabase[email] = CloudUserProfile(email, name, pass)
         Log.i(TAG, "✅ [SERVER] User registered successfully: $email")
         return true
     }
 
-    suspend fun login(email: String, pass: String): AuthManager.UserProfile? {
-        Log.d(TAG, "☁️ [SERVER] Login attempt for user: $email")
-        delay(1000)
-        if (userDatabase[email] == pass) {
-            val profile = AuthManager.UserProfile(
-                email = email,
-                displayName = email.substringBefore("@").replaceFirstChar { it.uppercase() },
-                token = "mock_jwt_" + UUID.randomUUID().toString().take(8)
-            )
-            Log.i(TAG, "✅ [SERVER] Login success: ${profile.displayName} (Token: ${profile.token})")
-            return profile
-        }
-        Log.e(TAG, "❌ [SERVER] Login failed: Invalid credentials for $email")
-        return null
-    }
+    // --- SHARING METHODS ---
 
     /**
-     * Synchronizes a full key record to the user's cloud account.
-     * Use email as the persistent identifier in this mock.
+     * Owner uploads invitation. Server attaches CarMetadata and pushes to Friend if online.
      */
+    suspend fun uploadInvitation(invitation: ShareInvitation): Boolean {
+        Log.d(TAG, "☁️ [SERVER] Processing Invitation for: ${invitation.recipientEmail}")
+        delay(1000)
+
+        // 1. Proactively attach car metadata by looking up the Parent Key ID in the AP
+        val ap = invitation.ap
+        if (invitation.carMetadata == null && ap.size >= 9) {
+            // Extract ParentKeyID from AP (Offset 1 to 9)
+            val parentKeyIdHex = ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
+            
+            // Search all cloud records for the matching parent key
+            val foundMetadata = userKeyCloud.values.flatten()
+                .find { it.keyId.startsWith(parentKeyIdHex) }?.metadata
+            
+            if (foundMetadata != null) {
+                invitation.carMetadata = foundMetadata
+                Log.i(TAG, "☁️ [SERVER] Proactively attached CarMetadata for: ${foundMetadata.modelName}")
+            }
+        }
+
+        // 2. Check if Friend is online to "Push" the invitation
+        if (onlineUsers.contains(invitation.recipientEmail)) {
+            Log.i(TAG, "🚀 [SERVER] Friend is ONLINE. Pushing invitation immediately...")
+            _invitationFlow.emit(invitation)
+            return true
+        } else {
+            Log.w(TAG, "⌛ [SERVER] Friend is OFFLINE. Invitation stored (Mocked).")
+            return false
+        }
+    }
+
+    suspend fun notifyActivation(ap: ByteArray) {
+        _activationFlow.emit(ap)
+    }
+
+    // --- CLOUD SYNC ---
+
     suspend fun syncKeyToCloud(email: String, record: CloudKeyRecord): Boolean {
-        Log.d(TAG, "☁️ [SERVER] Syncing Key [${record.keyId}] for user [$email]...")
-        delay(1200)
-        
         val keys = userKeyCloud.getOrPut(email) { mutableListOf() }
         keys.removeAll { it.keyId == record.keyId || it.moduleID == record.moduleID }
         keys.add(record)
-        
-        Log.i(TAG, "✅ [SERVER] Cloud Sync Complete. User [$email] now owns ${keys.size} key(s).")
         return true
     }
 
     suspend fun fetchUserKeys(email: String): List<CloudKeyRecord> {
-        Log.d(TAG, "☁️ [SERVER] Fetching keys for email: $email")
-        delay(1000)
-        val keys = userKeyCloud[email] ?: emptyList()
-        Log.i(TAG, "✅ [SERVER] Found ${keys.size} key(s) for this account.")
-        return keys
-    }
-
-    // --- SHARING METHODS ---
-
-    suspend fun uploadInvitation(invitation: ShareInvitation): Boolean {
-        Log.d(TAG, "☁️ [SERVER] Receiving Invitation from Owner for Recipient: ${invitation.recipient}")
-        delay(1000)
-        pendingInvitation = invitation
-        _invitationFlow.emit(invitation)
-        Log.i(TAG, "✅ [SERVER] Invitation uploaded and broadcasted. Waiting for friend to claim...")
-        return true
-    }
-
-    suspend fun downloadInvitation(): ShareInvitation? {
-        Log.d(TAG, "☁️ [SERVER] Friend is checking for pending invitations...")
-        delay(500)
-        val inv = pendingInvitation
-        if (inv != null) {
-            Log.i(TAG, "✅ [SERVER] Found invitation for vehicle: ${inv.friendlyName}")
-        } else {
-            Log.w(TAG, "ℹ️ [SERVER] No pending invitations found.")
-        }
-        return inv
-    }
-
-    suspend fun notifyActivation(ap: ByteArray) {
-        Log.d(TAG, "☁️ [SERVER] Key Activated by Friend. Notifying Owner...")
-        delay(500)
-        _activationFlow.emit(ap)
-        Log.i(TAG, "✅ [SERVER] Owner notified of successful activation.")
+        return userKeyCloud[email] ?: emptyList()
     }
 
     fun reset() {
-        Log.w(TAG, "⚠️ [SERVER] Hard Resetting Mock Server Data...")
-        pendingInvitation = null
-        userDatabase.clear()
-        userDatabase["test@gmail.com"] = "123456"
-        userDatabase["test2@gmail.com"] = "123456"
+        onlineUsers.clear()
         userKeyCloud.clear()
     }
 }

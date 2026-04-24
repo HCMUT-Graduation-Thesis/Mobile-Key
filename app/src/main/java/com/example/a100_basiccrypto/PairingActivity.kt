@@ -162,9 +162,16 @@ class PairingActivity : AppCompatActivity() {
         // 2. Perform Sync in a separate scope (non-blocking, invisible to user)
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                // Prepare the CloudKeyRecord with new genealogy fields
                 val cloudRecord = CloudKeyRecord(
                     keyId = latestKey.core.keyID?.toHex() ?: "unknown",
                     moduleID = latestKey.moduleID?.toHex() ?: "unknown",
+                    
+                    // NEW: Ownership fields for Cloud Management
+                    ownerEmail = email,         // Current user is the owner in this Pairing flow
+                    holderEmail = email,        // Current user is the holder
+                    parentKeyId = null,         // Owner keys have no parent
+                    
                     devicePublicKey = latestKey.devicePublicKey?.toHex() ?: "",
                     vehiclePublicKey = latestKey.vehiclePublicKey?.toHex() ?: "",
                     role = latestKey.core.role,
@@ -180,7 +187,7 @@ class PairingActivity : AppCompatActivity() {
                     )
                 )
 
-                // Use email as persistent identifier instead of token
+                // Perform sync using email as the persistent key
                 val success = MockKeyServer.syncKeyToCloud(email, cloudRecord)
                 if (success) {
                     latestKey.syncStatus = SyncStatus.SYNCED

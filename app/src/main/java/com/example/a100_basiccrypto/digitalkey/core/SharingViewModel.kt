@@ -30,7 +30,7 @@ class SharingViewModel(
         startTimeMinutes: Int = -1,
         endTimeMinutes: Int = -1,
         friendlyName: String = "",
-        recipient: String = ""
+        recipientEmail: String = "" // Updated to recipientEmail
     ) {
         viewModelScope.launch {
             _uiState.value = SharingUiState.Loading
@@ -44,7 +44,7 @@ class SharingViewModel(
                 startTimeMinutes = startTimeMinutes,
                 endTimeMinutes = endTimeMinutes,
                 friendlyName = friendlyName,
-                recipient = recipient,
+                recipientEmail = recipientEmail, // Updated to recipientEmail
                 senderName = "Owner Device" // In real app, get from User Profile
             )
             if (updatedRecord != null) {

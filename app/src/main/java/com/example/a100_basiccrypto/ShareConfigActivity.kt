@@ -192,7 +192,7 @@ class ShareConfigActivity : AppCompatActivity() {
                 val permissions = DigitalKeyPermissions.UNLOCK or DigitalKeyPermissions.LOCK or DigitalKeyPermissions.START
                 val friendlyName = etFriendlyName.text.toString().ifEmpty { "Key for $recipient" }
 
-                // Now using the updated sharingManager with recipient and friendlyName
+                // Now using the updated sharingManager with recipientEmail and friendlyName
                 val result = sharingManager.createInvitation(
                     ownerRecord = ownerRecord,
                     role = Role.FRIEND,
@@ -203,7 +203,7 @@ class ShareConfigActivity : AppCompatActivity() {
                     startTimeMinutes = startM,
                     endTimeMinutes = endM,
                     friendlyName = friendlyName,
-                    recipient = recipient,
+                    recipientEmail = recipient, // Updated to recipientEmail
                     senderName = "Owner's Phone"
                 )
 

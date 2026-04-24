@@ -70,6 +70,11 @@ class HomeActivity : AppCompatActivity() {
             return
         }
 
+        // Inform Mock Server that user is online to receive push notifications
+        authManager.getUserEmail()?.let { email ->
+            MockKeyServer.setOnline(email)
+        }
+
         setContentView(R.layout.activity_home)
 
         // 1. Initialize BleHomeHelper early
@@ -141,6 +146,10 @@ class HomeActivity : AppCompatActivity() {
         }
         
         findViewById<View>(R.id.btn_logout).setOnClickListener {
+            // Notify server about offline status before clearing session
+            authManager.getUserEmail()?.let { email ->
+                MockKeyServer.setOffline(email)
+            }
             authManager.logout()
             stopService(Intent(this, BleForegroundService::class.java))
             startActivity(Intent(this, LoginActivity::class.java))
