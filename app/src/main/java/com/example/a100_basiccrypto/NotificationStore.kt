@@ -1,5 +1,6 @@
 package com.example.a100_basiccrypto
 
+import android.util.Log
 import com.example.a100_basiccrypto.digitalkey.core.ShareInvitation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -7,6 +8,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.*
 
 object NotificationStore {
+    private const val TAG = "NotificationStore"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     data class NotificationItem(
@@ -34,6 +36,7 @@ object NotificationStore {
      * Call this when user logs in or switches account
      */
     fun setCurrentUser(email: String) {
+        Log.d(TAG, "👤 [STORE] Setting current user to: $email")
         currentUserEmail.value = email
     }
 
@@ -46,20 +49,27 @@ object NotificationStore {
     init {
         // Automatically update the badge whenever the filtered notifications change
         notifications.onEach { list ->
-            _unreadCount.value = list.any { !it.isUsed && it.attempts < 3 }
+            val unread = list.any { !it.isUsed && it.attempts < 3 }
+            Log.v(TAG, "🔔 [STORE] Updating badge for ${currentUserEmail.value}. Unread exists: $unread")
+            _unreadCount.value = unread
         }.launchIn(scope)
     }
 
     fun addNotification(ownerEmail: String, title: String, message: String, invitation: ShareInvitation? = null) {
+        Log.i(TAG, "✉️ [STORE] Adding notification for $ownerEmail: $title")
         val newList = _notifications.value.toMutableList()
         // Prevent duplicates for the same invitation for the same user
-        if (newList.any { it.invitation == invitation && it.ownerEmail == ownerEmail }) return
+        if (newList.any { it.invitation == invitation && it.ownerEmail == ownerEmail }) {
+            Log.d(TAG, "⚠️ [STORE] Duplicate notification ignored for $ownerEmail.")
+            return
+        }
         
         newList.add(0, NotificationItem(ownerEmail, title, message, invitation))
         _notifications.value = newList
     }
 
     fun markAsUsed(invitation: ShareInvitation) {
+        Log.d(TAG, "✅ [STORE] Marking invitation as used: ${invitation.friendlyName}")
         val newList = _notifications.value.map { 
             if (it.invitation == invitation) it.copy(isUsed = true) else it 
         }
@@ -73,6 +83,7 @@ object NotificationStore {
                 val newCount = it.attempts + 1
                 currentAttempts = newCount
                 val used = if (newCount >= 3) true else it.isUsed
+                Log.w(TAG, "🔢 [STORE] PIN attempt $newCount/3 for ${invitation.friendlyName}")
                 it.copy(attempts = newCount, isUsed = used)
             } else it 
         }
@@ -81,10 +92,12 @@ object NotificationStore {
     }
 
     fun setPendingInvitation(invitation: ShareInvitation?) {
+        Log.v(TAG, "📌 [STORE] Setting pending invitation: ${invitation?.friendlyName ?: "null"}")
         _pendingInvitation.value = invitation
     }
 
     fun clearAll() {
+        Log.w(TAG, "🗑️ [STORE] Clearing all notifications.")
         _notifications.value = emptyList()
     }
 }
