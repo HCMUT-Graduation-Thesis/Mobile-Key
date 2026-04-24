@@ -219,11 +219,52 @@ object MockKeyServer {
     }
 
     /**
+     * OWNER SIDE: Revokes an active or pending invitation.
+     * Synchronizes both the Invitation Inbox and the Cloud Key List.
+     */
+    suspend fun revokeInvitation(senderEmail: String, recipientEmail: String, ap: ByteArray) {
+        Log.i(TAG, "🛡️ [SERVER] Owner $senderEmail is revoking key for $recipientEmail")
+        delay(500)
+        
+        // 1. Remove from Inbox (Status: PENDING)
+        val removedFromInbox = invitationInbox[recipientEmail]?.removeAll { it.ap.contentEquals(ap) } ?: false
+        if (removedFromInbox) {
+            Log.d(TAG, "🗑️ [INBOX] Removed invitation from $recipientEmail's inbox.")
+        }
+
+        // 2. Synchronization: Remove from Cloud Key Records (Status: PROVISIONING or ACTIVE)
+        if (ap.size >= 9) {
+            val parentKeyIdHex = ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
+            
+            // Remove from recipient's cloud list (Soft-wipe simulation)
+            userKeyCloud[recipientEmail]?.removeAll { 
+                it.parentKeyId == parentKeyIdHex || it.ownerEmail == senderEmail 
+            }
+            
+            // Remove from owner's cloud list (the record of the shared key)
+            userKeyCloud[senderEmail]?.removeAll { 
+                it.holderEmail == recipientEmail && it.parentKeyId == parentKeyIdHex 
+            }
+            Log.d(TAG, "☁️ [SYNC] Revoked key records for $parentKeyIdHex removed from Cloud storage.")
+        }
+
+        // 3. Notify Friend (simulates real-time push for soft-wipe on App side)
+        _statusUpdateFlow.emit(InvitationStatusUpdate(ap, InvitationStatus.REVOKED, recipientEmail))
+        Log.d(TAG, "🔔 [STATUS] REVOKED status update emitted to parties.")
+    }
+
+    /**
      * FRIEND SIDE: Reports the outcome back to the server.
      */
     suspend fun reportInvitationOutcome(recipientEmail: String, ap: ByteArray, status: InvitationStatus, senderEmail: String) {
         Log.i(TAG, "📣 [OUTCOME] User $recipientEmail reported: $status. Notifying Owner: $senderEmail")
         
+        when (status) {
+            InvitationStatus.CLAIMED -> Log.d(TAG, "🔄 [STATUS] Key transition: PENDING -> PROVISIONING for $recipientEmail")
+            InvitationStatus.FAILED -> Log.w(TAG, "❌ [STATUS] Key sharing failed for $recipientEmail (Invalid PIN attempts)")
+            else -> {}
+        }
+
         // 1. Cleanup inbox after successful claim or final failure
         val removed = invitationInbox[recipientEmail]?.removeAll { it.ap.contentEquals(ap) } ?: false
         if (removed) {
@@ -250,7 +291,7 @@ object MockKeyServer {
     }
 
     suspend fun notifyActivation(ap: ByteArray) {
-        Log.i(TAG, "⚡ [ACTIVATE] Key activation signaled for AP hash: ${ap.hashCode()}")
+        Log.i(TAG, "⚡ [ACTIVATE] Signaling key activation (PROVISIONING -> ACTIVE).")
         _activationFlow.emit(ap)
     }
 

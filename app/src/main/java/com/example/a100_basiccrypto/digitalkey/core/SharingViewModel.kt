@@ -1,5 +1,6 @@
 package com.example.a100_basiccrypto.digitalkey.core
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.a100_basiccrypto.NotificationStore
@@ -9,12 +10,13 @@ import com.example.a100_basiccrypto.shared.model.Role
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class SharingViewModel(
     private val identityCrypto: IIdentityCrypto,
     private val storageManager: IKeyStorageManager,
-    private val authManager: AuthManager // Added to track current user
+    private val authManager: AuthManager
 ) : ViewModel() {
 
     private val sharingManager = SharingManager(identityCrypto, storageManager)
@@ -32,6 +34,33 @@ class SharingViewModel(
         // Sync NotificationStore with current user on initialization
         authManager.getUserEmail()?.let { email ->
             NotificationStore.setCurrentUser(email)
+        }
+
+        // FRIEND SIDE: Listen for REVOKED signals from server to perform soft-wipe
+        observeRevocations()
+    }
+
+    private fun observeRevocations() {
+        viewModelScope.launch {
+            MockKeyServer.statusUpdateFlow.collectLatest { update ->
+                if (update.status == InvitationStatus.REVOKED) {
+                    val currentEmail = authManager.getUserEmail()
+                    // If the revocation is for the current user
+                    if (update.recipientEmail.equals(currentEmail, ignoreCase = true)) {
+                        Log.w("SharingViewModel", "🚨 [REVOKE] Received revocation signal for recipient: ${update.recipientEmail}")
+                        
+                        // Perform Soft-Wipe: Find local key by AP and delete it
+                        val allKeys = storageManager.getAllKeys()
+                        val keyToDelete = allKeys.find { it.attestationPackage?.contentEquals(update.ap) == true }
+                        
+                        keyToDelete?.core?.keyID?.let { keyId ->
+                            storageManager.deleteKey(keyId)
+                            Log.i("SharingViewModel", "🗑️ [REVOKE] Local key deleted successfully.")
+                            _uiState.value = SharingUiState.Error("A key was revoked by the owner.")
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -82,6 +111,27 @@ class SharingViewModel(
             } else {
                 _uiState.value = SharingUiState.Error("Failed to create invitation package.")
             }
+        }
+    }
+
+    /**
+     * OWNER SIDE: Revokes a previously shared key.
+     */
+    fun revokeKey(record: DigitalKeyRecord) {
+        viewModelScope.launch {
+            val ap = record.attestationPackage ?: return@launch
+            val recipientEmail = record.accountEmail ?: return@launch
+            val senderEmail = authManager.getUserEmail() ?: return@launch
+
+            Log.i("SharingViewModel", "🛡️ [REVOKE] Initiating online revocation for $recipientEmail")
+            
+            // 1. Notify Server
+            MockKeyServer.revokeInvitation(senderEmail, recipientEmail, ap)
+            
+            // 2. Delete locally
+            record.core.keyID?.let { storageManager.deleteKey(it) }
+            
+            _uiState.value = SharingUiState.RevokeSuccess
         }
     }
 
@@ -156,6 +206,7 @@ class SharingViewModel(
     sealed class SharingUiState {
         object Idle : SharingUiState()
         object Loading : SharingUiState()
+        object RevokeSuccess : SharingUiState()
         data class ShareSuccess(val code: String) : SharingUiState()
         data class ReceivedInvitation(val record: DigitalKeyRecord, val invitation: ShareInvitation) : SharingUiState()
         object ActivationSuccess : SharingUiState()
