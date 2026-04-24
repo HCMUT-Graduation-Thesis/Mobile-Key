@@ -149,10 +149,7 @@ class PairingActivity : AppCompatActivity() {
     }
 
     private fun startBackgroundSync() {
-        val token = authManager.getAuthToken()
-        val email = authManager.getUserEmail()
-        
-        if (token == null || email == null) return
+        val email = authManager.getUserEmail() ?: return
 
         val allKeys = storageManager.getAllKeys()
         val latestKey = allKeys.maxByOrNull { it.core.validityStart } ?: return
@@ -183,7 +180,8 @@ class PairingActivity : AppCompatActivity() {
                     )
                 )
 
-                val success = MockKeyServer.syncKeyToCloud(token, cloudRecord)
+                // Use email as persistent identifier instead of token
+                val success = MockKeyServer.syncKeyToCloud(email, cloudRecord)
                 if (success) {
                     latestKey.syncStatus = SyncStatus.SYNCED
                     storageManager.saveDigitalKey(latestKey)

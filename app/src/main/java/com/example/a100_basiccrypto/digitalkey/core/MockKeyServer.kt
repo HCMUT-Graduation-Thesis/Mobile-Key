@@ -64,7 +64,7 @@ object MockKeyServer {
         put("test2@gmail.com", "123456")
     }
     
-    // Maps Token to a list of CloudKeyRecords
+    // Maps Email (Unique ID) to a list of CloudKeyRecords to maintain persistence across logins
     private val userKeyCloud = mutableMapOf<String, MutableList<CloudKeyRecord>>()
 
     // --- SHARING STORAGE ---
@@ -106,24 +106,24 @@ object MockKeyServer {
 
     /**
      * Synchronizes a full key record to the user's cloud account.
+     * Use email as the persistent identifier in this mock.
      */
-    suspend fun syncKeyToCloud(token: String, record: CloudKeyRecord): Boolean {
-        Log.d(TAG, "☁️ [SERVER] Syncing Key [${record.keyId}] for vehicle [${record.metadata.modelName}]...")
+    suspend fun syncKeyToCloud(email: String, record: CloudKeyRecord): Boolean {
+        Log.d(TAG, "☁️ [SERVER] Syncing Key [${record.keyId}] for user [$email]...")
         delay(1200)
         
-        val keys = userKeyCloud.getOrPut(token) { mutableListOf() }
+        val keys = userKeyCloud.getOrPut(email) { mutableListOf() }
         keys.removeAll { it.keyId == record.keyId || it.moduleID == record.moduleID }
         keys.add(record)
         
-        Log.i(TAG, "✅ [SERVER] Cloud Sync Complete. User [Token: $token] now owns ${keys.size} key(s).")
-        Log.d(TAG, "   └─ ModuleID: ${record.moduleID}, Role: ${record.role}, Permissions: ${record.permissions}")
+        Log.i(TAG, "✅ [SERVER] Cloud Sync Complete. User [$email] now owns ${keys.size} key(s).")
         return true
     }
 
-    suspend fun fetchUserKeys(token: String): List<CloudKeyRecord> {
-        Log.d(TAG, "☁️ [SERVER] Fetching keys for token: $token")
+    suspend fun fetchUserKeys(email: String): List<CloudKeyRecord> {
+        Log.d(TAG, "☁️ [SERVER] Fetching keys for email: $email")
         delay(1000)
-        val keys = userKeyCloud[token] ?: emptyList()
+        val keys = userKeyCloud[email] ?: emptyList()
         Log.i(TAG, "✅ [SERVER] Found ${keys.size} key(s) for this account.")
         return keys
     }
