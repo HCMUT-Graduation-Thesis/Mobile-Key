@@ -25,7 +25,7 @@ import com.example.a100_basiccrypto.digitalkey.ble.BleForegroundService
 import com.example.a100_basiccrypto.digitalkey.ble.BleHomeHelper
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.Role
-import com.example.a100_basiccrypto.shared.command.DigitalKeyPermissions
+import com.example.a100_basiccrypto.shared.model.DigitalKeyPermissions
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.flow.collectLatest

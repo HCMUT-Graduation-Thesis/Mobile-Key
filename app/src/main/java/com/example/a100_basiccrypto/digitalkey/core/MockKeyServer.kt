@@ -169,8 +169,8 @@ object MockKeyServer {
         
         val pending = invitationInbox[recipientEmail] ?: emptyList<ShareInvitation>()
         if (pending.any { inv ->
-            // FIX: Using 0 until 8 to match KeyID length
-            val invParentId = inv.ap.sliceArray(0 until 8).joinToString("") { "%02x".format(it) }
+            // FIX: AP structure is [Version(1b) | ParentID(8b) | ...] -> ParentID is at index 1 to 9
+            val invParentId = inv.ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
             invParentId == parentKeyIdHex
         }) {
             Log.w(TAG, "🚫 [LEGALITY] DENIED: Car $parentKeyIdHex already has a pending invitation for $recipientEmail.")
@@ -190,17 +190,26 @@ object MockKeyServer {
 
         // 1. Proactively attach car metadata
         val ap = invitation.ap
-        if (invitation.carMetadata == null && ap.size >= 8) {
-            // FIX: Using 0 until 8 to correctly identify the Parent KeyID
-            val parentKeyIdHex = ap.sliceArray(0 until 8).joinToString("") { "%02x".format(it) }
+        if (invitation.carMetadata == null && ap.size >= 9) {
+            // FIX: Correct offset for Parent KeyID in AP package is 1 to 9 (Version is at index 0)
+            val parentKeyIdHex = ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
             val foundMetadata = userKeyCloud.values.flatten()
-                .find { it.keyId.startsWith(parentKeyIdHex) }?.metadata
+                .find { it.keyId == parentKeyIdHex }?.metadata
             
             if (foundMetadata != null) {
                 invitation.carMetadata = foundMetadata
-                Log.d(TAG, "📦 [UPLOAD] Attached car metadata: ${foundMetadata.modelName}")
+                Log.d(TAG, "📦 [UPLOAD] Attached car metadata to invitation: ${foundMetadata.modelName} (Plate: ${foundMetadata.licensePlate})")
             } else {
-                Log.w(TAG, "⚠️ [UPLOAD] Metadata NOT found for Parent KeyID: $parentKeyIdHex")
+                Log.w(TAG, "⚠️ [UPLOAD] Metadata NOT found for Parent KeyID: $parentKeyIdHex. Checking fallback...")
+                // Fallback: search by prefix if the ID was stored differently
+                val fallbackMetadata = userKeyCloud.values.flatten()
+                    .find { it.keyId.startsWith(parentKeyIdHex) }?.metadata
+                if (fallbackMetadata != null) {
+                    invitation.carMetadata = fallbackMetadata
+                    Log.d(TAG, "📦 [UPLOAD] Attached car metadata via prefix fallback: ${fallbackMetadata.licensePlate}")
+                } else {
+                    Log.w(TAG, "❌ [UPLOAD] Metadata truly NOT found for Parent KeyID: $parentKeyIdHex. Friend will see 'N/A'.")
+                }
             }
         }
 
@@ -233,17 +242,11 @@ object MockKeyServer {
         }
 
         // 2. Synchronization: Remove from Cloud Key Records
-        if (ap.size >= 8) {
-            // FIX: Using 0 until 8
-            val parentKeyIdHex = ap.sliceArray(0 until 8).joinToString("") { "%02x".format(it) }
-            
-            userKeyCloud[recipientEmail]?.removeAll { 
-                it.parentKeyId == parentKeyIdHex || it.ownerEmail == senderEmail 
-            }
-            
-            userKeyCloud[senderEmail]?.removeAll { 
-                it.holderEmail == recipientEmail && it.parentKeyId == parentKeyIdHex 
-            }
+        if (ap.size >= 9) {
+            // FIX: Correct offset 1 to 9
+            val parentKeyIdHex = ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
+            userKeyCloud[recipientEmail]?.removeAll { it.parentKeyId == parentKeyIdHex || it.ownerEmail == senderEmail }
+            userKeyCloud[senderEmail]?.removeAll { it.holderEmail == recipientEmail && it.parentKeyId == parentKeyIdHex }
             Log.d(TAG, "☁️ [SYNC] Revoked key records for $parentKeyIdHex removed from Cloud storage.")
         }
 
@@ -298,7 +301,14 @@ object MockKeyServer {
         val keys = userKeyCloud.getOrPut(email) { mutableListOf() }
         keys.removeAll { it.keyId == record.keyId || it.moduleID == record.moduleID }
         keys.add(record)
-        Log.d(TAG, "☁️ [SYNC] Key ${record.keyId} synced to cloud for $email.")
+        
+        // Detailed log of Car Metadata on Cloud
+        Log.i(TAG, "☁️ [SYNC] NEW Car Metadata synced to Cloud for user: $email")
+        Log.d(TAG, "   └─ Car: ${record.friendlyName} (Model: ${record.metadata.modelName})")
+        Log.d(TAG, "   └─ Plate: ${record.metadata.licensePlate}")
+        Log.d(TAG, "   └─ VIN/ModuleID: ${record.moduleID}")
+        Log.d(TAG, "   └─ Holder: ${record.holderNickname} (Role: ${record.role})")
+
         return true
     }
 

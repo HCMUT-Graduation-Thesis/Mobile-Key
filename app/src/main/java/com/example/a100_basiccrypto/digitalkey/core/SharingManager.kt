@@ -4,7 +4,6 @@ import android.util.Log
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
-import com.example.a100_basiccrypto.shared.command.SharingConstants
 import com.example.a100_basiccrypto.shared.model.Role
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.AttestationMetadata
@@ -124,9 +123,9 @@ class SharingManager(
     fun processIncomingInvitation(invitation: ShareInvitation): DigitalKeyRecord? {
         return try {
             val ap = invitation.ap
-            if (ap.size < SharingConstants.METADATA_SIZE) return null
+            if (ap.size < AttestationMetadata.METADATA_SIZE) return null
 
-            val metadataBytes = ap.sliceArray(0 until SharingConstants.METADATA_SIZE)
+            val metadataBytes = ap.sliceArray(0 until AttestationMetadata.METADATA_SIZE)
             val metadata = AttestationMetadata.fromByteArray(metadataBytes)
 
             val newRecord = DigitalKeyRecord().apply {

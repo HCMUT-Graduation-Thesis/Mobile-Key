@@ -13,14 +13,15 @@ import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.example.a100_basiccrypto.digitalkey.core.*
-import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.Role
-import com.example.a100_basiccrypto.shared.command.SharingConstants
-import com.example.a100_basiccrypto.shared.command.DigitalKeyPermissions
+import com.example.a100_basiccrypto.shared.model.DigitalKeyPermissions
 import com.google.android.material.tabs.TabLayout
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -28,7 +29,8 @@ import java.util.*
 class ShareConfigActivity : AppCompatActivity() {
 
     private val storageManager by lazy { SecureKeyStorageManager(this) }
-    private val sharingManager by lazy { SharingManager(DilithiumIdentityCryptoImpl(), storageManager) }
+    private val authManager by lazy { AuthManager(this) }
+    private lateinit var sharingViewModel: SharingViewModel
     
     private lateinit var etRecipient: EditText
     private lateinit var etFriendlyName: EditText
@@ -44,10 +46,47 @@ class ShareConfigActivity : AppCompatActivity() {
         etFriendlyName = findViewById(R.id.et_share_friendly_name)
         tlShareType = findViewById(R.id.tl_share_type)
 
+        initViewModel()
         setupToolbar()
         setupTabs()
         setupDateTimePickers()
         setupSendButton()
+        observeViewModel()
+    }
+
+    private fun initViewModel() {
+        sharingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                @Suppress("UNCHECKED_CAST")
+                return SharingViewModel(
+                    com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl(), 
+                    storageManager, 
+                    authManager
+                ) as T
+            }
+        })[SharingViewModel::class.java]
+    }
+
+    private fun observeViewModel() {
+        lifecycleScope.launch {
+            sharingViewModel.uiState.collectLatest { state ->
+                when (state) {
+                    is SharingViewModel.SharingUiState.Loading -> {
+                        // Optional: Show loading state if needed
+                    }
+                    is SharingViewModel.SharingUiState.ShareSuccess -> {
+                        Toast.makeText(this@ShareConfigActivity, 
+                            "Invitation sent! PIN: ${state.code}", 
+                            Toast.LENGTH_LONG).show()
+                        finish()
+                    }
+                    is SharingViewModel.SharingUiState.Error -> {
+                        Toast.makeText(this@ShareConfigActivity, state.message, Toast.LENGTH_SHORT).show()
+                    }
+                    else -> {}
+                }
+            }
+        }
     }
 
     private fun setupToolbar() {
@@ -161,65 +200,48 @@ class ShareConfigActivity : AppCompatActivity() {
     }
 
     private fun performShare(ownerRecord: DigitalKeyRecord, recipient: String) {
-        lifecycleScope.launch {
-            try {
-                var validityDays = 0
-                var usageLimit = 0
-                var daysOfWeek = 0
-                var startM = -1
-                var endM = -1
+        var validityDays = 0
+        var usageLimit = 0
+        var daysOfWeek = 0
+        var startM = -1
+        var endM = -1
 
-                when (tlShareType.selectedTabPosition) {
-                    1 -> { // Timed
-                        val startStr = findViewById<EditText>(R.id.et_timed_start).text.toString()
-                        val endStr = findViewById<EditText>(R.id.et_timed_end).text.toString()
-                        validityDays = calculateDaysBetween(startStr, endStr)
-                    }
-                    2 -> { // One-Time
-                        usageLimit = 1
-                        validityDays = 1 
-                    }
-                    3 -> { // Recurring
-                        daysOfWeek = getSelectedDaysBitmask()
-                        val timeRange = findViewById<EditText>(R.id.et_recurring_window).text.toString()
-                        val (s, e) = parseTimeRange(timeRange)
-                        startM = s
-                        endM = e
-                        validityDays = 30
-                    }
-                }
-
-                val permissions = DigitalKeyPermissions.UNLOCK or DigitalKeyPermissions.LOCK or DigitalKeyPermissions.START
-                val holderNickname = etFriendlyName.text.toString().ifEmpty { "Key for $recipient" }
-
-                // Using holderNickname instead of friendlyName
-                val result = sharingManager.createInvitation(
-                    ownerRecord = ownerRecord,
-                    role = Role.FRIEND,
-                    permissions = permissions,
-                    validityDays = validityDays,
-                    usageLimit = usageLimit,
-                    daysOfWeek = daysOfWeek,
-                    startTimeMinutes = startM,
-                    endTimeMinutes = endM,
-                    holderNickname = holderNickname, // Fixed parameter name
-                    recipientEmail = recipient,
-                    senderName = "Owner's Phone"
-                )
-
-                if (result != null) {
-                    Toast.makeText(this@ShareConfigActivity, 
-                        "Invitation sent to $recipient! Code: ${result.invitationCode}",
-                        Toast.LENGTH_LONG).show()
-                    finish()
-                } else {
-                    Toast.makeText(this@ShareConfigActivity, "Failed to create invitation", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Log.e("ShareConfig", "Error: ${e.message}")
-                Toast.makeText(this@ShareConfigActivity, "Error occurred", Toast.LENGTH_SHORT).show()
+        when (tlShareType.selectedTabPosition) {
+            1 -> { // Timed
+                val startStr = findViewById<EditText>(R.id.et_timed_start).text.toString()
+                val endStr = findViewById<EditText>(R.id.et_timed_end).text.toString()
+                validityDays = calculateDaysBetween(startStr, endStr)
+            }
+            2 -> { // One-Time
+                usageLimit = 1
+                validityDays = 1 
+            }
+            3 -> { // Recurring
+                daysOfWeek = getSelectedDaysBitmask()
+                val timeRange = findViewById<EditText>(R.id.et_recurring_window).text.toString()
+                val (s, e) = parseTimeRange(timeRange)
+                startM = s
+                endM = e
+                validityDays = 30
             }
         }
+
+        val permissions = DigitalKeyPermissions.UNLOCK or DigitalKeyPermissions.LOCK or DigitalKeyPermissions.START
+        val holderNickname = etFriendlyName.text.toString().ifEmpty { "Key for $recipient" }
+        val senderEmail = authManager.getUserEmail() ?: ""
+
+        sharingViewModel.shareKey(
+            ownerRecord = ownerRecord,
+            permissions = permissions,
+            validityDays = validityDays,
+            usageLimit = usageLimit,
+            daysOfWeek = daysOfWeek,
+            startTimeMinutes = startM,
+            endTimeMinutes = endM,
+            holderNickname = holderNickname,
+            recipientEmail = recipient,
+            senderEmail = senderEmail
+        )
     }
 
     private fun getSelectedDaysBitmask(): Int {

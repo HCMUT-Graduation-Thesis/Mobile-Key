@@ -7,9 +7,13 @@ import com.example.a100_basiccrypto.NotificationStore
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.Role
+import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -23,6 +27,10 @@ class SharingViewModel(
 
     private val _uiState = MutableStateFlow<SharingUiState>(SharingUiState.Idle)
     val uiState: StateFlow<SharingUiState> = _uiState
+
+    // Event flow for one-time events like showing a dialog or finishing activity
+    private val _events = MutableSharedFlow<SharingEvent>()
+    val events: SharedFlow<SharingEvent> = _events.asSharedFlow()
 
     // Flow for observing proactive invitations from Server (Stage 1 Push)
     val incomingInvitations = MockKeyServer.invitationFlow
@@ -38,6 +46,9 @@ class SharingViewModel(
 
         // FRIEND SIDE: Listen for REVOKED signals from server to perform soft-wipe
         observeRevocations()
+        
+        // OWNER SIDE: Listen for ACTIVATION signals from server
+        observeActivations()
     }
 
     private fun observeRevocations() {
@@ -57,8 +68,30 @@ class SharingViewModel(
                             storageManager.deleteKey(keyId)
                             Log.i("SharingViewModel", "🗑️ [REVOKE] Local key deleted successfully.")
                             _uiState.value = SharingUiState.Error("A key was revoked by the owner.")
+                            _events.emit(SharingEvent.KeyRevoked(keyId))
                         }
                     }
+                }
+            }
+        }
+    }
+
+    private fun observeActivations() {
+        viewModelScope.launch {
+            MockKeyServer.activationFlow.collectLatest { activatedAp ->
+                Log.d("SharingViewModel", "⚡ [ACTIVATE] Signal received for an AP. Updating local state...")
+                val allKeys = storageManager.getAllKeys()
+                var found = false
+                allKeys.forEach { key ->
+                    if (key.core.keyState == KeyState.PENDING && key.attestationPackage?.contentEquals(activatedAp) == true) {
+                        key.core.keyState = KeyState.ACTIVE
+                        storageManager.saveDigitalKey(key)
+                        found = true
+                        Log.i("SharingViewModel", "✅ [ACTIVATE] Local Pending key for ${key.keyHolderName} is now ACTIVE.")
+                    }
+                }
+                if (found) {
+                    _events.emit(SharingEvent.RemoteActivationSuccess)
                 }
             }
         }
@@ -75,7 +108,7 @@ class SharingViewModel(
         daysOfWeek: Int = 0,
         startTimeMinutes: Int = -1,
         endTimeMinutes: Int = -1,
-        holderNickname: String = "", // Changed from friendlyName
+        holderNickname: String = "",
         recipientEmail: String = "",
         senderEmail: String = ""
     ) {
@@ -101,7 +134,7 @@ class SharingViewModel(
                 daysOfWeek = daysOfWeek,
                 startTimeMinutes = startTimeMinutes,
                 endTimeMinutes = endTimeMinutes,
-                holderNickname = holderNickname, // Updated parameter name
+                holderNickname = holderNickname,
                 recipientEmail = recipientEmail,
                 senderName = "Owner Device"
             )
@@ -132,6 +165,7 @@ class SharingViewModel(
             record.core.keyID?.let { storageManager.deleteKey(it) }
             
             _uiState.value = SharingUiState.RevokeSuccess
+            _events.emit(SharingEvent.LocalRevokeSuccess)
         }
     }
 
@@ -142,7 +176,6 @@ class SharingViewModel(
         viewModelScope.launch {
             val pendingList = MockKeyServer.fetchPendingInvitations(email)
             pendingList.forEach { invitation ->
-                // Add to notification store managed by user email
                 NotificationStore.addNotification(
                     ownerEmail = email,
                     title = "Missed Key Shared",
@@ -211,5 +244,11 @@ class SharingViewModel(
         data class ReceivedInvitation(val record: DigitalKeyRecord, val invitation: ShareInvitation) : SharingUiState()
         object ActivationSuccess : SharingUiState()
         data class Error(val message: String) : SharingUiState()
+    }
+    
+    sealed class SharingEvent {
+        object RemoteActivationSuccess : SharingEvent()
+        object LocalRevokeSuccess : SharingEvent()
+        data class KeyRevoked(val keyId: ByteArray) : SharingEvent()
     }
 }

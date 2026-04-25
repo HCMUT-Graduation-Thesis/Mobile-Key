@@ -10,6 +10,8 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -18,13 +20,15 @@ import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.Role
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 class EKeyManagerActivity : AppCompatActivity() {
 
     private lateinit var rvEKeys: RecyclerView
     private val storageManager by lazy { SecureKeyStorageManager(this) }
+    private val authManager by lazy { AuthManager(this) }
+    private lateinit var sharingViewModel: SharingViewModel
     private var currentKeyId: ByteArray? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,10 +37,20 @@ class EKeyManagerActivity : AppCompatActivity() {
 
         currentKeyId = intent.getByteArrayExtra("KEY_ID")
         
+        initViewModel()
         setupToolbar()
         setupRecyclerView()
         setupFab()
-        observeActivations()
+        observeViewModel()
+    }
+
+    private fun initViewModel() {
+        sharingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                @Suppress("UNCHECKED_CAST")
+                return SharingViewModel(com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl(), storageManager, authManager) as T
+            }
+        })[SharingViewModel::class.java]
     }
 
     private fun setupToolbar() {
@@ -71,24 +85,22 @@ class EKeyManagerActivity : AppCompatActivity() {
         }
     }
 
-    private fun observeActivations() {
-        MockKeyServer.activationFlow
-            .onEach { activatedAp ->
-                // Check if any of our pending keys match this AP
-                val allKeys = storageManager.getAllKeys()
-                allKeys.forEach { key ->
-                    if (key.core.keyState == KeyState.PENDING && key.attestationPackage.contentEquals(activatedAp)) {
-                        key.core.keyState = KeyState.ACTIVE
-                        storageManager.saveDigitalKey(key)
-                        runOnUiThread {
-                            refreshRecyclerView()
-                            // Global notification could be used here instead of Toast
-                            GlobalDialogController.showActionResult(this@EKeyManagerActivity, "EKEY ACTIVATION", true)
-                        }
+    private fun observeViewModel() {
+        lifecycleScope.launch {
+            sharingViewModel.events.collectLatest { event ->
+                when (event) {
+                    is SharingViewModel.SharingEvent.RemoteActivationSuccess -> {
+                        refreshRecyclerView()
+                        GlobalDialogController.showActionResult(this@EKeyManagerActivity, "EKEY ACTIVATION", true)
                     }
+                    is SharingViewModel.SharingEvent.LocalRevokeSuccess -> {
+                        refreshRecyclerView()
+                        GlobalDialogController.showActionResult(this@EKeyManagerActivity, "REVOKE ACCESS", true)
+                    }
+                    else -> {}
                 }
             }
-            .launchIn(lifecycleScope)
+        }
     }
 
     private fun showEKeyDetailDialog(record: DigitalKeyRecord) {
@@ -117,9 +129,7 @@ class EKeyManagerActivity : AppCompatActivity() {
             .setTitle("Revoke Access")
             .setMessage("Are you sure you want to revoke access for ${record.keyHolderName}?")
             .setPositiveButton("Revoke") { _, _ ->
-                storageManager.deleteKey(record.core.keyID!!)
-                refreshRecyclerView()
-                GlobalDialogController.showActionResult(this, "REVOKE ACCESS", true)
+                sharingViewModel.revokeKey(record)
             }
             .setNegativeButton("Cancel", null)
             .create().apply {
