@@ -23,6 +23,7 @@ import com.example.a100_basiccrypto.digitalkey.storage.BleIdentityManager
 import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
 import com.example.a100_basiccrypto.digitalkey.ble.BleForegroundService
 import com.example.a100_basiccrypto.digitalkey.ble.BleHomeHelper
+import com.example.a100_basiccrypto.digitalkey.nfc.MyHostApduService
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.Role
 import com.example.a100_basiccrypto.shared.model.DigitalKeyPermissions
@@ -89,7 +90,7 @@ class HomeActivity : AppCompatActivity() {
         bleHomeHelper.initLauncher {
             updateBleStatus(true)
             BleProvider.init(this)
-            startBleBackgroundService()
+            startBleBackgroundService(forceRefresh = true)
         }
 
         setupUI()
@@ -98,7 +99,7 @@ class HomeActivity : AppCompatActivity() {
 
         bleHomeHelper.checkBluetoothAndRequest()
         BleProvider.init(this)
-        startBleBackgroundService()
+        startBleBackgroundService(forceRefresh = true)
         bleHomeHelper.registerReceiver()
     }
 
@@ -133,6 +134,7 @@ class HomeActivity : AppCompatActivity() {
                     is SharingViewModel.SharingUiState.ActivationSuccess -> {
                         Toast.makeText(this@HomeActivity, "Key added successfully!", Toast.LENGTH_LONG).show()
                         refreshList()
+                        startBleBackgroundService(forceRefresh = true)
                     }
                     is SharingViewModel.SharingUiState.Error -> {
                         Toast.makeText(this@HomeActivity, state.message, Toast.LENGTH_SHORT).show()
@@ -185,9 +187,12 @@ class HomeActivity : AppCompatActivity() {
         tvBleStatus.text = if (!isEnabled) "Status: Bluetooth OFF" else "Status: Initializing..."
     }
 
-    private fun startBleBackgroundService() {
+    private fun startBleBackgroundService(forceRefresh: Boolean = false) {
         if (bleHomeHelper.isBluetoothEnabled()) {
             val serviceIntent = Intent(this, BleForegroundService::class.java)
+            if (forceRefresh) {
+                serviceIntent.action = BleForegroundService.ACTION_REFRESH_SCAN
+            }
             ContextCompat.startForegroundService(this, serviceIntent)
         }
     }
@@ -218,9 +223,21 @@ class HomeActivity : AppCompatActivity() {
         }
         
         findViewById<View>(R.id.btn_logout).setOnClickListener {
+            // 1. Notify Server
             authManager.getUserEmail()?.let { MockKeyServer.setOffline(it) }
-            authManager.logout()
+            
+            // 2. BLE Cleanup
+            BleProvider.logoutAndCleanup()
             stopService(Intent(this, BleForegroundService::class.java))
+            
+            // 3. NFC Cleanup (Reset static states)
+            MyHostApduService.isPairingModeEnabled = false
+            MyHostApduService.friendPairingHandler = null
+            
+            // 4. Session Cleanup
+            authManager.logout()
+            
+            // 5. Navigation
             startActivity(Intent(this, LoginActivity::class.java))
             finish()
         }
@@ -242,7 +259,6 @@ class HomeActivity : AppCompatActivity() {
         BleProvider.addVehicleInfoListener(vehicleInfoListener)
         BleProvider.addConnectionStateListener(connectionStateListener)
         refreshList()
-        if (bleHomeHelper.isBluetoothEnabled()) startBleBackgroundService()
     }
 
     override fun onPause() {
@@ -286,20 +302,16 @@ class HomeActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val item = items[position]
-            
-            // Title: keyHolderName (e.g. "Friend A's Phone")
             holder.tvName.text = item.keyHolderName.ifEmpty { "My Key" }
 
-            // ROLE BADGE LOGIC
             if (item.core.role == Role.OWNER) {
                 holder.tvRoleBadge.text = "OWNER"
-                holder.tvRoleBadge.setTextColor(android.graphics.Color.parseColor("#4285F4")) // Blue
+                holder.tvRoleBadge.setTextColor(android.graphics.Color.parseColor("#4285F4"))
             } else {
                 holder.tvRoleBadge.text = "FRIEND"
-                holder.tvRoleBadge.setTextColor(android.graphics.Color.parseColor("#FF9800")) // Orange
+                holder.tvRoleBadge.setTextColor(android.graphics.Color.parseColor("#FF9800"))
             }
 
-            // Subtitle: friendlyName (Car Name) | Plate [Status]
             val carName = item.friendlyName.ifEmpty { "Vehicle" }
             val plate = item.carMetadata?.licensePlate ?: "N/A"
             val statusLabel = if (item.core.keyState == KeyState.PROVISIONING) " [PROVISIONING]" else ""
@@ -333,7 +345,7 @@ class HomeActivity : AppCompatActivity() {
 
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val tvName: TextView = view.findViewById(R.id.tv_item_name)
-            val tvRoleBadge: TextView = view.findViewById(R.id.tv_item_role_badge) // Added reference
+            val tvRoleBadge: TextView = view.findViewById(R.id.tv_item_role_badge)
             val tvPlate: TextView = view.findViewById(R.id.tv_item_plate)
             val tvMac: TextView = view.findViewById(R.id.tv_item_mac)
             val tvPsm: TextView = view.findViewById(R.id.tv_item_psm)

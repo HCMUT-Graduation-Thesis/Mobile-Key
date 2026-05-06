@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.example.a100_basiccrypto.digitalkey.core.AuthManager
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.example.a100_basiccrypto.shared.link.LogicalResponse
 import com.example.a100_basiccrypto.shared.link.TransactionRouter
@@ -25,6 +26,7 @@ import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransaction
 
 /**
  * Optimized HostApduService using NfcPassiveTransport and TransactionRouter.
+ * Updated: Account-aware logic to prevent unauthorized access from logged-out users.
  */
 class MyHostApduService : HostApduService() {
 
@@ -41,6 +43,7 @@ class MyHostApduService : HostApduService() {
     }
 
     private val storageManager by lazy { SecureKeyStorageManager(applicationContext) }
+    private val authManager by lazy { AuthManager(applicationContext) }
     private val identityCrypto = DilithiumIdentityCryptoImpl()
     
     private val nfcTransport = NfcPassiveTransport()
@@ -50,16 +53,19 @@ class MyHostApduService : HostApduService() {
             context = applicationContext,
             identityCrypto = identityCrypto,
             storageManager = storageManager,
+            authManager = authManager,
             passwordProvider = { PasswordManager.getPassword(applicationContext) },
             onLog = { sendLogToGui(it) }
         )
         val fastHandler = FastTransaction(
             storageManager = storageManager,
+            authManager = authManager,
             onLog = { sendLogToGui(it) }
         )
         val standardHandler = StandardTransaction(
             identityCrypto = identityCrypto,
             storageManager = storageManager,
+            authManager = authManager,
             passwordProvider = { PasswordManager.getPassword(applicationContext) },
             onLog = { sendLogToGui(it) }
         )
@@ -78,6 +84,12 @@ class MyHostApduService : HostApduService() {
 
     override fun processCommandApdu(commandApdu: ByteArray?, extras: Bundle?): ByteArray {
         if (commandApdu == null || commandApdu.size < 2) return NfcConstants.SW_INTERNAL_ERROR
+
+        // SECURITY CHECK: Ensure a user is logged in before processing any car commands
+        if (!authManager.isLoggedIn()) {
+            Log.w(TAG, "NFC Access Denied: No user logged in.")
+            return NfcConstants.SW_UNKNOWN_CMD
+        }
 
         val cla = commandApdu[0]
         val ins = commandApdu[1]

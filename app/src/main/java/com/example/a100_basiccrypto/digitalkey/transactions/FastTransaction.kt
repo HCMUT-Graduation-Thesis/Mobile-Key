@@ -1,6 +1,7 @@
 package com.example.a100_basiccrypto.digitalkey.transactions
 
 import android.util.Log
+import com.example.a100_basiccrypto.digitalkey.core.AuthManager
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.example.a100_basiccrypto.shared.link.LogicalResponse
@@ -15,10 +16,11 @@ import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import java.nio.ByteBuffer
 
 /**
- * Implementation of Fast Transaction - Updated for IPassiveTransport.
+ * Implementation of Fast Transaction - Updated for Account Isolation.
  */
 class FastTransaction(
     private val storageManager: IKeyStorageManager,
+    private val authManager: AuthManager,
     private val onLog: (String) -> Unit
 ) : ITransactionHandler {
 
@@ -46,8 +48,11 @@ class FastTransaction(
         val targetModuleID = ByteArray(CryptoConstants.MODULE_ID_SIZE)
         buffer.get(targetModuleID)
 
-        val allKeys = storageManager.getAllKeys()
-        val record = allKeys.find { it.moduleID?.contentEquals(targetModuleID) == true }
+        val currentEmail = authManager.getUserEmail() ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
+        
+        // Filter keys belonging to the current account
+        val myKeys = storageManager.getKeysByAccount(currentEmail)
+        val record = myKeys.find { it.moduleID?.contentEquals(targetModuleID) == true }
             ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
 
         if (record.core.keyState != KeyState.ACTIVE) return LogicalResponse(Status.ERR_PERMISSION)

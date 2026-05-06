@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
 import android.util.Log
+import com.example.a100_basiccrypto.digitalkey.core.AuthManager
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
@@ -23,10 +24,12 @@ import java.nio.ByteOrder
 
 /**
  * BleCentralManager - Implements Secure L2CAP PSM exchange using AES-GCM and ModuleID.
+ * Updated: Account-aware filtering using AuthManager.
  */
 @SuppressLint("MissingPermission")
 class BleCentralManager(
     private val context: Context,
+    private val authManager: AuthManager,
     private val onLog: (String) -> Unit
 ) {
     companion object {
@@ -63,6 +66,10 @@ class BleCentralManager(
     fun isConnected(): Boolean = isConnected
 
     fun scanAndConnect(record: DigitalKeyRecord) {
+        if (!authManager.isLoggedIn()) {
+            onLog("BLE Error: No user logged in.")
+            return
+        }
         targetRecord = record
         if (isConnected || isScanning) return
         startScanSequence()
@@ -151,7 +158,7 @@ class BleCentralManager(
                             ?.getCharacteristic(BleConstants.PSM_CHARACTERISTIC_UUID)
                         if (psmChar != null) gatt.readCharacteristic(psmChar)
                     } else {
-                        onLog("BLE: Unauthorized vehicle detected. Disconnecting.")
+                        onLog("BLE: Unauthorized vehicle detected or account mismatch.")
                         handleDisconnection()
                     }
                 }
@@ -198,9 +205,11 @@ class BleCentralManager(
     private fun verifyVehicleIdentity(receivedId: ByteArray?): Boolean {
         if (receivedId == null) return false
         
-        // 1. Check in storage for existing keys (ACTIVE, PENDING, or PROVISIONING)
-        val allKeys = storageManager.getAllKeys()
-        val matchingRecord = allKeys.find { it.moduleID?.contentEquals(receivedId) == true }
+        val currentEmail = authManager.getUserEmail() ?: return false
+        
+        // 1. Check in storage for existing keys belonging to CURRENT account
+        val myKeys = storageManager.getKeysByAccount(currentEmail)
+        val matchingRecord = myKeys.find { it.moduleID?.contentEquals(receivedId) == true }
         
         if (matchingRecord != null) {
             targetRecord = matchingRecord

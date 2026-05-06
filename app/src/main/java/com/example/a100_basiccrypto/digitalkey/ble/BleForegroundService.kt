@@ -53,7 +53,8 @@ class BleForegroundService : Service() {
                     }
                     BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> {
                         Log.d("BleService", "Bluetooth turned OFF, cleaning up connection.")
-                        BleProvider.getManager().closeEverything()
+                        BleProvider.getManager()?.closeEverything()
+                        BleProvider.updateStatus("Bluetooth OFF")
                     }
                 }
             }
@@ -89,9 +90,7 @@ class BleForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_REFRESH_SCAN) {
             Log.d("BleService", "Manual refresh scan requested. Forcing disconnect of old session...")
-            // FORCE CLOSE everything to ensure we don't stay connected to a previous user's vehicle
-            BleProvider.getManager().closeEverything()
-            triggerAutoScan()
+            BleProvider.getManager()?.closeEverything()
         }
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -116,16 +115,29 @@ class BleForegroundService : Service() {
     private fun triggerAutoScan() {
         val manager = BleProvider.getManager()
         // Note: Even if isConnected() is true, refresh might have closed it above.
+        if (manager == null) {
+            Log.e("BleService", "BleCentralManager is null. Cannot trigger scan.")
+            BleProvider.updateStatus("BLE service not initialized.")
+            return
+        }
+
         if (!manager.isConnected()) {
             val email = authManager.getUserEmail() ?: return
             
-            val activeKeys = storageManager.getAllKeys().filter {
-                it.core.keyState == KeyState.ACTIVE && it.accountEmail == email
+            // Cập nhật filter để bao gồm cả KeyState.ACTIVE và KeyState.PROVISIONING
+            val keysToScan = storageManager.getAllKeys().filter {
+                (it.core.keyState == KeyState.ACTIVE || it.core.keyState == KeyState.PROVISIONING) && it.accountEmail == email
             }
 
-            if (activeKeys.isNotEmpty()) {
-                Log.i("BleService", "Found ${activeKeys.size} active keys for $email. Starting scan...")
-                manager.scanAndConnect(activeKeys[0])
+            if (keysToScan.isNotEmpty()) {
+                Log.i("BleService", "Found ${keysToScan.size} keys (Active/Provisioning) for $email. Starting scan...")
+                // Ưu tiên quét khóa đang PROVISIONING để hoàn tất pairing trước
+                val targetKey = keysToScan.find { it.core.keyState == KeyState.PROVISIONING } ?: keysToScan[0]
+                manager.scanAndConnect(targetKey)
+            } else {
+                Log.d("BleService", "No active or provisioning keys for $email. BLE staying idle.")
+                // Explicitly update status so UI knows we checked
+                BleProvider.updateStatus("No active or provisioning keys found for this account.")
             }
         }
     }
@@ -142,13 +154,16 @@ class BleForegroundService : Service() {
 
     private suspend fun performSingleSync() {
         val manager = BleProvider.getManager()
-        val activeKeyID = manager.connectedKeyID
+        val activeKeyID = manager?.connectedKeyID // Safe call here
         
-        if (manager.isConnected() && activeKeyID != null) {
-            val status = fastTxClient.syncTelemetry(BleProvider.getTransport(), activeKeyID)
-            if (status != null) {
-                withContext(Dispatchers.Main) {
-                    BleProvider.notifyTelemetryUpdated(status)
+        if (manager != null && manager.isConnected() && activeKeyID != null) {
+            val transport = BleProvider.getTransport() // Check transport too
+            if (transport != null) {
+                val status = fastTxClient.syncTelemetry(transport, activeKeyID)
+                if (status != null) {
+                    withContext(Dispatchers.Main) {
+                        BleProvider.notifyTelemetryUpdated(status)
+                    }
                 }
             }
         }
@@ -158,7 +173,7 @@ class BleForegroundService : Service() {
         BleProvider.setSyncTriggerListener(null)
         BleProvider.setPollingSpeedListener(null)
         unregisterReceiver(bluetoothReceiver)
-        BleProvider.getManager().closeEverything() // Ensure cleanup on stop
+        BleProvider.getManager()?.closeEverything() // Safe call here
         serviceScope.cancel()
         super.onDestroy()
     }

@@ -2,6 +2,7 @@ package com.example.a100_basiccrypto.digitalkey.transactions
 
 import android.content.Context
 import android.util.Log
+import com.example.a100_basiccrypto.digitalkey.core.AuthManager
 import com.example.a100_basiccrypto.shared.model.CarMetadata
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.shared.model.KeyState
@@ -21,12 +22,13 @@ import java.nio.ByteBuffer
 import java.security.KeyPair
 
 /**
- * Owner Pairing Transaction - Updated for BLE L2CAP Insecure flow.
+ * Owner Pairing Transaction - Updated for BLE L2CAP Insecure flow and Account Isolation.
  */
 class OwnerPairingTransaction(
     private val context: Context,
     private val identityCrypto: IIdentityCrypto,
     private val storageManager: IKeyStorageManager,
+    private val authManager: AuthManager,
     private val passwordProvider: () -> String,
     private val onLog: (String) -> Unit
 ) : ITransactionHandler {
@@ -124,6 +126,9 @@ class OwnerPairingTransaction(
 
             val token = ByteArray(64); buffer.get(token)
             record.immobilizerToken = token
+
+            // 3. Associate with current account
+            record.accountEmail = authManager.getUserEmail()
 
             // 4. Metadata JSON
             val metaLen = buffer.remaining()

@@ -3,15 +3,18 @@ package com.example.a100_basiccrypto.digitalkey.ble
 import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Log
+import com.example.a100_basiccrypto.digitalkey.core.AuthManager
 import com.example.a100_basiccrypto.shared.model.VehicleStatus
 
 /**
  * Singleton Provider - Now supports Sticky Vehicle Info and Telemetry updates.
+ * Updated: Complete reset on logout to ensure account isolation.
  */
 @SuppressLint("StaticFieldLeak")
 object BleProvider {
     private var bleCentralManager: BleCentralManager? = null
     private var bleTransport: L2capActiveTransport? = null
+    private var authManager: AuthManager? = null
 
     private val statusListeners = mutableSetOf<(String) -> Unit>()
     private val vehicleInfoListeners = mutableSetOf<(moduleID: String, mac: String, psm: Int) -> Unit>()
@@ -29,18 +32,15 @@ object BleProvider {
     private var lastTelemetry: VehicleStatus? = null
 
     fun init(appContext: Context) {
+        val context = appContext.applicationContext
+        
+        // Always refresh AuthManager reference
+        authManager = AuthManager(context)
+        
         if (bleCentralManager == null) {
-            val context = appContext.applicationContext
-            bleCentralManager = BleCentralManager(context) { message ->
+            bleCentralManager = BleCentralManager(context, authManager!!) { message ->
                 Log.d("BLE_GLOBAL", message)
-                lastStatus = message
-                
-                if (message.contains("Link lost") || message.contains("OFF")) {
-                    lastVehicleInfo = null
-                    lastTelemetry = null
-                }
-                
-                statusListeners.forEach { it(message) }
+                updateStatus(message) // Use the new updateStatus method
             }
             bleTransport = L2capActiveTransport(bleCentralManager!!)
             
@@ -60,6 +60,28 @@ object BleProvider {
         }
     }
 
+    /**
+     * Public method to update the overall BLE status.
+     */
+    fun updateStatus(message: String) {
+        lastStatus = message
+        statusListeners.forEach { it(message) }
+    }
+
+    /**
+     * Resets the BLE manager and clears all session data.
+     * Call this during Logout to ensure account isolation.
+     */
+    fun logoutAndCleanup() {
+        bleCentralManager?.closeEverything()
+        bleCentralManager = null // Force re-creation on next login
+        bleTransport = null
+        lastVehicleInfo = null
+        lastTelemetry = null
+        isCurrentlyConnected = false
+        updateStatus("BLE Logged Out") // Use the new updateStatus method
+    }
+
     fun setSyncTriggerListener(listener: (() -> Unit)?) {
         onTriggerSyncRequest = listener
     }
@@ -76,9 +98,6 @@ object BleProvider {
         onSpeedChangeRequest?.invoke(enabled)
     }
 
-    /**
-     * Broadcasts newly received vehicle telemetry data to all registered listeners.
-     */
     fun notifyTelemetryUpdated(status: VehicleStatus) {
         lastTelemetry = status
         telemetryListeners.forEach { it(status) }
@@ -122,6 +141,6 @@ object BleProvider {
         connectionStateListeners.remove(listener)
     }
 
-    fun getManager(): BleCentralManager = bleCentralManager!!
-    fun getTransport(): L2capActiveTransport = bleTransport!!
+    fun getManager(): BleCentralManager? = bleCentralManager // Now returns nullable
+    fun getTransport(): L2capActiveTransport? = bleTransport // Now returns nullable
 }

@@ -1,6 +1,7 @@
 package com.example.a100_basiccrypto.digitalkey.transactions
 
 import android.util.Log
+import com.example.a100_basiccrypto.digitalkey.core.AuthManager
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.example.a100_basiccrypto.shared.link.LogicalResponse
@@ -20,11 +21,12 @@ import java.security.SecureRandom
 
 /**
  * Standard Transaction (Passive Mode) - Used when the Phone acts as an HCE tag (NFC).
- * Updated to support Hybrid Security Recovery (HSR) by ensuring full key rotation.
+ * Updated to support Hybrid Security Recovery (HSR) and Account Isolation.
  */
 class StandardTransaction(
     private val identityCrypto: IIdentityCrypto,
     private val storageManager: IKeyStorageManager,
+    private val authManager: AuthManager,
     private val passwordProvider: () -> String,
     private val onLog: (String) -> Unit
 ) : ITransactionHandler {
@@ -71,11 +73,16 @@ class StandardTransaction(
         return try {
             onLog("NFC STD: Initiating Security Recovery (Phase 1)")
             
+            val currentEmail = authManager.getUserEmail() ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
+            
             val startIndex = payload.indexOf(0x04.toByte())
             if (startIndex == -1 || payload.size - startIndex < 65) return LogicalResponse(Status.ERR_GENERAL)
 
             val moduleId = payload.sliceArray(0 until startIndex)
-            val record = storageManager.getAllKeys().find { it.moduleID?.contentEquals(moduleId) == true }
+            
+            // Filter keys belonging to the current account
+            val myKeys = storageManager.getKeysByAccount(currentEmail)
+            val record = myKeys.find { it.moduleID?.contentEquals(moduleId) == true }
                 ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
             
             activeRecord = record

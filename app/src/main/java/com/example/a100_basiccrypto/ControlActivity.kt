@@ -174,7 +174,10 @@ class ControlActivity : AppCompatActivity() {
     private fun executeActionWithHsr(msgClass: Byte, targetIns: Byte) {
         val keyID = currentKeyID ?: return
         
-        if (!BleProvider.getManager().isConnected()) {
+        val bleManager = BleProvider.getManager()
+        val bleTransport = BleProvider.getTransport()
+
+        if (bleManager == null || bleTransport == null || !bleManager.isConnected()) {
             Toast.makeText(this, "BLE not connected.", Toast.LENGTH_SHORT).show()
             return
         }
@@ -184,7 +187,7 @@ class ControlActivity : AppCompatActivity() {
             
             // 1. First attempt: Fast Transaction
             val status = fastTxClient.execute(
-                transport = BleProvider.getTransport(),
+                transport = bleTransport,
                 keyID = keyID,
                 msgClass = msgClass,
                 targetIns = targetIns
@@ -201,7 +204,7 @@ class ControlActivity : AppCompatActivity() {
                     Log.w("HSR", "Security issue detected (Status: 0x%02X). Starting BLE Recovery...".format(status))
                     
                     // Standard Transaction rotates keys and resets counter
-                    val syncSuccess = standardTxClient.executeSync(BleProvider.getTransport(), keyID)
+                    val syncSuccess = standardTxClient.executeSync(bleTransport, keyID)
 
                     if (syncSuccess) {
                         Log.i("HSR", "Remote Recovery Successful. Retrying command...")
@@ -209,7 +212,7 @@ class ControlActivity : AppCompatActivity() {
 
                         // 3. RETRY: Execute the original command with fresh credentials
                         val retryStatus = fastTxClient.execute(
-                            transport = BleProvider.getTransport(),
+                            transport = bleTransport,
                             keyID = keyID,
                             msgClass = msgClass,
                             targetIns = targetIns
@@ -363,7 +366,8 @@ class ControlActivity : AppCompatActivity() {
     }
 
     private fun updateBleUi(status: String) {
-        val isConnected = try { BleProvider.getManager().isConnected() } catch(e: Exception) { false }
+        // Handle nullable BleCentralManager here
+        val isConnected = BleProvider.getManager()?.isConnected() == true
         
         if (isConnected) {
             viewStatusDot.setBackgroundResource(R.drawable.shape_dot_green)
