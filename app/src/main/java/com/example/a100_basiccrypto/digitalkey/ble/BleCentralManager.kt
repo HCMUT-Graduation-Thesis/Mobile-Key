@@ -14,6 +14,7 @@ import android.util.Log
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.normalize
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.physical.BleConstants
 import java.io.IOException
@@ -21,7 +22,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * BleCentralManager - Implements Secure L2CAP PSM exchange using AES-GCM and ImmoToken.
+ * BleCentralManager - Implements Secure L2CAP PSM exchange using AES-GCM and ModuleID.
  */
 @SuppressLint("MissingPermission")
 class BleCentralManager(
@@ -162,15 +163,16 @@ class BleCentralManager(
                         return
                     }
 
-                    val fullToken = targetRecord?.immobilizerToken
-                    if (fullToken == null || fullToken.size < 32) {
-                        onLog("BLE Error: Invalid or missing ImmoToken.")
+                    val mid = targetRecord?.moduleID
+                    if (mid == null || mid.isEmpty()) {
+                        onLog("BLE Error: ModuleID missing for decryption.")
                         handleDisconnection()
                         return
                     }
 
                     try {
-                        val aesKey = fullToken.sliceArray(0 until 32)
+                        // Use normalized ModuleID as AES-256 key
+                        val aesKey = mid.normalize(32)
                         val zeroIv = ByteArray(GCM_IV_LENGTH) { 0 }
                         val fullCipherData = zeroIv + receivedPayload
 
@@ -179,8 +181,8 @@ class BleCentralManager(
                         
                         onLog("BLE: PSM Decrypted. Opening L2CAP...")
                         
-                        targetRecord?.moduleID?.let { mid ->
-                            onVehicleInfoUpdated?.invoke(mid.joinToString("") { "%02x".format(it) }, gatt.device.address, psm)
+                        targetRecord?.moduleID?.let { mId ->
+                            onVehicleInfoUpdated?.invoke(mId.joinToString("") { "%02x".format(it) }, gatt.device.address, psm)
                         }
                         
                         openInsecureL2capChannel(gatt.device, psm)
@@ -195,15 +197,25 @@ class BleCentralManager(
 
     private fun verifyVehicleIdentity(receivedId: ByteArray?): Boolean {
         if (receivedId == null) return false
-        val savedKeys = storageManager.getAllKeys().filter { it.core.keyState == KeyState.ACTIVE }
         
-        for (record in savedKeys) {
-            if (record.moduleID.contentEquals(receivedId)) {
-                targetRecord = record
-                connectedKeyID = record.core.keyID // Store the verified KeyID
-                return true
-            }
+        // 1. Check in storage for existing keys (ACTIVE, PENDING, or PROVISIONING)
+        val allKeys = storageManager.getAllKeys()
+        val matchingRecord = allKeys.find { it.moduleID?.contentEquals(receivedId) == true }
+        
+        if (matchingRecord != null) {
+            targetRecord = matchingRecord
+            connectedKeyID = matchingRecord.core.keyID
+            return true
         }
+        
+        // 2. Fallback for Owner Pairing: If we are scanning a new record with no moduleID yet
+        val currentTarget = targetRecord
+        if (currentTarget != null && (currentTarget.moduleID == null || currentTarget.moduleID!!.isEmpty())) {
+            currentTarget.moduleID = receivedId
+            onLog("BLE: Vehicle Identity acquired. Proceeding...")
+            return true
+        }
+
         return false
     }
 
