@@ -50,7 +50,8 @@ data class ShareInvitation(
     val recipientEmail: String = "", 
     val senderName: String = "Owner",
     val senderEmail: String = "",    
-    var carMetadata: CarMetadata? = null 
+    var carMetadata: CarMetadata? = null,
+    val moduleID: ByteArray? = null   // Added to fix Mid=null
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

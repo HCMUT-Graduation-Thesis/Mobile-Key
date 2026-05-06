@@ -95,6 +95,7 @@ class SharingManager(
                 this.invitationCodeHash = invCodeHash
                 this.attestationPackage = ap
                 this.accountEmail = recipientEmail
+                this.moduleID = ownerRecord.moduleID // FIX Mid=null
             }
             
             // Build the invitation package for the server
@@ -104,7 +105,8 @@ class SharingManager(
                 holderNickname = pendingRecord.keyHolderName, // Passing user's nickname
                 recipientEmail = recipientEmail,
                 senderName = senderName,
-                senderEmail = ownerRecord.accountEmail ?: ""
+                senderEmail = ownerRecord.accountEmail ?: "",
+                moduleID = ownerRecord.moduleID // FIX Mid=null
             )
 
             if (MockKeyServer.uploadInvitation(invitation)) {
@@ -149,6 +151,7 @@ class SharingManager(
                 this.carMetadata = invitation.carMetadata
                 this.friendlyName = invitation.friendlyName // Map car name
                 this.keyHolderName = invitation.holderNickname // Map user nickname
+                this.moduleID = invitation.moduleID // FIX Mid=null
             }
             return newRecord
         } catch (e: Exception) {

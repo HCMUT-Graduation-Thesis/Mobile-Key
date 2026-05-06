@@ -47,14 +47,17 @@ class FastTransaction(
         }
         val targetModuleID = ByteArray(CryptoConstants.MODULE_ID_SIZE)
         buffer.get(targetModuleID)
-
+        onLog("FastTx: Target ModuleID = ${targetModuleID.joinToString("") { "%02x".format(it) }}")
         val currentEmail = authManager.getUserEmail() ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
-        
+
+
         // Filter keys belonging to the current account
         val myKeys = storageManager.getKeysByAccount(currentEmail)
+        onLog("FastTx: User $currentEmail has ${myKeys.size} keys in storage")
         val record = myKeys.find { it.moduleID?.contentEquals(targetModuleID) == true }
             ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
 
+        onLog("FastTx: Matched KeyID = ${record.core.keyID?.joinToString("") { "%02x".format(it) }}, State = ${record.core.keyState}")
         if (record.core.keyState != KeyState.ACTIVE) return LogicalResponse(Status.ERR_PERMISSION)
 
         val fastAuthKey = record.core.fastAuthKey ?: return LogicalResponse(Status.ERR_GENERAL)

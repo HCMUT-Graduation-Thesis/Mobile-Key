@@ -2,6 +2,7 @@ package com.example.a100_basiccrypto
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -24,6 +25,8 @@ import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
 import com.example.a100_basiccrypto.digitalkey.ble.BleForegroundService
 import com.example.a100_basiccrypto.digitalkey.ble.BleHomeHelper
 import com.example.a100_basiccrypto.digitalkey.nfc.MyHostApduService
+import com.example.a100_basiccrypto.digitalkey.transactions.FriendPairingTransaction
+import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.Role
 import com.example.a100_basiccrypto.shared.model.DigitalKeyPermissions
@@ -51,14 +54,21 @@ class HomeActivity : AppCompatActivity() {
     private val dynamicVehicleData = mutableMapOf<String, Pair<String, Int>>()
     private var isL2capConnected = false
 
+    // Track which vehicles we've already suggested pairing for in this session
+    private val suggestedPairingDevices = mutableSetOf<String>()
+
     private val bleStatusListener: (String) -> Unit = { message ->
         runOnUiThread { tvBleStatus.text = "Status: $message" }
     }
 
     private val vehicleInfoListener: (String, String, Int) -> Unit = { mid, mac, psm ->
         runOnUiThread {
+            Log.d("HomeActivity", "📡 BLE Scan: Found Vehicle MID=$mid, MAC=$mac")
             dynamicVehicleData[mid] = Pair(mac, psm)
             keyAdapter.notifyDataSetChanged()
+            
+            // New logic: Check if this vehicle has a pending friend pairing
+            checkForPendingFriendPairing(mid)
         }
     }
 
@@ -275,6 +285,72 @@ class HomeActivity : AppCompatActivity() {
             (it.core.keyState == KeyState.ACTIVE || it.core.keyState == KeyState.PROVISIONING) 
         }
         keyAdapter.submitList(visibleKeys)
+    }
+
+    /**
+     * Checks if the detected vehicle has a matching key in PROVISIONING state.
+     */
+    private fun checkForPendingFriendPairing(midHex: String) {
+        if (suggestedPairingDevices.contains(midHex)) return
+        val email = authManager.getUserEmail() ?: return
+        val keys = storageManager.getKeysByAccount(email)
+        Log.d("HomeActivity", "🔍 Checking $midHex against ${keys.size} local keys")
+
+        val pendingKey = keys.find { key ->
+            val keyMid = key.moduleID?.joinToString("") { "%02x".format(it) }
+            val isMatch = keyMid == midHex && key.core.keyState == KeyState.PROVISIONING && key.core.role == Role.FRIEND
+            
+            Log.v("HomeActivity", "   - KeyID=${key.core.keyID?.joinToString("") { "%02x".format(it) }} | Mid=$keyMid | State=${key.core.keyState} | Role=${key.core.role} | Match=$isMatch")
+            isMatch
+        }
+
+        if (pendingKey != null) {
+            Log.i("HomeActivity", "🎯 Found pending Friend Pairing for $midHex")
+            suggestedPairingDevices.add(midHex)
+            showFriendPairingSuggestion(pendingKey)
+        }
+    }
+
+    private fun showFriendPairingSuggestion(record: DigitalKeyRecord) {
+        AlertDialog.Builder(this)
+            .setTitle("Vehicle Detected")
+            .setMessage("You have a shared key for ${record.friendlyName.ifEmpty { "this vehicle" }} that needs activation at the car. Would you like to start the pairing process now?")
+            .setPositiveButton("Start Pairing") { _, _ ->
+                startFriendPairingFlow(record)
+            }
+            .setNegativeButton("Not Now", null)
+            .show()
+    }
+
+    private fun startFriendPairingFlow(record: DigitalKeyRecord) {
+        val pairingCode = record.invitationCode ?: ""
+        if (pairingCode.isEmpty()) {
+            Toast.makeText(this, "Error: Missing invitation code.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Initialize the transaction
+        val transaction = FriendPairingTransaction(
+            identityCrypto = DilithiumIdentityCryptoImpl(),
+            storageManager = storageManager,
+            record = record,
+            pairingCode = pairingCode,
+            onLog = { Log.d("FriendPairing", it) }
+        )
+
+        // Configure NFC Service
+        MyHostApduService.friendPairingHandler = transaction
+        MyHostApduService.isPairingModeEnabled = true
+
+        // Inform user to tap
+        AlertDialog.Builder(this)
+            .setTitle("Ready to Pair")
+            .setMessage("Please tap your phone against the vehicle's NFC reader to complete the activation.")
+            .setPositiveButton("OK", null)
+            .setOnDismissListener {
+                // We keep it enabled until session timeout or success
+            }
+            .show()
     }
 
     private val keyAdapter = KeyAdapter { record ->
