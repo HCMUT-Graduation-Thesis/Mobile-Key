@@ -172,7 +172,7 @@ object MockKeyServer {
         if (pending.any { inv ->
             // FIX: AP structure is [Version(1b) | ParentID(8b) | ...] -> ParentID is at index 1 to 9
             val invParentId = inv.ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
-            invParentId == parentKeyIdHex
+            invParentId.equals(parentKeyIdHex, ignoreCase = true)
         }) {
             Log.w(TAG, "🚫 [LEGALITY] DENIED: Car $parentKeyIdHex already has a pending invitation for $recipientEmail.")
             return "An invitation for this vehicle is already pending for this recipient."
@@ -189,22 +189,22 @@ object MockKeyServer {
         Log.d(TAG, "☁️ [UPLOAD] Processing Invitation from ${invitation.senderEmail} to ${invitation.recipientEmail}")
         delay(1000)
 
-        // 1. Proactively attach car metadata
+        // 1. Proactively attach car metadata if missing
         val ap = invitation.ap
         if (invitation.carMetadata == null && ap.size >= 9) {
-            // FIX: Correct offset for Parent KeyID in AP package is 1 to 9 (Version is at index 0)
-            val parentKeyIdHex = ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
+            // FIX: Use uppercase for hex to match CloudKeyRecord stored via CryptoUtils.toHex()
+            val parentKeyIdHex = ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }.uppercase()
+            
             val foundMetadata = userKeyCloud.values.flatten()
-                .find { it.keyId == parentKeyIdHex }?.metadata
+                .find { it.keyId.equals(parentKeyIdHex, ignoreCase = true) }?.metadata
             
             if (foundMetadata != null) {
                 invitation.carMetadata = foundMetadata
                 Log.d(TAG, "📦 [UPLOAD] Attached car metadata to invitation: ${foundMetadata.modelName} (Plate: ${foundMetadata.licensePlate})")
             } else {
                 Log.w(TAG, "⚠️ [UPLOAD] Metadata NOT found for Parent KeyID: $parentKeyIdHex. Checking fallback...")
-                // Fallback: search by prefix if the ID was stored differently
                 val fallbackMetadata = userKeyCloud.values.flatten()
-                    .find { it.keyId.startsWith(parentKeyIdHex) }?.metadata
+                    .find { it.keyId.startsWith(parentKeyIdHex, ignoreCase = true) }?.metadata
                 if (fallbackMetadata != null) {
                     invitation.carMetadata = fallbackMetadata
                     Log.d(TAG, "📦 [UPLOAD] Attached car metadata via prefix fallback: ${fallbackMetadata.licensePlate}")
@@ -244,10 +244,9 @@ object MockKeyServer {
 
         // 2. Synchronization: Remove from Cloud Key Records
         if (ap.size >= 9) {
-            // FIX: Correct offset 1 to 9
             val parentKeyIdHex = ap.sliceArray(1 until 9).joinToString("") { "%02x".format(it) }
-            userKeyCloud[recipientEmail]?.removeAll { it.parentKeyId == parentKeyIdHex || it.ownerEmail == senderEmail }
-            userKeyCloud[senderEmail]?.removeAll { it.holderEmail == recipientEmail && it.parentKeyId == parentKeyIdHex }
+            userKeyCloud[recipientEmail]?.removeAll { it.parentKeyId.equals(parentKeyIdHex, ignoreCase = true) || it.ownerEmail.equals(senderEmail, ignoreCase = true) }
+            userKeyCloud[senderEmail]?.removeAll { it.holderEmail.equals(recipientEmail, ignoreCase = true) && it.parentKeyId.equals(parentKeyIdHex, ignoreCase = true) }
             Log.d(TAG, "☁️ [SYNC] Revoked key records for $parentKeyIdHex removed from Cloud storage.")
         }
 
@@ -300,7 +299,7 @@ object MockKeyServer {
 
     suspend fun syncKeyToCloud(email: String, record: CloudKeyRecord): Boolean {
         val keys = userKeyCloud.getOrPut(email) { mutableListOf() }
-        keys.removeAll { it.keyId == record.keyId || it.moduleID == record.moduleID }
+        keys.removeAll { it.keyId.equals(record.keyId, ignoreCase = true) || it.moduleID.equals(record.moduleID, ignoreCase = true) }
         keys.add(record)
         
         // Detailed log of Car Metadata on Cloud

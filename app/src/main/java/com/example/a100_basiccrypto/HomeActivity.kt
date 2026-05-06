@@ -25,7 +25,7 @@ import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
 import com.example.a100_basiccrypto.digitalkey.ble.BleForegroundService
 import com.example.a100_basiccrypto.digitalkey.ble.BleHomeHelper
 import com.example.a100_basiccrypto.digitalkey.nfc.MyHostApduService
-import com.example.a100_basiccrypto.digitalkey.transactions.FriendPairingTransaction
+import com.example.a100_basiccrypto.digitalkey.transactions.FriendPairingClient
 import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.Role
@@ -294,7 +294,7 @@ class HomeActivity : AppCompatActivity() {
         if (suggestedPairingDevices.contains(midHex)) return
         val email = authManager.getUserEmail() ?: return
         val keys = storageManager.getKeysByAccount(email)
-        Log.d("HomeActivity", "🔍 Checking $midHex against ${keys.size} local keys")
+        Log.d("HomeActivity", "🔍 Checking $midHex against ${keys.size} keys belonging to $email")
 
         val pendingKey = keys.find { key ->
             val keyMid = key.moduleID?.joinToString("") { "%02x".format(it) }
@@ -314,7 +314,7 @@ class HomeActivity : AppCompatActivity() {
     private fun showFriendPairingSuggestion(record: DigitalKeyRecord) {
         AlertDialog.Builder(this)
             .setTitle("Vehicle Detected")
-            .setMessage("You have a shared key for ${record.friendlyName.ifEmpty { "this vehicle" }} that needs activation at the car. Would you like to start the pairing process now?")
+            .setMessage("Your shared key for ${record.friendlyName.ifEmpty { "this vehicle" }} is ready to be activated via Bluetooth. Would you like to start the pairing process now?")
             .setPositiveButton("Start Pairing") { _, _ ->
                 startFriendPairingFlow(record)
             }
@@ -329,28 +329,46 @@ class HomeActivity : AppCompatActivity() {
             return
         }
 
-        // Initialize the transaction
-        val transaction = FriendPairingTransaction(
-            identityCrypto = DilithiumIdentityCryptoImpl(),
-            storageManager = storageManager,
-            record = record,
-            pairingCode = pairingCode,
-            onLog = { Log.d("FriendPairing", it) }
-        )
+        val transport = BleProvider.getTransport()
+        if (transport == null || BleProvider.getManager()?.isConnected() != true) {
+            Toast.makeText(this, "Vehicle not connected via BLE. Please wait...", Toast.LENGTH_SHORT).show()
+            return
+        }
 
-        // Configure NFC Service
-        MyHostApduService.friendPairingHandler = transaction
-        MyHostApduService.isPairingModeEnabled = true
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle("Activating Key")
+            .setMessage("Establishing secure connection with vehicle...\nPlease stay near the car.")
+            .setCancelable(false)
+            .create()
+        progressDialog.show()
 
-        // Inform user to tap
-        AlertDialog.Builder(this)
-            .setTitle("Ready to Pair")
-            .setMessage("Please tap your phone against the vehicle's NFC reader to complete the activation.")
-            .setPositiveButton("OK", null)
-            .setOnDismissListener {
-                // We keep it enabled until session timeout or success
+        lifecycleScope.launch {
+            val client = FriendPairingClient(
+                identityCrypto = DilithiumIdentityCryptoImpl(),
+                storageManager = storageManager,
+                onLog = { msg -> 
+                    Log.d("FriendPairing", msg)
+                    runOnUiThread { progressDialog.setMessage(msg) }
+                }
+            )
+
+            val success = client.execute(transport, record, pairingCode)
+            
+            progressDialog.dismiss()
+            if (success) {
+                AlertDialog.Builder(this@HomeActivity)
+                    .setTitle("Success")
+                    .setMessage("Your digital key for ${record.friendlyName} is now active and ready to use!")
+                    .setPositiveButton("OK", null)
+                    .show()
+                refreshList()
+                // Force background service to update its scan filter with the new active key
+                startBleBackgroundService(forceRefresh = true)
+            } else {
+                Toast.makeText(this@HomeActivity, "Pairing failed. Please ensure you are close to the vehicle and try again.", Toast.LENGTH_LONG).show()
+                suggestedPairingDevices.remove(record.moduleID?.joinToString("") { "%02x".format(it) } ?: "")
             }
-            .show()
+        }
     }
 
     private val keyAdapter = KeyAdapter { record ->

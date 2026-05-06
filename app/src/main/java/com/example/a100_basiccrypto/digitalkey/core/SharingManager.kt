@@ -101,12 +101,13 @@ class SharingManager(
             // Build the invitation package for the server
             val invitation = ShareInvitation(
                 ap = ap,
-                friendlyName = ownerRecord.friendlyName, // Passing car's name for compatibility
-                holderNickname = pendingRecord.keyHolderName, // Passing user's nickname
+                friendlyName = ownerRecord.friendlyName, // Passing car's name (often model name)
+                holderNickname = pendingRecord.keyHolderName, 
                 recipientEmail = recipientEmail,
                 senderName = senderName,
                 senderEmail = ownerRecord.accountEmail ?: "",
-                moduleID = ownerRecord.moduleID // FIX Mid=null
+                carMetadata = ownerRecord.carMetadata, // FIXED: Explicitly pass metadata so Friend sees the plate
+                moduleID = ownerRecord.moduleID
             )
 
             if (MockKeyServer.uploadInvitation(invitation)) {
