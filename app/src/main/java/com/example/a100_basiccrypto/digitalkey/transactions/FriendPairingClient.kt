@@ -8,6 +8,7 @@ import com.example.a100_basiccrypto.shared.command.MessageConstants.FriendPairin
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
 import com.example.a100_basiccrypto.shared.crypto.CryptoConstants
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.shared.link.IActiveTransport
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
@@ -18,7 +19,6 @@ import java.security.interfaces.ECPublicKey
 
 /**
  * FriendPairingClient - Implements the 5-phase pairing flow for Friend/Guest over BLE.
- * This is the Active Client version of the pairing logic.
  */
 class FriendPairingClient(
     private val identityCrypto: IIdentityCrypto,
@@ -39,16 +39,16 @@ class FriendPairingClient(
         try {
             onLog("BLE: Starting Friend Pairing...")
 
-            // 1. PHASE 1: Init & ECDH Exchange
+            // 1. PHASE 1: Handshake
             if (!performHandshake(transport)) return false
 
-            // 2. PHASE 2: Authorization Upload (AP + PK + PIN)
+            // 2. PHASE 2: Authorization
             if (!performAuthorization(transport, record, pin)) return false
 
-            // 3. PHASE 3: Proof of Possession (Challenge/Response)
+            // 3. PHASE 3: Proof of Possession
             if (!performProofOfPossession(transport)) return false
 
-            // 4. PHASE 4: Provisioning (Receiving Secret Data)
+            // 4. PHASE 4: Provisioning (Data Sync)
             if (!performProvisioning(transport, record, pin)) return false
 
             // 5. PHASE 5: Commit
@@ -65,15 +65,12 @@ class FriendPairingClient(
 
     private suspend fun performHandshake(transport: IActiveTransport): Boolean {
         onLog("P1: Initializing ECDH Exchange...")
-        
-        // Step 1: Request Vehicle's Ephemeral Public Key
         val initFrame = LogicalFrame(Class.FRIEND_PAIRING, FriendPairing.PHASE_INIT, byteArrayOf())
         val initResponse = transport.exchange(initFrame)
         if (initResponse.status != Status.SUCCESS) return false
 
         val vehiclePK = CryptoUtils.getPublicKeyFromBytes(initResponse.data)
 
-        // Step 2: Generate and send App's Ephemeral Public Key
         ephemeralKeyPair = CryptoUtils.generateEcKeyPair()
         val appPK = ephemeralKeyPair!!.public as ECPublicKey
         val x = CryptoUtils.run { appPK.w.affineX.toByteArray().normalize(32) }
@@ -84,7 +81,6 @@ class FriendPairingClient(
         val exchangeResponse = transport.exchange(exchangeFrame)
         if (exchangeResponse.status != Status.SUCCESS) return false
 
-        // Step 3: Derive Session Key
         val sharedSecret = CryptoUtils.generateSharedSecret(ephemeralKeyPair!!.private, vehiclePK)
         sessionKey = CryptoUtils.deriveSessionKey(
             ikm = sharedSecret,
@@ -92,7 +88,6 @@ class FriendPairingClient(
             info = CryptoConstants.FRIEND_SESSION_INFO.toByteArray(),
             length = 32
         )
-        
         onLog("P1: Secure Session established.")
         return true
     }
@@ -100,14 +95,10 @@ class FriendPairingClient(
     private suspend fun performAuthorization(transport: IActiveTransport, record: DigitalKeyRecord, pin: String): Boolean {
         onLog("P2: Uploading Authorization Package...")
         val sKey = sessionKey ?: return false
-
         val ap = record.attestationPackage ?: return false
         val identityPK = identityCrypto.getPublicKey()
         
-        // Normalize PIN to 32 bytes for consistent transmission
-        val pinBytes = pin.toByteArray().let { 
-            if (it.size < 32) it + ByteArray(32 - it.size) else it 
-        }
+        val pinBytes = pin.toByteArray().let { if (it.size < 32) it + ByteArray(32 - it.size) else it }
 
         val bundle = ByteBuffer.allocate(2 + ap.size + 2 + identityPK.size + 32).apply {
             putShort(ap.size.toShort())
@@ -119,7 +110,6 @@ class FriendPairingClient(
 
         val encryptedPayload = CryptoUtils.encryptAesGcm(bundle, sKey)
         val frame = LogicalFrame(Class.FRIEND_PAIRING, FriendPairing.PHASE_VERIFY_ATTEST, encryptedPayload)
-        
         val response = transport.exchange(frame)
         if (response.status == FriendPairing.ERR_INVCODE_MISMATCH) {
             onLog("Error: Invalid PIN code according to vehicle.")
@@ -137,14 +127,11 @@ class FriendPairingClient(
         val response = transport.exchange(reqFrame)
         if (response.status != Status.SUCCESS) return false
 
-        // Decrypt Challenge and Sign it
         val challenge = CryptoUtils.decryptAesGcm(response.data, sKey)
         val signature = identityCrypto.sign(challenge, identityCrypto.getPrivateKey())
-
-        // Send Signature
         val encryptedSig = CryptoUtils.encryptAesGcm(signature, sKey)
         val sigFrame = LogicalFrame(Class.FRIEND_PAIRING, FriendPairing.PHASE_SIGN_POP, encryptedSig)
-        
+
         val sigResponse = transport.exchange(sigFrame)
         if (sigResponse.status == FriendPairing.ERR_POP_FAILED) {
             onLog("Error: Proof of Possession failed.")
@@ -156,7 +143,6 @@ class FriendPairingClient(
     private suspend fun performProvisioning(transport: IActiveTransport, record: DigitalKeyRecord, pin: String): Boolean {
         onLog("P4: Receiving Provisioning Data...")
         val sKey = sessionKey ?: return false
-
         val frame = LogicalFrame(Class.FRIEND_PAIRING, FriendPairing.PHASE_PROVISIONING, byteArrayOf())
         val response = transport.exchange(frame)
         if (response.status != Status.SUCCESS) return false
@@ -164,24 +150,34 @@ class FriendPairingClient(
         val decrypted = CryptoUtils.decryptAesGcm(response.data, sKey)
         val buffer = ByteBuffer.wrap(decrypted)
         
+        // 1. Capture the temporary keyID (from AP) before it gets overwritten
+        val temporaryKeyID = record.core.keyID?.copyOf()
+
         record.apply {
             core.slotID = buffer.get()
+            // 2. Overwrite with the permanent keyID from vehicle
             core.keyID = ByteArray(8).apply { buffer.get(this) }
             immobilizerToken = ByteArray(64).apply { buffer.get(this) }
             core.permissions = buffer.int
-            
+
             // Derive FastAuthKey for daily BLE usage
             core.fastAuthKey = CryptoUtils.deriveSessionKey(
                 sKey, pin.toByteArray(), CryptoConstants.FAST_AUTH_TAG.toByteArray(), 32
             )
-            
+
             // Store our identity keys
             devicePrivateKey = identityCrypto.getPrivateKey()
             devicePublicKey = identityCrypto.getPublicKey()
-            
             core.keyState = KeyState.PROVISIONING
         }
 
+        // 3. Nếu KeyID thay đổi, thực hiện xóa bản ghi tạm thời cũ
+        if (temporaryKeyID != null && !temporaryKeyID.contentEquals(record.core.keyID)) {
+            Log.i(TAG, "🎯 Cleaning up temporary record: ${temporaryKeyID.toHex()}")
+            storageManager.deleteKey(temporaryKeyID)
+        }
+
+        // 4. Lưu bản ghi chính thức
         storageManager.saveDigitalKey(record)
         return true
     }
@@ -190,7 +186,7 @@ class FriendPairingClient(
         onLog("P5: Finalizing Pairing...")
         val frame = LogicalFrame(Class.FRIEND_PAIRING, FriendPairing.PHASE_COMMIT, byteArrayOf())
         val response = transport.exchange(frame)
-        
+
         if (response.status == Status.SUCCESS) {
             record.core.keyState = KeyState.ACTIVE
             storageManager.saveDigitalKey(record)
