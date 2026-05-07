@@ -34,7 +34,7 @@ class SharingViewModel(
 
     // Flow for observing proactive invitations from Server (Stage 1 Push)
     val incomingInvitations = MockKeyServer.invitationFlow
-    
+
     // Flow for the Owner to observe status updates of their sent invitations
     val sentInvitationUpdates = MockKeyServer.statusUpdateFlow
 
@@ -46,7 +46,7 @@ class SharingViewModel(
 
         // FRIEND SIDE: Listen for REVOKED signals from server to perform soft-wipe
         observeRevocations()
-        
+
         // OWNER SIDE: Listen for ACTIVATION signals from server
         observeActivations()
     }
@@ -59,7 +59,7 @@ class SharingViewModel(
                     // If the revocation is for the current user
                     if (update.recipientEmail.equals(currentEmail, ignoreCase = true)) {
                         Log.w("SharingViewModel", "🚨 [REVOKE] Received revocation signal for recipient: ${update.recipientEmail}")
-                        
+
                         // Perform Soft-Wipe: Find local key by AP and delete it
                         val allKeys = storageManager.getAllKeys()
                         val keyToDelete = allKeys.find { it.attestationPackage?.contentEquals(update.ap) == true }
@@ -114,7 +114,7 @@ class SharingViewModel(
     ) {
         viewModelScope.launch {
             _uiState.value = SharingUiState.Loading
-            
+
             // 1. Security Check with Server
             val parentKeyIdHex = ownerRecord.core.keyID?.toHex() ?: ""
             val errorMsg = MockKeyServer.checkInvitationLegality(senderEmail, recipientEmail, parentKeyIdHex)
@@ -156,12 +156,23 @@ class SharingViewModel(
             val recipientEmail = record.accountEmail ?: return@launch
             val senderEmail = authManager.getUserEmail() ?: return@launch
 
-            Log.i("SharingViewModel", "🛡️ [REVOKE] Initiating online revocation for $recipientEmail")
+            _uiState.value = SharingUiState.Loading
+
+            // NEW: Signed Revocation
+            // Get Owner's private key to sign the revocation intent
+            val parentKeyID = record.core.parentKeyID ?: return@launch
+            val ownerRecord = storageManager.getDigitalKey(parentKeyID)
+            val ownerSK = ownerRecord?.devicePrivateKey ?: return@launch
+
+            // Sign the AP package as proof of revocation intent
+            val revokeSignature = identityCrypto.sign(ap, ownerSK)
+
+            Log.i("SharingViewModel", "🛡️ [REVOKE] Initiating signed online revocation for $recipientEmail")
             
-            // 1. Notify Server
-            MockKeyServer.revokeInvitation(senderEmail, recipientEmail, ap)
+            // 1. Notify Server with the signature
+            MockKeyServer.revokeInvitation(senderEmail, recipientEmail, ap, revokeSignature)
             
-            // 2. Delete locally
+            // 2. Delete locally from Owner's tracking list
             record.core.keyID?.let { storageManager.deleteKey(it) }
             
             _uiState.value = SharingUiState.RevokeSuccess
@@ -209,7 +220,7 @@ class SharingViewModel(
                     status = InvitationStatus.CLAIMED,
                     senderEmail = invitation.senderEmail
                 )
-                
+
                 MockKeyServer.notifyActivation(record.attestationPackage ?: byteArrayOf())
                 NotificationStore.markAsUsed(invitation)
                 _uiState.value = SharingUiState.ActivationSuccess

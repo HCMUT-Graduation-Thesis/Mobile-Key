@@ -123,8 +123,7 @@ class BleForegroundService : Service() {
 
         if (!manager.isConnected()) {
             val email = authManager.getUserEmail() ?: return
-            
-            // Cập nhật filter để bao gồm cả KeyState.ACTIVE và KeyState.PROVISIONING
+
             val keysToScan = storageManager.getAllKeys().filter {
                 (it.core.keyState == KeyState.ACTIVE || it.core.keyState == KeyState.PROVISIONING) && it.accountEmail == email
             }

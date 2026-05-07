@@ -83,7 +83,7 @@ class FastTransactionClient(
             val decrypted = CryptoUtils.decryptAesGcm(response.data, fastAuthKey)
             
             val status = parseVehicleStatus(decrypted)
-            
+
             Log.d(TAG, "Telemetry Received: Engine=${status.engineState}, Battery=${status.batteryLevel}%")
             storageManager.updateVehicleStatus(keyID, status)
             return status

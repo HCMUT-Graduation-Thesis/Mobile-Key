@@ -231,11 +231,15 @@ object MockKeyServer {
 
     /**
      * OWNER SIDE: Revokes an active or pending invitation.
+     * UPDATED: Accepts an optional signature to prove intent.
      */
-    suspend fun revokeInvitation(senderEmail: String, recipientEmail: String, ap: ByteArray) {
-        Log.i(TAG, "🛡️ [SERVER] Owner $senderEmail is revoking key for $recipientEmail")
+    suspend fun revokeInvitation(senderEmail: String, recipientEmail: String, ap: ByteArray, signature: ByteArray? = null) {
+        Log.i(TAG, "🛡️ [SERVER] Owner $senderEmail is revoking key for $recipientEmail. Signed: ${signature != null}")
         delay(500)
         
+        // In a real implementation, we would verify the signature using Owner's Identity Public Key
+        // For mock purposes, we assume valid if provided.
+
         // 1. Remove from Inbox (Status: PENDING)
         val removedFromInbox = invitationInbox[recipientEmail]?.removeAll { it.ap.contentEquals(ap) } ?: false
         if (removedFromInbox) {

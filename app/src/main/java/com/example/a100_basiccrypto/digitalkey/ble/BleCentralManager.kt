@@ -204,7 +204,7 @@ class BleCentralManager(
 
     private fun verifyVehicleIdentity(receivedId: ByteArray?): Boolean {
         if (receivedId == null) return false
-        
+
         val currentEmail = authManager.getUserEmail() ?: return false
         
         // 1. Check in storage for existing keys belonging to CURRENT account
