@@ -9,6 +9,8 @@ import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.Role
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransactionClient
+import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -181,6 +183,56 @@ class SharingViewModel(
             
             _uiState.value = SharingUiState.RevokeSuccess
             _events.emit(SharingEvent.LocalRevokeSuccess)
+        }
+    }
+
+    /**
+     * OWNER SIDE: Revoke Self / Reset Vehicle flow (Spec 1.2).
+     */
+    fun revokeOwnerSelf(record: DigitalKeyRecord, password: String) {
+        viewModelScope.launch {
+            _uiState.value = SharingUiState.Loading
+
+            // 1. INTERNAL AUTH: Verify via MockKeyServer
+            val email = authManager.getUserEmail() ?: ""
+            val authResult = MockKeyServer.login(email, password)
+            if (authResult == null) {
+                _uiState.value = SharingUiState.Error("Authentication failed. Invalid password.")
+                return@launch
+            }
+
+            // 2. LOCAL PHASE: Execute Standard Transaction CMD_REVOKE_OWNER
+            val transport = BleProvider.getTransport()
+            val isConnected = BleProvider.getManager()?.isConnected() == true
+
+            if (transport == null || !isConnected) {
+                _uiState.value = SharingUiState.Error("BLE disconnected. Please stay near the vehicle for Reset.")
+                return@launch
+            }
+
+            val standardTxClient = StandardTransactionClient(storageManager, identityCrypto) { 
+                Log.d("SharingViewModel", "RevokeSelf-BLE: $it")
+            }
+
+            val localSuccess = standardTxClient.executeRevokeOwner(transport, record.core.keyID!!)
+
+            if (!localSuccess) {
+                _uiState.value = SharingUiState.Error("Vehicle reset failed. Please ensure you are authorized and try again.")
+                return@launch
+            }
+
+            // 3. SYNC PHASE: Notify Cloud
+            val moduleIDHex = record.moduleID?.toHex() ?: ""
+            val cloudSuccess = MockKeyServer.revokeOwner(email, moduleIDHex)
+
+            if (cloudSuccess) {
+                // 4. CLEANUP: Wipe local data
+                storageManager.deleteKey(record.core.keyID!!)
+                _uiState.value = SharingUiState.RevokeSuccess
+                _events.emit(SharingEvent.LocalRevokeSuccess)
+            } else {
+                _uiState.value = SharingUiState.Error("Vehicle reset locally, but Cloud sync failed.")
+            }
         }
     }
 

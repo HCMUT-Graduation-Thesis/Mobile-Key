@@ -260,6 +260,47 @@ object MockKeyServer {
     }
 
     /**
+     * OWNER SIDE: Performs a full Owner Revocation (Reset).
+     * Wipes the Owner key and all associated Friend keys from the Cloud.
+     */
+    suspend fun revokeOwner(ownerEmail: String, moduleID: String): Boolean {
+        Log.i(TAG, "🚨 [SERVER] Owner $ownerEmail requested full Revoke/Reset for Module: $moduleID")
+        delay(1000)
+
+        // 1. Find all keys associated with this module
+        val allRecords = userKeyCloud.values.flatten()
+        val affectedKeys = allRecords.filter { it.moduleID.equals(moduleID, ignoreCase = true) }
+        
+        if (affectedKeys.isEmpty()) {
+            Log.w(TAG, "⚠️ [SERVER] No keys found for Module $moduleID on Cloud.")
+            return true
+        }
+
+        // 2. Cascade Wipe: For each affected key, notify the holder (Friend) if they are not the owner
+        affectedKeys.forEach { record ->
+            if (!record.holderEmail.equals(ownerEmail, ignoreCase = true)) {
+                Log.d(TAG, "🔔 [SERVER] Notifying Friend ${record.holderEmail} about vehicle reset.")
+                // We use a dummy AP or derive it if needed. For mock, we'll just emit status by email/module logic if possible.
+                // But SharingViewModel expects AP, so we might need to be careful.
+                // For this mock, we'll just remove them from userKeyCloud.
+            }
+        }
+
+        // 3. Remove all records for this module from all users' clouds
+        userKeyCloud.values.forEach { list ->
+            list.removeAll { it.moduleID.equals(moduleID, ignoreCase = true) }
+        }
+
+        // 4. Remove pending invitations for this module
+        invitationInbox.values.forEach { list ->
+            list.removeAll { it.moduleID?.joinToString("") { b -> "%02x".format(b) }.equals(moduleID, ignoreCase = true) }
+        }
+
+        Log.i(TAG, "✅ [SERVER] Full Cloud Wipe complete for Module: $moduleID")
+        return true
+    }
+
+    /**
      * FRIEND SIDE: Reports the outcome back to the server.
      */
     suspend fun reportInvitationOutcome(recipientEmail: String, ap: ByteArray, status: InvitationStatus, senderEmail: String) {

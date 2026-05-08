@@ -138,30 +138,15 @@
                     <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/divider" />
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btn_settings_delete_key"
+                        android:id="@+id/btn_settings_revoke_owner"
                         style="@style/Widget.MaterialComponents.Button.TextButton"
                         android:layout_width="match_parent"
                         android:layout_height="64dp"
                         android:gravity="center_vertical|start"
                         android:paddingHorizontal="16dp"
-                        android:text="Delete Key (Revoke Owner)"
+                        android:text="Revoke Owner"
                         android:textColor="@color/error_red"
                         app:icon="@android:drawable/ic_menu_delete"
-                        app:iconPadding="16dp"
-                        app:iconTint="@color/error_red" />
-
-                    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/divider" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btn_settings_factory_reset"
-                        style="@style/Widget.MaterialComponents.Button.TextButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="64dp"
-                        android:gravity="center_vertical|start"
-                        android:paddingHorizontal="16dp"
-                        android:text="Factory Reset Module"
-                        android:textColor="@color/error_red"
-                        app:icon="@android:drawable/ic_menu_revert"
                         app:iconPadding="16dp"
                         app:iconTint="@color/error_red" />
 
@@ -170,5 +155,40 @@
 
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
+
+    <!-- Execution Overlay (Blocking Loading) -->
+    <FrameLayout
+        android:id="@+id/loading_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#AA000000"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <ProgressBar
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:indeterminateTint="@color/primary_blue" />
+
+            <TextView
+                android:id="@+id/tv_loading_message"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="Processing Request... Please stay near the vehicle."
+                android:textColor="@color/white"
+                android:textSize="16sp"
+                android:gravity="center" />
+        </LinearLayout>
+    </FrameLayout>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

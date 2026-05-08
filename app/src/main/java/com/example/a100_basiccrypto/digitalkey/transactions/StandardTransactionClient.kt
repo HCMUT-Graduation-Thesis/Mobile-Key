@@ -36,8 +36,23 @@ class StandardTransactionClient(
      * Executes the full Standard Transaction flow to synchronize keys and counters.
      */
     suspend fun executeSync(transport: IActiveTransport, keyID: ByteArray): Boolean {
+        return executeAdminTransaction(transport, keyID, Admin.PHASE_ACTION_SYNC)
+    }
+
+    /**
+     * Executes the full Standard Transaction flow for Owner Revocation (Reset).
+     */
+    suspend fun executeRevokeOwner(transport: IActiveTransport, keyID: ByteArray): Boolean {
+        return executeAdminTransaction(transport, keyID, Admin.CMD_REVOKE_OWNER)
+    }
+
+    private suspend fun executeAdminTransaction(
+        transport: IActiveTransport,
+        keyID: ByteArray,
+        instruction: Byte
+    ): Boolean {
         try {
-            onLog("BLE: Starting Standard Transaction (Sync)...")
+            onLog("BLE: Starting Standard Transaction (Ins: 0x%02X)...".format(instruction))
             
             // 1. PHASE 1: Key Exchange & Session Derivation
             val record = storageManager.getDigitalKey(keyID) ?: return false
@@ -46,11 +61,11 @@ class StandardTransactionClient(
             // 2. PHASE 2: Mutual Identity Verification (PQC)
             if (!performPhase2(transport, record)) return false
             
-            // 3. PHASE 3: Action Synchronization
-            if (!performPhase3(transport)) return false
+            // 3. PHASE 3: Action Execution (e.g. Sync or Revoke)
+            if (!performPhase3(transport, instruction)) return false
             
             // 4. PHASE 4: Atomic Commit & Persistence
-            return performPhase4(transport, record)
+            return performPhase4(transport, record, isRevoke = (instruction == Admin.CMD_REVOKE_OWNER))
 
         } catch (e: Exception) {
             onLog("BLE Standard Error: ${e.message}")
@@ -115,7 +130,6 @@ class StandardTransactionClient(
         val appSig = identityCrypto.sign(vehicleChallenge, deviceSK)
         
         // Step 2.3: Finalize Phase 2 by sending ONLY App Sig (Encrypted)
-        // KeyID is removed here as it was already provided in Phase 1
         val encryptedAuth = CryptoUtils.encryptAesGcm(appSig, sessionKey!!)
         
         val authFrame = LogicalFrame(Class.ADMIN, Admin.PHASE_MUTUAL_VERIFY, encryptedAuth)
@@ -124,14 +138,14 @@ class StandardTransactionClient(
         return authResponse.status == Status.SUCCESS
     }
 
-    private suspend fun performPhase3(transport: IActiveTransport): Boolean {
-        // App sends Sync Request
-        val frame = LogicalFrame(Class.ADMIN, Admin.PHASE_ACTION_SYNC, byteArrayOf())
+    private suspend fun performPhase3(transport: IActiveTransport, instruction: Byte): Boolean {
+        // App sends the command instruction (Sync Request or Revoke)
+        val frame = LogicalFrame(Class.ADMIN, instruction, byteArrayOf())
         val response = transport.exchange(frame)
         return response.status == Status.SUCCESS
     }
 
-    private suspend fun performPhase4(transport: IActiveTransport, record: DigitalKeyRecord): Boolean {
+    private suspend fun performPhase4(transport: IActiveTransport, record: DigitalKeyRecord, isRevoke: Boolean): Boolean {
         // App sends Commit Signal
         val commitPayload = byteArrayOf(Admin.STD_MSG_SYNC_OK)
         val encryptedCommit = CryptoUtils.encryptAesGcm(commitPayload, sessionKey!!)
@@ -145,17 +159,20 @@ class StandardTransactionClient(
         if (decrypted.size >= 2 && 
             decrypted[0] == Admin.STD_EXEC_SUCCESS && 
             decrypted[1] == Admin.STD_COMMIT_MARKER) {
-            
-            // ROTATE FAST AUTH KEY
-            val newFastKey = CryptoUtils.deriveSessionKey(
-                sharedSecret!!,
-                record.immobilizerToken!!,
-                CryptoConstants.FAST_KEY_REFRESH.toByteArray(),
-                32
-            )
-            
-            storageManager.updateFastKeyAndCounter(record.core.keyID!!, newFastKey, 0)
-            onLog("BLE Sync Success: Fast Auth Key rotated, Counter reset to 0.")
+
+            if (!isRevoke) {
+                // ROTATE FAST AUTH KEY (only if not revoking)
+                val newFastKey = CryptoUtils.deriveSessionKey(
+                    sharedSecret!!,
+                    record.immobilizerToken!!,
+                    CryptoConstants.FAST_KEY_REFRESH.toByteArray(),
+                    32
+                )
+                storageManager.updateFastKeyAndCounter(record.core.keyID!!, newFastKey, 0)
+                onLog("BLE Sync Success: Fast Auth Key rotated, Counter reset to 0.")
+            } else {
+                onLog("BLE Revoke Success: Vehicle reset complete.")
+            }
             return true
         }
         
