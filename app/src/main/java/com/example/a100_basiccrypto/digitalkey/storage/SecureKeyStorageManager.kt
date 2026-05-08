@@ -8,6 +8,7 @@ import com.example.a100_basiccrypto.shared.model.SyncStatus
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.VehicleStatus
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.hexToBytes
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
@@ -18,6 +19,7 @@ class SecureKeyStorageManager(context: Context) : IKeyStorageManager {
     
     private val gson = Gson()
     private val KEY_LIST_PREF = "ALL_REGISTERED_KEYS"
+    private val PENDING_REVOCATIONS_PREF = "PENDING_REVOCATIONS_MAP"
 
     private val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -127,5 +129,47 @@ class SecureKeyStorageManager(context: Context) : IKeyStorageManager {
         val json = sharedPreferences.getString(KEY_LIST_PREF, null) ?: return emptySet()
         val type = object : TypeToken<Set<String>>() {}.type
         return gson.fromJson(json, type) ?: emptySet()
+    }
+
+    // --- NEW: Pending Revocation Implementation using a separate table/map ---
+
+    override fun addPendingRevocation(ownerKeyId: ByteArray, friendKeyId: ByteArray) {
+        val ownerHex = ownerKeyId.toHex()
+        val friendHex = friendKeyId.toHex()
+        
+        val map = getPendingRevocationsMap()
+        val pendingSet = map.getOrPut(ownerHex) { mutableSetOf() }
+        pendingSet.add(friendHex)
+        
+        savePendingRevocationsMap(map)
+    }
+
+    override fun getPendingRevocations(ownerKeyId: ByteArray): List<ByteArray> {
+        val ownerHex = ownerKeyId.toHex()
+        val map = getPendingRevocationsMap()
+        return map[ownerHex]?.map { it.hexToBytes() } ?: emptyList()
+    }
+
+    override fun removePendingRevocation(ownerKeyId: ByteArray, friendKeyId: ByteArray) {
+        val ownerHex = ownerKeyId.toHex()
+        val friendHex = friendKeyId.toHex()
+        
+        val map = getPendingRevocationsMap()
+        map[ownerHex]?.remove(friendHex)
+        if (map[ownerHex]?.isEmpty() == true) {
+            map.remove(ownerHex)
+        }
+        
+        savePendingRevocationsMap(map)
+    }
+
+    private fun getPendingRevocationsMap(): MutableMap<String, MutableSet<String>> {
+        val json = sharedPreferences.getString(PENDING_REVOCATIONS_PREF, null) ?: return mutableMapOf()
+        val type = object : TypeToken<MutableMap<String, MutableSet<String>>>() {}.type
+        return gson.fromJson(json, type) ?: mutableMapOf()
+    }
+
+    private fun savePendingRevocationsMap(map: Map<String, Set<String>>) {
+        sharedPreferences.edit().putString(PENDING_REVOCATIONS_PREF, gson.toJson(map)).apply()
     }
 }

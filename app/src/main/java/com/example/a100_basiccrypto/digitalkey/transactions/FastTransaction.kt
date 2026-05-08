@@ -16,7 +16,7 @@ import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import java.nio.ByteBuffer
 
 /**
- * Implementation of Fast Transaction - Updated for Account Isolation.
+ * Implementation of Fast Transaction - Updated for Account Isolation and Proactive Security.
  */
 class FastTransaction(
     private val storageManager: IKeyStorageManager,
@@ -56,6 +56,12 @@ class FastTransaction(
         onLog("FastTx: User $currentEmail has ${myKeys.size} keys in storage")
         val record = myKeys.find { it.moduleID?.contentEquals(targetModuleID) == true }
             ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
+
+        // PROACTIVE SECURITY CHECK:
+        if (!record.isAccessAllowedNow()) {
+            onLog("FastTx: Access Denied - Key expired or reached limit.")
+            return LogicalResponse(Status.ERR_PERMISSION)
+        }
 
         onLog("FastTx: Matched KeyID = ${record.core.keyID?.joinToString("") { "%02x".format(it) }}, State = ${record.core.keyState}")
         if (record.core.keyState != KeyState.ACTIVE) return LogicalResponse(Status.ERR_PERMISSION)

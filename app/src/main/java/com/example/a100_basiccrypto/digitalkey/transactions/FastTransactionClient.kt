@@ -20,7 +20,7 @@ import java.nio.ByteBuffer
 
 /**
  * FastTransactionClient - Handles ACTIVE (Initiator) flow for BLE transactions.
- * Updated to return Byte status for Hybrid Security Recovery support.
+ * Updated to support INS_REMOVE_FRIEND and return Byte status for Hybrid Security Recovery support.
  */
 class FastTransactionClient(
     private val storageManager: IKeyStorageManager,
@@ -40,8 +40,7 @@ class FastTransactionClient(
         targetIns: Byte
     ): Byte {
         try {
-            val record = storageManager.getAllKeys().find { it.core.keyID?.contentEquals(keyID) == true }
-                ?: return Status.ERR_GENERAL
+            val record = storageManager.getDigitalKey(keyID) ?: return Status.ERR_GENERAL
 
             val nextCounter = record.core.transactionCounter + 1
             storageManager.updateTransactionCounter(keyID, nextCounter)
@@ -63,12 +62,43 @@ class FastTransactionClient(
     }
 
     /**
+     * OWNER SIDE: Executes the removal of a friend key at the vehicle.
+     * Payload: [Counter(4b) | FriendKeyID(8b)] (Encrypted)
+     */
+    suspend fun executeRemoveFriend(
+        transport: IActiveTransport,
+        ownerKeyID: ByteArray,
+        friendKeyID: ByteArray
+    ): Byte {
+        try {
+            onLog("FastTx: Executing INS_REMOVE_FRIEND for FriendID=${friendKeyID.joinToString("") { "%02x".format(it) }}")
+            val record = storageManager.getDigitalKey(ownerKeyID) ?: return Status.ERR_GENERAL
+
+            val nextCounter = record.core.transactionCounter + 1
+            storageManager.updateTransactionCounter(ownerKeyID, nextCounter)
+            record.core.transactionCounter = nextCounter
+
+            val authPayload = prepareRemoveFriendRequest(record, friendKeyID, nextCounter) ?: return Status.ERR_GENERAL
+            val frame = LogicalFrame(Class.FAST_ACTION, Fast.INS_REMOVE_FRIEND, authPayload)
+            val response = transport.exchange(frame)
+
+            if (response.status == Status.SUCCESS) {
+                val verified = verifyCommitMarker(record, response.data)
+                return if (verified) Status.SUCCESS else Status.ERR_AUTH_FAIL
+            }
+            return response.status
+        } catch (e: Exception) {
+            onLog("BLE Remove Friend Error: ${e.message}")
+            return Status.ERR_GENERAL
+        }
+    }
+
+    /**
      * Background Telemetry Sync - Uses BIG_ENDIAN for payload parsing.
      */
     suspend fun syncTelemetry(transport: IActiveTransport, keyID: ByteArray): VehicleStatus? {
         try {
-            val record = storageManager.getAllKeys().find { it.core.keyID?.contentEquals(keyID) == true }
-                ?: return null
+            val record = storageManager.getDigitalKey(keyID) ?: return null
 
             val nextCounter = record.core.transactionCounter + 1
             storageManager.updateTransactionCounter(keyID, nextCounter)
@@ -131,6 +161,28 @@ class FastTransactionClient(
             val encrypted = CryptoUtils.encryptAesGcm(plainPayload, fastAuthKey)
             return ByteBuffer.allocate(keyID.size + encrypted.size).apply {
                 put(keyID)
+                put(encrypted)
+            }.array()
+        } catch (e: Exception) {
+            return null
+        }
+    }
+
+    private fun prepareRemoveFriendRequest(record: DigitalKeyRecord, friendKeyID: ByteArray, counter: Int): ByteArray? {
+        try {
+            if (record.core.keyState != KeyState.ACTIVE) return null
+            val fastAuthKey = record.core.fastAuthKey ?: return null
+            val ownerKeyID = record.core.keyID ?: return null
+
+            // Payload: Counter (4b) + FriendKeyID (8b)
+            val plainPayload = ByteBuffer.allocate(4 + friendKeyID.size).apply {
+                putInt(counter)
+                put(friendKeyID)
+            }.array()
+
+            val encrypted = CryptoUtils.encryptAesGcm(plainPayload, fastAuthKey)
+            return ByteBuffer.allocate(ownerKeyID.size + encrypted.size).apply {
+                put(ownerKeyID)
                 put(encrypted)
             }.array()
         } catch (e: Exception) {

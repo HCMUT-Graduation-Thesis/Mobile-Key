@@ -148,32 +148,36 @@ class SharingViewModel(
     }
 
     /**
-     * OWNER SIDE: Revokes a previously shared key.
+     * OWNER SIDE: Revokes a previously shared key (Friend Revocation).
+     * Updated to support Local Phase (Vehicle) and Sync Phase (Cloud) as per 1.1 spec.
      */
     fun revokeKey(record: DigitalKeyRecord) {
         viewModelScope.launch {
             val ap = record.attestationPackage ?: return@launch
             val recipientEmail = record.accountEmail ?: return@launch
             val senderEmail = authManager.getUserEmail() ?: return@launch
+            val friendKeyID = record.core.keyID ?: return@launch
 
             _uiState.value = SharingUiState.Loading
 
-            // NEW: Signed Revocation
-            // Get Owner's private key to sign the revocation intent
+            // 1. Identification: Get Owner key authority
             val parentKeyID = record.core.parentKeyID ?: return@launch
             val ownerRecord = storageManager.getDigitalKey(parentKeyID)
             val ownerSK = ownerRecord?.devicePrivateKey ?: return@launch
 
-            // Sign the AP package as proof of revocation intent
-            val revokeSignature = identityCrypto.sign(ap, ownerSK)
+            // 2. LOCAL PHASE: Add to pending queue for vehicle removal (via INS_REMOVE_FRIEND)
+            Log.d("SharingViewModel", "🛡️ [REVOKE-LOCAL] Queuing FriendID=${friendKeyID.toHex()} for removal at Vehicle.")
+            storageManager.addPendingRevocation(parentKeyID, friendKeyID)
 
-            Log.i("SharingViewModel", "🛡️ [REVOKE] Initiating signed online revocation for $recipientEmail")
+            // 3. SYNC PHASE: Online Revocation with Proof of Intent (Signature)
+            val revokeSignature = identityCrypto.sign(ap, ownerSK)
+            Log.i("SharingViewModel", "☁️ [REVOKE-SYNC] Notifying Cloud for recipient $recipientEmail")
             
-            // 1. Notify Server with the signature
+            // Notify Server
             MockKeyServer.revokeInvitation(senderEmail, recipientEmail, ap, revokeSignature)
             
-            // 2. Delete locally from Owner's tracking list
-            record.core.keyID?.let { storageManager.deleteKey(it) }
+            // 4. CLEANUP: Remove from Owner's local share list
+            storageManager.deleteKey(friendKeyID)
             
             _uiState.value = SharingUiState.RevokeSuccess
             _events.emit(SharingEvent.LocalRevokeSuccess)

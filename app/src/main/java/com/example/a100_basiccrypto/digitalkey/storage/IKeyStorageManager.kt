@@ -33,4 +33,23 @@ interface IKeyStorageManager {
 
     fun deleteKey(keyID: ByteArray)
     fun clearAll()
+
+    // --- NEW: Pending Revocation Commands for Local Phase ---
+    
+    /**
+     * Adds a friend key to the pending revocation list for a specific vehicle.
+     * @param ownerKeyId The ID of the owner key that has authority to revoke.
+     * @param friendKeyId The ID of the friend key to be revoked at the vehicle.
+     */
+    fun addPendingRevocation(ownerKeyId: ByteArray, friendKeyId: ByteArray)
+
+    /**
+     * Retrieves all pending revocations for a specific owner key (vehicle).
+     */
+    fun getPendingRevocations(ownerKeyId: ByteArray): List<ByteArray>
+
+    /**
+     * Removes a friend key from the pending revocation list after successful execution at the vehicle.
+     */
+    fun removePendingRevocation(ownerKeyId: ByteArray, friendKeyId: ByteArray)
 }

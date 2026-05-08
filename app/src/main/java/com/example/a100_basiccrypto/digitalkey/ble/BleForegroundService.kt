@@ -17,10 +17,13 @@ import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.digitalkey.transactions.FastTransactionClient
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.shared.command.MessageConstants
+import com.example.a100_basiccrypto.shared.link.IActiveTransport
 import kotlinx.coroutines.*
 
 /**
  * Foreground Service to maintain BLE connection and perform background telemetry sync.
+ * Updated: Supports Local Revocation Phase for Owner-to-Friend management.
  */
 class BleForegroundService : Service() {
 
@@ -87,6 +90,27 @@ class BleForegroundService : Service() {
         startTelemetryPolling()
     }
 
+    /**
+     * OWNER SIDE: Executes any pending friend removal commands stored in the local queue.
+     * OWNER SIDE: Executes any pending friend removal commands stored in the local queue.
+     * OWNER SIDE: Executes any pending friend removal commands stored in the local queue.
+     */
+    private suspend fun processPendingRevocations(transport: IActiveTransport, ownerKeyID: ByteArray) {
+        val pendingList = storageManager.getPendingRevocations(ownerKeyID)
+        if (pendingList.isEmpty()) return
+
+        Log.i("BleService", "⚙️ [REVOKE-LOCAL] Found ${pendingList.size} pending revocations. Executing...")
+        pendingList.forEach { friendKeyID ->
+            val status = fastTxClient.executeRemoveFriend(transport, ownerKeyID, friendKeyID)
+            if (status == MessageConstants.Status.SUCCESS) {
+                Log.i("BleService", "✅ [REVOKE-LOCAL] Friend ${friendKeyID.toHex()} successfully removed at Vehicle.")
+                storageManager.removePendingRevocation(ownerKeyID, friendKeyID)
+            } else {
+                Log.e("BleService", "❌ [REVOKE-LOCAL] Failed to remove Friend ${friendKeyID.toHex()}. Status: $status")
+            }
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_REFRESH_SCAN) {
             Log.d("BleService", "Manual refresh scan requested. Forcing disconnect of old session...")
@@ -124,19 +148,20 @@ class BleForegroundService : Service() {
         if (!manager.isConnected()) {
             val email = authManager.getUserEmail() ?: return
 
-            val keysToScan = storageManager.getAllKeys().filter {
-                (it.core.keyState == KeyState.ACTIVE || it.core.keyState == KeyState.PROVISIONING) && it.accountEmail == email
+            // Optimized: Query keys directly by account from storage
+            val keysToScan = storageManager.getKeysByAccount(email).filter {
+                (it.core.keyState == KeyState.ACTIVE || it.core.keyState == KeyState.PROVISIONING) && 
+                it.isAccessAllowedNow() // PROACTIVE: Only scan if validity is okay
             }
 
             if (keysToScan.isNotEmpty()) {
-                Log.i("BleService", "Found ${keysToScan.size} keys (Active/Provisioning) for $email. Starting scan...")
+                Log.i("BleService", "Found ${keysToScan.size} valid keys for $email. Starting scan...")
                 // Ưu tiên quét khóa đang PROVISIONING để hoàn tất pairing trước
                 val targetKey = keysToScan.find { it.core.keyState == KeyState.PROVISIONING } ?: keysToScan[0]
                 manager.scanAndConnect(targetKey)
             } else {
-                Log.d("BleService", "No active or provisioning keys for $email. BLE staying idle.")
-                // Explicitly update status so UI knows we checked
-                BleProvider.updateStatus("No active or provisioning keys found for this account.")
+                Log.d("BleService", "No active or valid keys for $email. BLE staying idle.")
+                BleProvider.updateStatus("No active or valid keys found.")
             }
         }
     }
@@ -153,11 +178,25 @@ class BleForegroundService : Service() {
 
     private suspend fun performSingleSync() {
         val manager = BleProvider.getManager()
-        val activeKeyID = manager?.connectedKeyID // Safe call here
+        val activeKeyID = manager?.connectedKeyID
         
         if (manager != null && manager.isConnected() && activeKeyID != null) {
-            val transport = BleProvider.getTransport() // Check transport too
+            val currentEmail = authManager.getUserEmail()
+            // Optimized: Get direct key by ID and verify ownership/validity
+            val currentKey = storageManager.getDigitalKey(activeKeyID)
+            
+            if (currentKey == null || currentKey.accountEmail != currentEmail || !currentKey.isAccessAllowedNow()) {
+                Log.w("BleService", "Active key invalid, expired or wrong account. Disconnecting...")
+                manager.closeEverything()
+                BleProvider.updateStatus("Access Denied - Disconnected")
+                return
+            }
+
+            val transport = BleProvider.getTransport()
             if (transport != null) {
+                // LOCAL PHASE: Process pending friend revocations before telemetry sync
+                processPendingRevocations(transport, activeKeyID)
+
                 val status = fastTxClient.syncTelemetry(transport, activeKeyID)
                 if (status != null) {
                     withContext(Dispatchers.Main) {

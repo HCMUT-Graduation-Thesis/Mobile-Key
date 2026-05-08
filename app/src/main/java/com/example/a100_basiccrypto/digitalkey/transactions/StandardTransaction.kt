@@ -21,7 +21,7 @@ import java.security.SecureRandom
 
 /**
  * Standard Transaction (Passive Mode) - Used when the Phone acts as an HCE tag (NFC).
- * Updated to support Hybrid Security Recovery (HSR) and Account Isolation.
+ * Updated to support Hybrid Security Recovery (HSR), Account Isolation and Proactive Security.
  */
 class StandardTransaction(
     private val identityCrypto: IIdentityCrypto,
@@ -85,6 +85,12 @@ class StandardTransaction(
             val record = myKeys.find { it.moduleID?.contentEquals(moduleId) == true }
                 ?: return LogicalResponse(Status.ERR_AUTH_FAIL)
             
+            // PROACTIVE SECURITY CHECK: Block transaction if key is expired or usage limit reached
+            if (!record.isAccessAllowedNow()) {
+                onLog("NFC STD: Access Denied - Key expired or reached limit.")
+                return LogicalResponse(Status.ERR_PERMISSION)
+            }
+
             activeRecord = record
             val vehiclePKBytes = payload.sliceArray(startIndex until startIndex + 65)
             val vehicleEphemeralPK = HandshakeProtector.parseUncompressedPublicKey(vehiclePKBytes)
