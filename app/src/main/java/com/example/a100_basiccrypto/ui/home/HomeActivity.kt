@@ -18,11 +18,8 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.a100_basiccrypto.MainApplication
-import com.example.a100_basiccrypto.NotificationActivity
 import com.example.a100_basiccrypto.NotificationStore
 import com.example.a100_basiccrypto.R
-import com.example.a100_basiccrypto.ControlActivity
-import com.example.a100_basiccrypto.data.model.InvitationStatus
 import com.example.a100_basiccrypto.data.model.ShareInvitation
 import com.example.a100_basiccrypto.digitalkey.ble.BleForegroundService
 import com.example.a100_basiccrypto.digitalkey.ble.BleHomeHelper
@@ -34,9 +31,10 @@ import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.shared.model.DigitalKeyPermissions
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.Role
+import com.example.a100_basiccrypto.ui.keycontrol.ControlActivity
+import com.example.a100_basiccrypto.ui.keycontrol.PairingActivity
+import com.example.a100_basiccrypto.ui.keycontrol.SharingViewModel
 import com.example.a100_basiccrypto.ui.login.LoginActivity
-import com.example.a100_basiccrypto.ui.pairing.PairingActivity
-import com.example.a100_basiccrypto.ui.sharing.SharingViewModel
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.launch
@@ -52,10 +50,8 @@ class HomeActivity : AppCompatActivity() {
 
     private val container by lazy { (application as MainApplication).container }
     private val storageManager by lazy { container.storageManager }
-    private val bleIdentityManager by lazy { container.authManager.let { com.example.a100_basiccrypto.digitalkey.storage.BleIdentityManager(this) } } // Fixed later if needed
     private val authManager by lazy { container.authManager }
     private val authRepository by lazy { container.authRepository }
-    private val keyRepository by lazy { container.keyRepository }
     
     private lateinit var sharingViewModel: SharingViewModel
 
@@ -252,8 +248,6 @@ class HomeActivity : AppCompatActivity() {
             // 3. NFC Cleanup (Reset static states)
             MyHostApduService.isPairingModeEnabled = false
             MyHostApduService.friendPairingHandler = null
-            
-            // 4. Session Cleanup (Already handled by authRepository.logout())
             
             // 5. Navigation
             startActivity(Intent(this, LoginActivity::class.java))

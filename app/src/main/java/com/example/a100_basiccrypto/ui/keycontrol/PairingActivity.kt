@@ -1,4 +1,4 @@
-package com.example.a100_basiccrypto.ui.pairing
+package com.example.a100_basiccrypto.ui.keycontrol
 
 import android.content.BroadcastReceiver
 import android.content.Context

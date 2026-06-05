@@ -1,4 +1,4 @@
-package com.example.a100_basiccrypto
+package com.example.a100_basiccrypto.ui.keycontrol
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -19,6 +19,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import com.example.a100_basiccrypto.MainApplication
+import com.example.a100_basiccrypto.R
 import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
 import com.example.a100_basiccrypto.digitalkey.nfc.MyHostApduService
 import com.example.a100_basiccrypto.digitalkey.transactions.FastTransactionClient
@@ -26,10 +28,7 @@ import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransactionC
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Class
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Fast
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
-import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
 import com.example.a100_basiccrypto.shared.model.*
-import com.example.a100_basiccrypto.ui.settings.SettingsActivity
-import com.example.a100_basiccrypto.ui.sharing.SharingViewModel
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch

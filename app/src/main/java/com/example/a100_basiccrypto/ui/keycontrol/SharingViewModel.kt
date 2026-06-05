@@ -1,4 +1,4 @@
-package com.example.a100_basiccrypto.ui.sharing
+package com.example.a100_basiccrypto.ui.keycontrol
 
 import android.util.Log
 import androidx.lifecycle.ViewModel

@@ -1,4 +1,4 @@
-package com.example.a100_basiccrypto
+package com.example.a100_basiccrypto.ui.keycontrol
 
 import android.content.Intent
 import android.os.Bundle
@@ -15,10 +15,12 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.example.a100_basiccrypto.MainApplication
+import com.example.a100_basiccrypto.NotificationStore
+import com.example.a100_basiccrypto.R
 import com.example.a100_basiccrypto.digitalkey.core.*
 import com.example.a100_basiccrypto.shared.model.KeyState
-import com.example.a100_basiccrypto.ui.sharing.ShareConfigActivity
-import com.example.a100_basiccrypto.ui.sharing.SharingViewModel
+import com.example.a100_basiccrypto.shared.model.Role
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch

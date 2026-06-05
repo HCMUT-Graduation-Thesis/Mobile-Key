@@ -1,4 +1,4 @@
-package com.example.a100_basiccrypto.ui.settings
+package com.example.a100_basiccrypto.ui.keycontrol
 
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -14,7 +14,6 @@ import com.example.a100_basiccrypto.MainApplication
 import com.example.a100_basiccrypto.R
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
-import com.example.a100_basiccrypto.ui.sharing.SharingViewModel
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.flow.collectLatest

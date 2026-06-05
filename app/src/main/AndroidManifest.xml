@@ -45,12 +45,13 @@
         </activity>
 
         <activity android:name=".ui.login.LoginActivity" android:label="Login" />
-        <activity android:name=".ui.pairing.PairingActivity" android:label="Add New Key" />
-        <activity android:name=".ControlActivity" android:label="Vehicle Control" />
-        <activity android:name=".NotificationActivity" android:label="Notifications" />
-        <activity android:name=".ui.sharing.ShareConfigActivity" android:label="Share Key Settings" />
-        <activity android:name=".ui.settings.SettingsActivity" android:label="Vehicle Settings" />
-        <activity android:name=".EKeyManagerActivity" android:label="Manage eKeys" />
+        <activity android:name=".ui.home.NotificationActivity" android:label="Notifications" />
+
+        <activity android:name=".ui.keycontrol.ControlActivity" android:label="Vehicle Control" />
+        <activity android:name=".ui.keycontrol.PairingActivity" android:label="Add New Key" />
+        <activity android:name=".ui.keycontrol.ShareConfigActivity" android:label="Share Key Settings" />
+        <activity android:name=".ui.keycontrol.SettingsActivity" android:label="Vehicle Settings" />
+        <activity android:name=".ui.keycontrol.EKeyManagerActivity" android:label="Manage eKeys" />
 
         <!-- NFC HCE Service -->
         <service
