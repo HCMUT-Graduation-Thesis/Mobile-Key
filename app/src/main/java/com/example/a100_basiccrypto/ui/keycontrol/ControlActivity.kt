@@ -5,9 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Bundle
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
@@ -23,19 +23,13 @@ import com.example.a100_basiccrypto.MainApplication
 import com.example.a100_basiccrypto.R
 import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
 import com.example.a100_basiccrypto.digitalkey.nfc.MyHostApduService
-import com.example.a100_basiccrypto.digitalkey.transactions.FastTransactionClient
-import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransactionClient
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Class
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Fast
-import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
 import com.example.a100_basiccrypto.shared.model.*
 import com.google.android.material.bottomsheet.BottomSheetDialog
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
-/**
- * ControlActivity - Manages BLE Active control flow and Hybrid Security Recovery (HSR).
- */
 class ControlActivity : AppCompatActivity() {
 
     private lateinit var tvName: TextView
@@ -45,32 +39,21 @@ class ControlActivity : AppCompatActivity() {
     private lateinit var loadingOverlay: View
     
     private val container by lazy { (application as MainApplication).container }
-    private val storageManager by lazy { container.storageManager }
-    private val authManager by lazy { container.authManager }
+    private lateinit var controlViewModel: ControlViewModel
+    private lateinit var sharingViewModel: SharingViewModel
     private var currentKeyID: ByteArray? = null
 
-    private lateinit var sharingViewModel: SharingViewModel
-    private lateinit var fastTxClient: FastTransactionClient
-    private lateinit var standardTxClient: StandardTransactionClient
-
     private val bleStatusListener: (String) -> Unit = { message ->
-        runOnUiThread {
-            updateBleUi(message)
-        }
+        runOnUiThread { updateBleUi(message) }
     }
 
     private val nfcResultReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val actionName = intent?.getStringExtra("action_name") ?: "Action"
             val isSuccess = intent?.getBooleanExtra("is_success", false) ?: false
-            
             runOnUiThread {
                 loadingOverlay.visibility = View.GONE
-                val message = if (isSuccess) 
-                    "NFC $actionName executed successfully." 
-                else 
-                    "NFC $actionName failed. Please try again."
-                showActionResultDialog(isSuccess, message)
+                showActionResultDialog(isSuccess, "NFC $actionName ${if (isSuccess) "success" else "failed"}.")
             }
         }
     }
@@ -79,43 +62,67 @@ class ControlActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_control)
 
+        currentKeyID = intent.getByteArrayExtra("KEY_ID")
+        if (currentKeyID == null) { finish(); return }
+
+        initViewModels()
+        initViews()
+        setupToolbar()
+        setupActionListeners()
+        setupObservers()
+
+        val nfcFilter = IntentFilter(MyHostApduService.ACTION_NFC_RESULT)
+        registerReceiver(nfcResultReceiver, nfcFilter, RECEIVER_EXPORTED)
+    }
+
+    private fun initViewModels() {
+        controlViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: java.lang.Class<T>): T {
+                @Suppress("UNCHECKED_CAST")
+                return ControlViewModel(container.storageManager, container.identityCrypto) as T
+            }
+        })[ControlViewModel::class.java]
+
         sharingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: java.lang.Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
                 return SharingViewModel(
-                    container.identityCrypto, 
-                    storageManager,
-                    authManager,
-                    container.authRepository,
-                    container.keyRepository
+                    container.identityCrypto, container.storageManager, container.authManager,
+                    container.authRepository, container.keyRepository
                 ) as T
             }
         })[SharingViewModel::class.java]
+    }
 
-        fastTxClient = FastTransactionClient(storageManager) { 
-            Log.d("ControlActivity", "FastTx: $it") 
-        }
-        
-        standardTxClient = StandardTransactionClient(storageManager, container.identityCrypto) {
-            Log.d("ControlActivity", "StandardTx: $it")
-        }
-
-        initViews()
-        setupToolbar()
-
-        currentKeyID = intent.getByteArrayExtra("KEY_ID")
-        if (currentKeyID == null) {
-            finish()
-            return
+    private fun setupObservers() {
+        lifecycleScope.launch {
+            controlViewModel.uiState.collectLatest { state ->
+                loadingOverlay.visibility = if (state is ControlViewModel.ControlUiState.Loading) View.VISIBLE else View.GONE
+            }
         }
 
-        displayInitialInfo()
-        setupActionListeners()
-        observeViewModel()
+        lifecycleScope.launch {
+            controlViewModel.events.collectLatest { event ->
+                when (event) {
+                    is ControlViewModel.ControlEvent.ActionSuccess -> showActionResultDialog(true, event.message)
+                    is ControlViewModel.ControlEvent.Error -> Toast.makeText(this@ControlActivity, event.message, Toast.LENGTH_SHORT).show()
+                    is ControlViewModel.ControlEvent.ShowNfcRecovery -> showNfcRecoveryDialog()
+                }
+            }
+        }
 
-        // Register NFC Result receiver
-        val nfcFilter = IntentFilter(MyHostApduService.ACTION_NFC_RESULT)
-        registerReceiver(nfcResultReceiver, nfcFilter, RECEIVER_EXPORTED)
+        lifecycleScope.launch {
+            controlViewModel.vehicleStatus.collectLatest { status -> status?.let { refreshControlUi(it) } }
+        }
+
+        lifecycleScope.launch {
+            sharingViewModel.uiState.collectLatest { state ->
+                if (state is SharingViewModel.SharingUiState.ShareSuccess) {
+                    showInvitationResultDialog(state.code)
+                    sharingViewModel.resetState()
+                }
+            }
+        }
     }
 
     private fun initViews() {
@@ -124,116 +131,28 @@ class ControlActivity : AppCompatActivity() {
         tvConnectionStatus = findViewById(R.id.tv_connection_status)
         viewStatusDot = findViewById(R.id.view_status_dot)
         loadingOverlay = findViewById(R.id.loading_overlay)
+        displayInitialInfo()
     }
 
     private fun setupToolbar() {
-        val toolbar = findViewById<Toolbar>(R.id.toolbar_control)
-        toolbar.setNavigationOnClickListener { finish() }
+        findViewById<Toolbar>(R.id.toolbar_control).setNavigationOnClickListener { finish() }
     }
 
     private fun setupActionListeners() {
-        findViewById<View>(R.id.btn_control_unlock).setOnClickListener { 
-            executeActionWithHsr(Class.FAST_ACTION, Fast.INS_UNLOCK) 
-        }
-        findViewById<View>(R.id.btn_control_lock).setOnClickListener { 
-            executeActionWithHsr(Class.FAST_ACTION, Fast.INS_LOCK) 
-        }
-        findViewById<View>(R.id.btn_control_stop).setOnClickListener {
-            executeActionWithHsr(Class.ENGINE_OP, Fast.INS_STOP_ENGINE)
-        }
-        findViewById<View>(R.id.btn_control_trunk).setOnClickListener { 
-            executeActionWithHsr(Class.FAST_ACTION, Fast.INS_OPEN_TRUNK) 
-        }
+        findViewById<View>(R.id.btn_control_unlock).setOnClickListener { controlViewModel.executeAction(currentKeyID!!, Class.FAST_ACTION, Fast.INS_UNLOCK) }
+        findViewById<View>(R.id.btn_control_lock).setOnClickListener { controlViewModel.executeAction(currentKeyID!!, Class.FAST_ACTION, Fast.INS_LOCK) }
+        findViewById<View>(R.id.btn_control_stop).setOnClickListener { controlViewModel.executeAction(currentKeyID!!, Class.ENGINE_OP, Fast.INS_STOP_ENGINE) }
+        findViewById<View>(R.id.btn_control_trunk).setOnClickListener { controlViewModel.executeAction(currentKeyID!!, Class.FAST_ACTION, Fast.INS_OPEN_TRUNK) }
 
-        findViewById<View>(R.id.btn_car_info).setOnClickListener {
-            // Trigger immediate sync and switch to fast polling when opening info
+        findViewById<View>(R.id.btn_car_info).setOnClickListener { 
             BleProvider.triggerImmediateSync()
-            showVehicleInfoDialog()
+            showVehicleInfoDialog() 
         }
-
         findViewById<View>(R.id.btn_ekeys).setOnClickListener { 
-            val intent = Intent(this, EKeyManagerActivity::class.java)
-            intent.putExtra("KEY_ID", currentKeyID)
-            startActivity(intent)
+            startActivity(Intent(this, EKeyManagerActivity::class.java).apply { putExtra("KEY_ID", currentKeyID) }) 
         }
-        
         findViewById<View>(R.id.btn_settings).setOnClickListener { 
-            val intent = Intent(this, SettingsActivity::class.java)
-            intent.putExtra("KEY_ID", currentKeyID)
-            startActivity(intent)
-        }
-    }
-
-    /**
-     * Implementation of Hybrid Security Recovery (HSR).
-     * Automatically attempts BLE Standard Sync on security failures (Replay/Auth error).
-     */
-    private fun executeActionWithHsr(msgClass: Byte, targetIns: Byte) {
-        val keyID = currentKeyID ?: return
-        
-        val bleManager = BleProvider.getManager()
-        val bleTransport = BleProvider.getTransport()
-
-        if (bleManager == null || bleTransport == null || !bleManager.isConnected()) {
-            Toast.makeText(this, "BLE not connected.", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        lifecycleScope.launch {
-            loadingOverlay.visibility = View.VISIBLE
-            
-            // 1. First attempt: Fast Transaction
-            val status = fastTxClient.execute(
-                transport = bleTransport,
-                keyID = keyID,
-                msgClass = msgClass,
-                targetIns = targetIns
-            )
-
-            when (status) {
-                Status.SUCCESS -> {
-                    loadingOverlay.visibility = View.GONE
-                    showActionResultDialog(true, "Action executed successfully over BLE.")
-                }
-                
-                Status.ERR_REPLAY_ATTACK, Status.ERR_AUTH_FAIL -> {
-                    // 2. SECURITY FAILURE: Initiate Remote Recovery over BLE
-                    Log.w("HSR", "Security issue detected (Status: 0x%02X). Starting BLE Recovery...".format(status))
-                    
-                    // Standard Transaction rotates keys and resets counter
-                    val syncSuccess = standardTxClient.executeSync(bleTransport, keyID)
-
-                    if (syncSuccess) {
-                        Log.i("HSR", "Remote Recovery Successful. Retrying command...")
-                        delay(1000) // Brief pause for persistence synchronization
-
-                        // 3. RETRY: Execute the original command with fresh credentials
-                        val retryStatus = fastTxClient.execute(
-                            transport = bleTransport,
-                            keyID = keyID,
-                            msgClass = msgClass,
-                            targetIns = targetIns
-                        )
-
-                        loadingOverlay.visibility = View.GONE
-                        if (retryStatus == Status.SUCCESS) {
-                            showActionResultDialog(true, "Security Restored & Action Executed!")
-                        } else {
-                            showActionResultDialog(false, "Security Restored, but command failed (0x%02X).".format(retryStatus))
-                        }
-                    } else {
-                        // 4. REMOTE RECOVERY FAILED: Fallback to Physical NFC Tap
-                        loadingOverlay.visibility = View.GONE
-                        Log.e("HSR", "BLE Recovery failed. NFC interaction required.")
-                        showNfcRecoveryDialog()
-                    }
-                }
-                
-                else -> {
-                    loadingOverlay.visibility = View.GONE
-                    showActionResultDialog(false, "Vehicle returned error code: 0x%02X".format(status))
-                }
-            }
+            startActivity(Intent(this, SettingsActivity::class.java).apply { putExtra("KEY_ID", currentKeyID) }) 
         }
     }
 
@@ -241,104 +160,61 @@ class ControlActivity : AppCompatActivity() {
         val dialog = BottomSheetDialog(this)
         val view = LayoutInflater.from(this).inflate(R.layout.dialog_action_result, null)
         dialog.setContentView(view)
-
-        val ivIcon = view.findViewById<ImageView>(R.id.iv_result_icon)
-        val tvTitle = view.findViewById<TextView>(R.id.tv_result_title)
-        val tvMessage = view.findViewById<TextView>(R.id.tv_result_message)
-        val btnClose = view.findViewById<Button>(R.id.btn_result_ok)
-
-        if (success) {
-            ivIcon.setImageResource(android.R.drawable.checkbox_on_background)
-            ivIcon.setColorFilter(ContextCompat.getColor(this, R.color.success_green))
-            tvTitle.text = "Success"
-            tvTitle.setTextColor(ContextCompat.getColor(this, R.color.success_green))
-        } else {
-            ivIcon.setImageResource(android.R.drawable.ic_delete)
-            ivIcon.setColorFilter(ContextCompat.getColor(this, R.color.error_red))
-            tvTitle.text = "Action Failed"
-            tvTitle.setTextColor(ContextCompat.getColor(this, R.color.error_red))
+        view.findViewById<ImageView>(R.id.iv_result_icon).apply {
+            setImageResource(if (success) android.R.drawable.checkbox_on_background else android.R.drawable.ic_delete)
+            setColorFilter(ContextCompat.getColor(this@ControlActivity, if (success) R.color.success_green else R.color.error_red))
         }
-
-        tvMessage.text = message
-        btnClose.setOnClickListener { dialog.dismiss() }
-        
+        view.findViewById<TextView>(R.id.tv_result_title).apply {
+            text = if (success) "Success" else "Action Failed"
+            setTextColor(ContextCompat.getColor(this@ControlActivity, if (success) R.color.success_green else R.color.error_red))
+        }
+        view.findViewById<TextView>(R.id.tv_result_message).text = message
+        view.findViewById<Button>(R.id.btn_result_ok).setOnClickListener { dialog.dismiss() }
         dialog.show()
     }
 
     private fun showNfcRecoveryDialog() {
-        AlertDialog.Builder(this)
-            .setTitle("Security Sync Required")
-            .setMessage("For your protection, a secure physical synchronization is needed. Please tap your phone to the vehicle's door handle.")
-            .setPositiveButton("I UNDERSTAND", null)
-            .setCancelable(false)
-            .show()
+        AlertDialog.Builder(this).setTitle("Security Sync Required").setMessage("For your protection, a secure physical synchronization is needed. Please tap your phone to the vehicle's door handle.").setPositiveButton("I UNDERSTAND", null).setCancelable(false).show()
     }
 
     private fun showVehicleInfoDialog() {
-        val keyID = currentKeyID ?: return
-        val initialRecord = storageManager.getDigitalKey(keyID) ?: return
-        
+        val initialRecord = container.storageManager.getDigitalKey(currentKeyID) ?: return
         val dialog = BottomSheetDialog(this)
         val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_vehicle_info, null)
         dialog.setContentView(dialogView)
+        dialogView.findViewById<TextView>(R.id.tv_dialog_vehicle_name).text = initialRecord.friendlyName.ifEmpty { initialRecord.carMetadata?.modelName ?: "Vehicle" }
+        dialogView.findViewById<TextView>(R.id.tv_dialog_vehicle_plate).text = initialRecord.carMetadata?.licensePlate ?: "N/A"
 
-        dialogView.findViewById<TextView>(R.id.tv_dialog_vehicle_name).text = 
-            initialRecord.friendlyName.ifEmpty { initialRecord.carMetadata?.modelName ?: "Vehicle" }
-        dialogView.findViewById<TextView>(R.id.tv_dialog_vehicle_plate).text = 
-            initialRecord.carMetadata?.licensePlate ?: "N/A"
+        val telemetryListener: (VehicleStatus) -> Unit = { status -> runOnUiThread { refreshDialogUi(dialogView, status) } }
+        initialRecord.vehicleStatus?.let { refreshDialogUi(dialogView, it) } ?: Toast.makeText(this, "Waiting for sync...", Toast.LENGTH_SHORT).show()
 
-        val telemetryListener: (VehicleStatus) -> Unit = { status ->
-            runOnUiThread {
-                refreshDialogUi(dialogView, status)
-            }
-        }
-
-        initialRecord.vehicleStatus?.let { refreshDialogUi(dialogView, it) } ?: run {
-            Toast.makeText(this, "Waiting for sync...", Toast.LENGTH_SHORT).show()
-        }
-
-        // Enable fast polling while dialog is open
         BleProvider.setFastPolling(true)
         BleProvider.addTelemetryListener(telemetryListener)
-        
         dialog.setOnDismissListener { 
             BleProvider.removeTelemetryListener(telemetryListener)
-            // Revert to normal polling when dialog closed
-            BleProvider.setFastPolling(false)
+            BleProvider.setFastPolling(false) 
         }
-
         dialogView.findViewById<Button>(R.id.btn_close_status).setOnClickListener { dialog.dismiss() }
         dialog.show()
     }
 
     private fun refreshDialogUi(view: View, status: VehicleStatus) {
-        val tvEngine = view.findViewById<TextView>(R.id.tv_status_engine)
-        val ivEngine = view.findViewById<ImageView>(R.id.iv_engine_icon)
-        if (status.engineState == EngineState.RUNNING) {
-            tvEngine.text = "Running"
-            tvEngine.setTextColor(ContextCompat.getColor(this, R.color.success_green))
-            ivEngine.setColorFilter(ContextCompat.getColor(this, R.color.success_green))
-        } else {
-            tvEngine.text = "Stopped"
-            tvEngine.setTextColor(ContextCompat.getColor(this, R.color.white))
-            ivEngine.setColorFilter(ContextCompat.getColor(this, R.color.gray_text))
+        val isRunning = status.engineState == EngineState.RUNNING
+        view.findViewById<TextView>(R.id.tv_status_engine).apply {
+            text = if (isRunning) "Running" else "Stopped"
+            setTextColor(ContextCompat.getColor(this@ControlActivity, if (isRunning) R.color.success_green else R.color.white))
         }
-
+        view.findViewById<ImageView>(R.id.iv_engine_icon).setColorFilter(ContextCompat.getColor(this, if (isRunning) R.color.success_green else R.color.gray_text))
         view.findViewById<TextView>(R.id.tv_status_temp).text = getString(R.string.temp_format, status.temperature)
         view.findViewById<TextView>(R.id.tv_status_battery).text = getString(R.string.battery_format, status.batteryLevel)
         view.findViewById<TextView>(R.id.tv_status_odometer).text = getString(R.string.odo_format, status.odometer)
-
-        val tvTrunk = view.findViewById<TextView>(R.id.tv_status_trunk)
-        val ivTrunk = view.findViewById<ImageView>(R.id.iv_trunk_icon)
-        if (status.trunkState == TrunkState.OPEN) {
-            tvTrunk.text = "Open"
-            tvTrunk.setTextColor(ContextCompat.getColor(this, R.color.primary_blue))
-            ivTrunk.setColorFilter(ContextCompat.getColor(this, R.color.primary_blue))
-        } else {
-            tvTrunk.text = "Closed"
-            tvTrunk.setTextColor(ContextCompat.getColor(this, R.color.white))
-            ivTrunk.setColorFilter(ContextCompat.getColor(this, R.color.gray_text))
+        
+        val isTrunkOpen = status.trunkState == TrunkState.OPEN
+        view.findViewById<TextView>(R.id.tv_status_trunk).apply {
+            text = if (isTrunkOpen) "Open" else "Closed"
+            setTextColor(ContextCompat.getColor(this@ControlActivity, if (isTrunkOpen) R.color.primary_blue else R.color.white))
         }
+        view.findViewById<ImageView>(R.id.iv_trunk_icon).setColorFilter(ContextCompat.getColor(this, if (isTrunkOpen) R.color.primary_blue else R.color.gray_text))
 
         updateDoorStatusUi(view, R.id.tv_status_door_fl, R.id.iv_door_fl_icon, status.doorStates[DoorLocation.FRONT_LEFT])
         updateDoorStatusUi(view, R.id.tv_status_door_fr, R.id.iv_door_fr_icon, status.doorStates[DoorLocation.FRONT_RIGHT])
@@ -347,71 +223,29 @@ class ControlActivity : AppCompatActivity() {
     }
 
     private fun updateDoorStatusUi(parent: View, tvId: Int, ivId: Int, state: DoorState?) {
-        val tv = parent.findViewById<TextView>(tvId)
-        val iv = parent.findViewById<ImageView>(ivId)
-        if (state == DoorState.LOCKED) {
-            tv.text = "Locked"
-            tv.setTextColor(ContextCompat.getColor(this, R.color.white))
-            iv.setImageResource(android.R.drawable.ic_lock_lock)
-            iv.setColorFilter(ContextCompat.getColor(this, R.color.gray_text))
-        } else {
-            tv.text = "Unlocked"
-            tv.setTextColor(ContextCompat.getColor(this, R.color.error_red))
-            iv.setImageResource(android.R.drawable.ic_lock_idle_lock)
-            iv.setColorFilter(ContextCompat.getColor(this, R.color.error_red))
+        val isLocked = state == DoorState.LOCKED
+        parent.findViewById<TextView>(tvId).apply {
+            text = if (isLocked) "Locked" else "Unlocked"
+            setTextColor(ContextCompat.getColor(this@ControlActivity, if (isLocked) R.color.white else R.color.error_red))
         }
+        parent.findViewById<ImageView>(ivId).apply {
+            setImageResource(if (isLocked) android.R.drawable.ic_lock_lock else android.R.drawable.ic_lock_idle_lock)
+            setColorFilter(ContextCompat.getColor(this@ControlActivity, if (isLocked) R.color.gray_text else R.color.error_red))
+        }
+    }
+
+    private fun refreshControlUi(status: VehicleStatus) {
+        // Option to update UI elements in the main layout if they exist (e.g. mini status bar)
     }
 
     private fun updateBleUi(status: String) {
-        // Handle nullable BleCentralManager here
         val isConnected = BleProvider.getManager()?.isConnected() == true
-        
-        if (isConnected) {
-            viewStatusDot.setBackgroundResource(R.drawable.shape_dot_green)
-            tvConnectionStatus.text = "Connected"
-        } else if (status.contains("Searching") || status.contains("Initializing")) {
-            viewStatusDot.setBackgroundResource(R.drawable.shape_dot_orange)
-            tvConnectionStatus.text = "Searching..."
-        } else {
-            viewStatusDot.setBackgroundResource(R.drawable.shape_dot_grey)
-            tvConnectionStatus.text = "Disconnected"
-        }
+        viewStatusDot.setBackgroundResource(if (isConnected) R.drawable.shape_dot_green else if (status.contains("Searching")) R.drawable.shape_dot_orange else R.drawable.shape_dot_grey)
+        tvConnectionStatus.text = if (isConnected) "Connected" else if (status.contains("Searching")) "Searching..." else "Disconnected"
     }
 
-    override fun onResume() {
-        super.onResume()
-        BleProvider.addStatusListener(bleStatusListener)
-        displayInitialInfo()
-    }
-
-    override fun onPause() {
-        super.onPause()
-        BleProvider.removeStatusListener(bleStatusListener)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        unregisterReceiver(nfcResultReceiver)
-    }
-
-    private fun observeViewModel() {
-        lifecycleScope.launch {
-            sharingViewModel.uiState.collect { state ->
-                when (state) {
-                    is SharingViewModel.SharingUiState.ShareSuccess -> {
-                        showInvitationResultDialog(state.code)
-                        sharingViewModel.resetState()
-                    }
-                    is SharingViewModel.SharingUiState.Loading -> {
-                        loadingOverlay.visibility = View.VISIBLE
-                    }
-                    else -> {
-                        loadingOverlay.visibility = View.GONE
-                    }
-                }
-            }
-        }
-    }
+    override fun onResume() { super.onResume(); BleProvider.addStatusListener(bleStatusListener) }
+    override fun onPause() { super.onPause(); BleProvider.removeStatusListener(bleStatusListener) }
 
     private fun showInvitationResultDialog(code: String) {
         val dialog = BottomSheetDialog(this)
@@ -423,8 +257,7 @@ class ControlActivity : AppCompatActivity() {
     }
 
     private fun displayInitialInfo() {
-        val record = storageManager.getAllKeys().find { it.core.keyID?.contentEquals(currentKeyID) == true }
-        record?.let {
+        container.storageManager.getDigitalKey(currentKeyID)?.let {
             tvName.text = it.friendlyName.ifEmpty { it.carMetadata?.modelName ?: "Digital Key" }
             tvPlate.text = it.carMetadata?.licensePlate ?: "NO PLATE"
             updateBleUi("Initial check")

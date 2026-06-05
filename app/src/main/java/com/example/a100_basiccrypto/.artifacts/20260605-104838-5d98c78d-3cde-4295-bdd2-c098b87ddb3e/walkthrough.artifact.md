@@ -1,36 +1,30 @@
-# Refactoring Walkthrough: UI Feature Clusters
+# Refactoring Walkthrough: Full MVVM Implementation
 
-I have reorganized the UI package into feature-based clusters as requested, improving project maintainability and scope clarity.
+I have completed the separation of business logic into dedicated ViewModels, finalizing the transition to a clean MVVM architecture.
 
 ## Key Changes
 
-### 1. UI Feature Organization
-- **`ui.home`**:
-    - `HomeActivity`: Main dashboard.
-    - `NotificationActivity`: Management of key invitations.
-- **`ui.login`**:
-    - `LoginActivity`: User authentication.
-- **`ui.keycontrol`**:
-    - `ControlActivity`: BLE vehicle control.
-    - `PairingActivity`: NFC/Owner pairing.
-    - `SettingsActivity`: Key-specific configurations.
-    - `EKeyManagerActivity`: Management of shared friend keys.
-    - `ShareConfigActivity`: Configuration for sharing new keys.
-    - `SharingViewModel`: Shared logic for sharing and control flows.
+### 1. New ViewModels
+- **`AuthViewModel`**: Manages login/registration flows and user session events.
+- **`HomeViewModel`**: Handles key list management, global BLE status monitoring, and notification badges.
+- **`ControlViewModel`**: Centralizes BLE command execution, telemetry data observation, and **Hybrid Security Recovery (HSR)** logic.
+- **`PairingViewModel`**: Dedicated to background cloud synchronization after a successful NFC pairing.
 
-### 2. Dependency Injection and Architecture
-- All Activities in the `keycontrol` and `home` clusters now properly obtain their `SharingViewModel` and other dependencies via the `AppContainer`.
-- Fixed several package-related compilation errors and unresolved references caused by the move.
+### 2. Activity Refactoring (Clean UI Layer)
+- **`LoginActivity`**, **`HomeActivity`**, **`ControlActivity`**, and **`PairingActivity`** have been significantly thinned out.
+- They now focus exclusively on UI setup and observing state/event flows from their respective ViewModels.
+- All dependencies are now injected via the `AppContainer` (Service Locator).
 
-### 3. Logic Preservation
-- **STRICT ADHERENCE**: The internal logic of BLE, NFC, and Transaction layers remains untouched. Only import paths were updated to reflect the new UI structure.
+### 3. Logic Preservation and HSR Integration
+- The complex **HSR (Hybrid Security Recovery)** logic, which involves automatic fallback from Fast to Standard transactions on security errors, has been moved from `ControlActivity` to `ControlViewModel`.
+- This ensures the logic is more testable and decoupled from the Activity lifecycle.
 
 ## Verification Summary
 
 ### Automated Tests
-- Ran `./gradlew app:assembleDebug`.
+- Ran `./gradlew app:assembleDebug` to ensure all inter-component wiring is correct.
 - Build Status: **SUCCESS**
 
 ### Manual Verification
-- Verified `AndroidManifest.xml` reflects all updated Activity paths.
-- Confirmed that all Activities are in their correct feature packages.
+- Verified that all new ViewModels are correctly instantiated using custom `ViewModelProvider.Factory`.
+- Confirmed that package imports and `AndroidManifest.xml` entries are consistent.

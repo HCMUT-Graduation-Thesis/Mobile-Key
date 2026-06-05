@@ -7,11 +7,14 @@ import android.widget.Button
 import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.example.a100_basiccrypto.MainApplication
 import com.example.a100_basiccrypto.R
 import com.example.a100_basiccrypto.ui.home.HomeActivity
 import com.google.android.material.textfield.TextInputEditText
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class LoginActivity : AppCompatActivity() {
@@ -22,16 +25,26 @@ class LoginActivity : AppCompatActivity() {
     private lateinit var btnRegister: Button
     private lateinit var progressBar: ProgressBar
     
-    private val authRepository by lazy { 
-        (application as MainApplication).container.authRepository 
-    }
+    private lateinit var viewModel: AuthViewModel
+    private val container by lazy { (application as MainApplication).container }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_login)
 
+        initViewModel()
         initViews()
         setupListeners()
+        observeViewModel()
+    }
+
+    private fun initViewModel() {
+        viewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                @Suppress("UNCHECKED_CAST")
+                return AuthViewModel(container.authRepository) as T
+            }
+        })[AuthViewModel::class.java]
     }
 
     private fun initViews() {
@@ -47,6 +60,31 @@ class LoginActivity : AppCompatActivity() {
         btnRegister.setOnClickListener { handleRegister() }
     }
 
+    private fun observeViewModel() {
+        lifecycleScope.launch {
+            viewModel.uiState.collectLatest { state ->
+                setLoading(state is AuthViewModel.AuthUiState.Loading)
+            }
+        }
+
+        lifecycleScope.launch {
+            viewModel.events.collectLatest { event ->
+                when (event) {
+                    is AuthViewModel.AuthEvent.LoginSuccess -> {
+                        startActivity(Intent(this@LoginActivity, HomeActivity::class.java))
+                        finish()
+                    }
+                    is AuthViewModel.AuthEvent.RegisterSuccess -> {
+                        Toast.makeText(this@LoginActivity, "Account created! You can now login.", Toast.LENGTH_LONG).show()
+                    }
+                    is AuthViewModel.AuthEvent.Error -> {
+                        Toast.makeText(this@LoginActivity, event.message, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+
     private fun handleLogin() {
         val email = etEmail.text.toString()
         val pass = etPassword.text.toString()
@@ -56,18 +94,7 @@ class LoginActivity : AppCompatActivity() {
             return
         }
 
-        lifecycleScope.launch {
-            setLoading(true)
-            val success = authRepository.login(email, pass)
-            setLoading(false)
-
-            if (success) {
-                startActivity(Intent(this@LoginActivity, HomeActivity::class.java))
-                finish()
-            } else {
-                Toast.makeText(this@LoginActivity, "Invalid credentials or user not found", Toast.LENGTH_SHORT).show()
-            }
-        }
+        viewModel.login(email, pass)
     }
 
     private fun handleRegister() {
@@ -79,17 +106,7 @@ class LoginActivity : AppCompatActivity() {
             return
         }
 
-        lifecycleScope.launch {
-            setLoading(true)
-            val success = authRepository.register(email, pass)
-            setLoading(false)
-
-            if (success) {
-                Toast.makeText(this@LoginActivity, "Account created! You can now login.", Toast.LENGTH_LONG).show()
-            } else {
-                Toast.makeText(this@LoginActivity, "Email already exists", Toast.LENGTH_SHORT).show()
-            }
-        }
+        viewModel.register(email, pass)
     }
 
     private fun setLoading(isLoading: Boolean) {
