@@ -1,30 +1,30 @@
-# Refactoring Walkthrough: Full MVVM Implementation
+# Refactoring Walkthrough: Notification Layer and Full MVVM
 
-I have completed the separation of business logic into dedicated ViewModels, finalizing the transition to a clean MVVM architecture.
+I have completed the standardization of the Notification layer, moving it to the Data Layer and wrapping it in a dedicated ViewModel.
 
 ## Key Changes
 
-### 1. New ViewModels
-- **`AuthViewModel`**: Manages login/registration flows and user session events.
-- **`HomeViewModel`**: Handles key list management, global BLE status monitoring, and notification badges.
-- **`ControlViewModel`**: Centralizes BLE command execution, telemetry data observation, and **Hybrid Security Recovery (HSR)** logic.
-- **`PairingViewModel`**: Dedicated to background cloud synchronization after a successful NFC pairing.
+### 1. Data Layer Standardization
+- **Moved `NotificationStore`**: Relocated from the root package to `data.local.NotificationStore`. This aligns it with its role as a Local Data Source.
+- **Package Updates**: Updated all imports in `HomeActivity`, `HomeViewModel`, `EKeyManagerActivity`, and `SharingViewModel` to point to the new location.
 
-### 2. Activity Refactoring (Clean UI Layer)
-- **`LoginActivity`**, **`HomeActivity`**, **`ControlActivity`**, and **`PairingActivity`** have been significantly thinned out.
-- They now focus exclusively on UI setup and observing state/event flows from their respective ViewModels.
-- All dependencies are now injected via the `AppContainer` (Service Locator).
+### 2. New `NotificationViewModel`
+- Created **`NotificationViewModel`** to handle logic for `NotificationActivity`.
+- This ensures that even the notification screen now follows the MVVM pattern, fetching data from the `NotificationStore` and passing selected invitations back to the UI.
 
-### 3. Logic Preservation and HSR Integration
-- The complex **HSR (Hybrid Security Recovery)** logic, which involves automatic fallback from Fast to Standard transactions on security errors, has been moved from `ControlActivity` to `ControlViewModel`.
-- This ensures the logic is more testable and decoupled from the Activity lifecycle.
+### 3. Comprehensive MVVM Coverage
+With this final piece, every major UI component in your project now follows a consistent pattern:
+- **View**: Activity (Home, Login, Control, Pairing, Notification).
+- **ViewModel**: Dedicated logic handlers for each cluster.
+- **Repository**: Centralized data access (`AuthRepository`, `KeyRepository`).
+- **Local/Remote Source**: `SecureKeyStorageManager`, `NotificationStore`, `KeyServerApi`.
 
 ## Verification Summary
 
 ### Automated Tests
-- Ran `./gradlew app:assembleDebug` to ensure all inter-component wiring is correct.
+- Ran `./gradlew app:assembleDebug` to verify all package moves and dependency wiring.
 - Build Status: **SUCCESS**
 
 ### Manual Verification
-- Verified that all new ViewModels are correctly instantiated using custom `ViewModelProvider.Factory`.
-- Confirmed that package imports and `AndroidManifest.xml` entries are consistent.
+- Confirmed `NotificationActivity` is correctly registered in `AndroidManifest.xml` with its new package.
+- Verified that `NotificationViewModel` correctly observes the `NotificationStore`'s state flows.

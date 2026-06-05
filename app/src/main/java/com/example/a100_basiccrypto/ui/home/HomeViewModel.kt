@@ -2,7 +2,7 @@ package com.example.a100_basiccrypto.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.a100_basiccrypto.NotificationStore
+import com.example.a100_basiccrypto.data.local.NotificationStore
 import com.example.a100_basiccrypto.data.repository.AuthRepository
 import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
@@ -10,7 +10,6 @@ import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.KeyState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class HomeViewModel(

@@ -18,7 +18,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.a100_basiccrypto.MainApplication
-import com.example.a100_basiccrypto.NotificationStore
+import com.example.a100_basiccrypto.data.local.NotificationStore
 import com.example.a100_basiccrypto.R
 import com.example.a100_basiccrypto.data.model.ShareInvitation
 import com.example.a100_basiccrypto.digitalkey.ble.BleForegroundService
@@ -127,6 +127,12 @@ class HomeActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             homeViewModel.keys.collectLatest { keyAdapter.submitList(it) }
+        }
+
+        lifecycleScope.launch {
+            homeViewModel.isL2capConnected.collectLatest {
+                keyAdapter.notifyDataSetChanged()
+            }
         }
 
         lifecycleScope.launch {
@@ -346,13 +352,17 @@ class HomeActivity : AppCompatActivity() {
             holder.ivCarIcon.alpha = if (item.core.keyState == KeyState.PROVISIONING) 0.5f else 1.0f
             val midHex = item.moduleID?.joinToString("") { "%02x".format(it) } ?: ""
             val dynamicData = dynamicVehicleData[midHex]
-            if (homeViewModel.isL2capConnected.value && dynamicData != null) {
-                holder.tvMac.visibility = View.VISIBLE; holder.tvPsm.visibility = View.VISIBLE
-                holder.tvMac.text = "MAC: ${dynamicData.first}"
-                holder.tvPsm.text = "PSM: 0x${Integer.toHexString(dynamicData.second).uppercase()}"
+            val isConnected = homeViewModel.isL2capConnected.value && dynamicData != null
+
+            if (isConnected) {
+                holder.tvMac.visibility = View.VISIBLE
+                holder.tvPsm.visibility = View.VISIBLE
+                holder.tvMac.text = "MAC: ${dynamicData?.first}"
+                holder.tvPsm.text = "PSM: 0x${Integer.toHexString(dynamicData?.second ?: 0).uppercase()}"
                 holder.ivCarIcon.setColorFilter(ContextCompat.getColor(this@HomeActivity, android.R.color.holo_green_light))
             } else {
-                holder.tvMac.visibility = View.GONE; holder.tvPsm.visibility = View.GONE
+                holder.tvMac.visibility = View.GONE
+                holder.tvPsm.visibility = View.GONE
                 holder.ivCarIcon.setColorFilter(ContextCompat.getColor(this@HomeActivity, android.R.color.darker_gray))
             }
             holder.itemView.setOnClickListener { onClick(item) }

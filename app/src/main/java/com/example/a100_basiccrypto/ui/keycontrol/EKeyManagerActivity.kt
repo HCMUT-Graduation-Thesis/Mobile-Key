@@ -16,7 +16,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.a100_basiccrypto.MainApplication
-import com.example.a100_basiccrypto.NotificationStore
+import com.example.a100_basiccrypto.data.local.NotificationStore
 import com.example.a100_basiccrypto.R
 import com.example.a100_basiccrypto.digitalkey.core.*
 import com.example.a100_basiccrypto.shared.model.KeyState

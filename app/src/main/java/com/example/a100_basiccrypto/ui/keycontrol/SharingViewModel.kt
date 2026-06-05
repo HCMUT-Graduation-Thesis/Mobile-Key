@@ -3,7 +3,7 @@ package com.example.a100_basiccrypto.ui.keycontrol
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.a100_basiccrypto.NotificationStore
+import com.example.a100_basiccrypto.data.local.NotificationStore
 import com.example.a100_basiccrypto.data.model.*
 import com.example.a100_basiccrypto.data.repository.AuthRepository
 import com.example.a100_basiccrypto.data.repository.KeyRepository

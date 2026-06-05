@@ -8,11 +8,12 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.example.a100_basiccrypto.NotificationStore
 import com.example.a100_basiccrypto.R
+import com.example.a100_basiccrypto.data.local.NotificationStore
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 
@@ -20,10 +21,11 @@ class NotificationActivity : AppCompatActivity() {
 
     private lateinit var rvNotifications: RecyclerView
     private lateinit var tvEmpty: TextView
+    private lateinit var viewModel: NotificationViewModel
+
     private val adapter = NotificationAdapter { item ->
-        // Only allow clicking if NOT used
         if (item.invitation != null && !item.isUsed) {
-            NotificationStore.setPendingInvitation(item.invitation)
+            viewModel.selectInvitation(item.invitation)
             finish()
         }
     }
@@ -31,6 +33,8 @@ class NotificationActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_notification)
+
+        viewModel = ViewModelProvider(this)[NotificationViewModel::class.java]
 
         setupToolbar()
         setupRecyclerView()
@@ -46,13 +50,12 @@ class NotificationActivity : AppCompatActivity() {
     private fun setupRecyclerView() {
         rvNotifications = findViewById(R.id.rv_notifications)
         tvEmpty = findViewById(R.id.tv_empty_notifications)
-
         rvNotifications.layoutManager = LinearLayoutManager(this)
         rvNotifications.adapter = adapter
     }
 
     private fun observeNotifications() {
-        NotificationStore.notifications
+        viewModel.notifications
             .onEach { notifications ->
                 if (notifications.isEmpty()) {
                     rvNotifications.visibility = View.GONE
