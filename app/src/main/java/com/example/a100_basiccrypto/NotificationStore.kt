@@ -1,7 +1,7 @@
 package com.example.a100_basiccrypto
 
 import android.util.Log
-import com.example.a100_basiccrypto.digitalkey.core.ShareInvitation
+import com.example.a100_basiccrypto.data.model.ShareInvitation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

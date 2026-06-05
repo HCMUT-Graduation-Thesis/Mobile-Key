@@ -1,4 +1,4 @@
-package com.example.a100_basiccrypto
+package com.example.a100_basiccrypto.ui.login
 
 import android.content.Intent
 import android.os.Bundle
@@ -8,8 +8,9 @@ import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import com.example.a100_basiccrypto.digitalkey.core.AuthManager
-import com.example.a100_basiccrypto.digitalkey.core.MockKeyServer
+import com.example.a100_basiccrypto.MainApplication
+import com.example.a100_basiccrypto.R
+import com.example.a100_basiccrypto.ui.home.HomeActivity
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.launch
 
@@ -21,7 +22,9 @@ class LoginActivity : AppCompatActivity() {
     private lateinit var btnRegister: Button
     private lateinit var progressBar: ProgressBar
     
-    private val authManager by lazy { AuthManager(this) }
+    private val authRepository by lazy { 
+        (application as MainApplication).container.authRepository 
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,11 +58,10 @@ class LoginActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             setLoading(true)
-            val profile = MockKeyServer.login(email, pass)
+            val success = authRepository.login(email, pass)
             setLoading(false)
 
-            if (profile != null) {
-                authManager.saveSession(profile)
+            if (success) {
                 startActivity(Intent(this@LoginActivity, HomeActivity::class.java))
                 finish()
             } else {
@@ -79,7 +81,7 @@ class LoginActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             setLoading(true)
-            val success = MockKeyServer.register(email, pass)
+            val success = authRepository.register(email, pass)
             setLoading(false)
 
             if (success) {

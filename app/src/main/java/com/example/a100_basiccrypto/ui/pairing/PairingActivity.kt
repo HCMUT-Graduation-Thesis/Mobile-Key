@@ -1,4 +1,4 @@
-package com.example.a100_basiccrypto
+package com.example.a100_basiccrypto.ui.pairing
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -17,14 +17,14 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
-import com.example.a100_basiccrypto.digitalkey.core.AuthManager
-import com.example.a100_basiccrypto.digitalkey.core.CloudKeyRecord
-import com.example.a100_basiccrypto.digitalkey.core.MockKeyServer
+import com.example.a100_basiccrypto.MainApplication
+import com.example.a100_basiccrypto.R
+import com.example.a100_basiccrypto.data.model.CloudKeyRecord
 import com.example.a100_basiccrypto.digitalkey.nfc.MyHostApduService
 import com.example.a100_basiccrypto.digitalkey.storage.PasswordManager
-import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.shared.model.SyncStatus
+import com.example.a100_basiccrypto.ui.home.HomeActivity
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.progressindicator.CircularProgressIndicator
 import com.google.android.material.textfield.TextInputEditText
@@ -44,8 +44,10 @@ class PairingActivity : AppCompatActivity() {
     private var progressIndicator: CircularProgressIndicator? = null
     private var ivSuccessIcon: ImageView? = null
 
-    private val authManager by lazy { AuthManager(this) }
-    private val storageManager by lazy { SecureKeyStorageManager(this) }
+    private val container by lazy { (application as MainApplication).container }
+    private val authManager by lazy { container.authManager }
+    private val storageManager by lazy { container.storageManager }
+    private val keyRepository by lazy { container.keyRepository }
 
     private val nfcReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -188,7 +190,7 @@ class PairingActivity : AppCompatActivity() {
                 )
 
                 // Perform sync using email as the persistent key
-                val success = MockKeyServer.syncKeyToCloud(email, cloudRecord)
+                val success = keyRepository.syncKeyToCloud(email, cloudRecord)
                 if (success) {
                     latestKey.syncStatus = SyncStatus.SYNCED
                     storageManager.saveDigitalKey(latestKey)

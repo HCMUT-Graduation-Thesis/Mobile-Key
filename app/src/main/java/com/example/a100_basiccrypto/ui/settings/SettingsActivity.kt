@@ -1,8 +1,7 @@
-package com.example.a100_basiccrypto
+package com.example.a100_basiccrypto.ui.settings
 
 import android.os.Bundle
 import android.view.LayoutInflater
-import android.view.View
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -11,12 +10,11 @@ import androidx.appcompat.widget.Toolbar
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
-import com.example.a100_basiccrypto.digitalkey.core.AuthManager
+import com.example.a100_basiccrypto.MainApplication
+import com.example.a100_basiccrypto.R
 import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
-import com.example.a100_basiccrypto.digitalkey.core.SharingViewModel
-import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
-import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
+import com.example.a100_basiccrypto.ui.sharing.SharingViewModel
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.flow.collectLatest
@@ -30,8 +28,10 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var btnUpdate: MaterialButton
     private lateinit var btnRevokeOwner: MaterialButton
 
-    private val storageManager by lazy { SecureKeyStorageManager(this) }
-    private val authManager by lazy { AuthManager(this) }
+    private val container by lazy { (application as MainApplication).container }
+    private val storageManager by lazy { container.storageManager }
+    private val authManager by lazy { container.authManager }
+    
     private lateinit var sharingViewModel: SharingViewModel
     
     private var currentKey: DigitalKeyRecord? = null
@@ -42,12 +42,14 @@ class SettingsActivity : AppCompatActivity() {
         setContentView(R.layout.activity_settings)
 
         sharingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
-            override fun <T : ViewModel> create(modelClass: java.lang.Class<T>): T {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
                 return SharingViewModel(
-                    DilithiumIdentityCryptoImpl(),
+                    container.identityCrypto,
                     storageManager,
-                    authManager
+                    authManager,
+                    container.authRepository,
+                    container.keyRepository
                 ) as T
             }
         })[SharingViewModel::class.java]

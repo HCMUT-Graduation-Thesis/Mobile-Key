@@ -1,11 +1,10 @@
-package com.example.a100_basiccrypto
+package com.example.a100_basiccrypto.ui.sharing
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.Context
 import android.os.Bundle
 import android.text.InputType
-import android.util.Log
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.CheckBox
@@ -16,10 +15,11 @@ import androidx.appcompat.widget.Toolbar
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
-import com.example.a100_basiccrypto.digitalkey.core.*
-import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
-import com.example.a100_basiccrypto.shared.model.Role
+import com.example.a100_basiccrypto.MainApplication
+import com.example.a100_basiccrypto.R
+import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.shared.model.DigitalKeyPermissions
+import com.example.a100_basiccrypto.shared.model.Role
 import com.google.android.material.tabs.TabLayout
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -28,8 +28,9 @@ import java.util.*
 
 class ShareConfigActivity : AppCompatActivity() {
 
-    private val storageManager by lazy { SecureKeyStorageManager(this) }
-    private val authManager by lazy { AuthManager(this) }
+    private val container by lazy { (application as MainApplication).container }
+    private val storageManager by lazy { container.storageManager }
+    private val authManager by lazy { container.authManager }
     private lateinit var sharingViewModel: SharingViewModel
     
     private lateinit var etRecipient: EditText
@@ -59,9 +60,11 @@ class ShareConfigActivity : AppCompatActivity() {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
                 return SharingViewModel(
-                    com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl(), 
+                    container.identityCrypto, 
                     storageManager, 
-                    authManager
+                    authManager,
+                    container.authRepository,
+                    container.keyRepository
                 ) as T
             }
         })[SharingViewModel::class.java]

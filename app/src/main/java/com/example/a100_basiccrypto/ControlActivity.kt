@@ -19,22 +19,17 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
-import com.example.a100_basiccrypto.digitalkey.core.SharingViewModel
-import com.example.a100_basiccrypto.digitalkey.core.AuthManager
-import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
-import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
-import com.example.a100_basiccrypto.digitalkey.transactions.FastTransactionClient
-import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransactionClient
 import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
 import com.example.a100_basiccrypto.digitalkey.nfc.MyHostApduService
+import com.example.a100_basiccrypto.digitalkey.transactions.FastTransactionClient
+import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransactionClient
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Class
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Fast
 import com.example.a100_basiccrypto.shared.command.MessageConstants.Status
-import com.example.a100_basiccrypto.shared.model.DoorLocation
-import com.example.a100_basiccrypto.shared.model.DoorState
-import com.example.a100_basiccrypto.shared.model.EngineState
-import com.example.a100_basiccrypto.shared.model.TrunkState
-import com.example.a100_basiccrypto.shared.model.VehicleStatus
+import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
+import com.example.a100_basiccrypto.shared.model.*
+import com.example.a100_basiccrypto.ui.settings.SettingsActivity
+import com.example.a100_basiccrypto.ui.sharing.SharingViewModel
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -50,8 +45,9 @@ class ControlActivity : AppCompatActivity() {
     private lateinit var viewStatusDot: View
     private lateinit var loadingOverlay: View
     
-    private val storageManager by lazy { SecureKeyStorageManager(this) }
-    private val authManager by lazy { AuthManager(this) } // Added
+    private val container by lazy { (application as MainApplication).container }
+    private val storageManager by lazy { container.storageManager }
+    private val authManager by lazy { container.authManager }
     private var currentKeyID: ByteArray? = null
 
     private lateinit var sharingViewModel: SharingViewModel
@@ -88,9 +84,11 @@ class ControlActivity : AppCompatActivity() {
             override fun <T : ViewModel> create(modelClass: java.lang.Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
                 return SharingViewModel(
-                    DilithiumIdentityCryptoImpl(), 
+                    container.identityCrypto, 
                     storageManager,
-                    authManager // Added authManager
+                    authManager,
+                    container.authRepository,
+                    container.keyRepository
                 ) as T
             }
         })[SharingViewModel::class.java]
@@ -99,7 +97,7 @@ class ControlActivity : AppCompatActivity() {
             Log.d("ControlActivity", "FastTx: $it") 
         }
         
-        standardTxClient = StandardTransactionClient(storageManager, DilithiumIdentityCryptoImpl()) {
+        standardTxClient = StandardTransactionClient(storageManager, container.identityCrypto) {
             Log.d("ControlActivity", "StandardTx: $it")
         }
 

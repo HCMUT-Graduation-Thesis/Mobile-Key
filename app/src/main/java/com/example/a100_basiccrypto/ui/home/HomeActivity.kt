@@ -1,4 +1,4 @@
-package com.example.a100_basiccrypto
+package com.example.a100_basiccrypto.ui.home
 
 import android.content.Intent
 import android.os.Bundle
@@ -6,7 +6,6 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.EditText
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
@@ -18,21 +17,28 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.example.a100_basiccrypto.digitalkey.core.*
-import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
-import com.example.a100_basiccrypto.digitalkey.storage.BleIdentityManager
-import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
+import com.example.a100_basiccrypto.MainApplication
+import com.example.a100_basiccrypto.NotificationActivity
+import com.example.a100_basiccrypto.NotificationStore
+import com.example.a100_basiccrypto.R
+import com.example.a100_basiccrypto.ControlActivity
+import com.example.a100_basiccrypto.data.model.InvitationStatus
+import com.example.a100_basiccrypto.data.model.ShareInvitation
 import com.example.a100_basiccrypto.digitalkey.ble.BleForegroundService
 import com.example.a100_basiccrypto.digitalkey.ble.BleHomeHelper
+import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
+import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
 import com.example.a100_basiccrypto.digitalkey.nfc.MyHostApduService
 import com.example.a100_basiccrypto.digitalkey.transactions.FriendPairingClient
 import com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl
+import com.example.a100_basiccrypto.shared.model.DigitalKeyPermissions
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.Role
-import com.example.a100_basiccrypto.shared.model.DigitalKeyPermissions
+import com.example.a100_basiccrypto.ui.login.LoginActivity
+import com.example.a100_basiccrypto.ui.pairing.PairingActivity
+import com.example.a100_basiccrypto.ui.sharing.SharingViewModel
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -44,9 +50,13 @@ class HomeActivity : AppCompatActivity() {
     private lateinit var tvHomeAppMac: TextView
     private lateinit var vNotificationBadge: View
 
-    private val storageManager by lazy { SecureKeyStorageManager(this) }
-    private val bleIdentityManager by lazy { BleIdentityManager(this) }
-    private val authManager by lazy { AuthManager(this) }
+    private val container by lazy { (application as MainApplication).container }
+    private val storageManager by lazy { container.storageManager }
+    private val bleIdentityManager by lazy { container.authManager.let { com.example.a100_basiccrypto.digitalkey.storage.BleIdentityManager(this) } } // Fixed later if needed
+    private val authManager by lazy { container.authManager }
+    private val authRepository by lazy { container.authRepository }
+    private val keyRepository by lazy { container.keyRepository }
+    
     private lateinit var sharingViewModel: SharingViewModel
 
     private lateinit var bleHomeHelper: BleHomeHelper
@@ -88,8 +98,7 @@ class HomeActivity : AppCompatActivity() {
             return
         }
 
-        val email = authManager.getUserEmail()
-        if (email != null) MockKeyServer.setOnline(email)
+        authRepository.setOnline()
 
         setContentView(R.layout.activity_home)
 
@@ -216,7 +225,7 @@ class HomeActivity : AppCompatActivity() {
         tvHomeAppMac = findViewById(R.id.tv_home_app_mac)
         vNotificationBadge = findViewById(R.id.v_notification_badge)
 
-        val appMac = bleIdentityManager.getAppBleAddress().joinToString(":") { "%02X".format(it) }
+        val appMac = com.example.a100_basiccrypto.digitalkey.storage.BleIdentityManager(this).getAppBleAddress().joinToString(":") { "%02X".format(it) }
         tvHomeAppMac.text = "App MAC: $appMac"
 
         findViewById<View>(R.id.btn_add_key_header).setOnClickListener {
@@ -234,7 +243,7 @@ class HomeActivity : AppCompatActivity() {
         
         findViewById<View>(R.id.btn_logout).setOnClickListener {
             // 1. Notify Server
-            authManager.getUserEmail()?.let { MockKeyServer.setOffline(it) }
+            authRepository.logout()
             
             // 2. BLE Cleanup
             BleProvider.logoutAndCleanup()
@@ -244,8 +253,7 @@ class HomeActivity : AppCompatActivity() {
             MyHostApduService.isPairingModeEnabled = false
             MyHostApduService.friendPairingHandler = null
             
-            // 4. Session Cleanup
-            authManager.logout()
+            // 4. Session Cleanup (Already handled by authRepository.logout())
             
             // 5. Navigation
             startActivity(Intent(this, LoginActivity::class.java))
@@ -257,7 +265,13 @@ class HomeActivity : AppCompatActivity() {
         sharingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
-                return SharingViewModel(com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl(), storageManager, authManager) as T
+                return SharingViewModel(
+                    container.identityCrypto, 
+                    storageManager, 
+                    authManager,
+                    container.authRepository,
+                    container.keyRepository
+                ) as T
             }
         })[SharingViewModel::class.java]
     }

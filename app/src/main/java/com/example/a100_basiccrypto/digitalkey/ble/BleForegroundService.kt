@@ -11,7 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.example.a100_basiccrypto.HomeActivity
+import com.example.a100_basiccrypto.ui.home.HomeActivity
 import com.example.a100_basiccrypto.digitalkey.core.AuthManager
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.KeyState
@@ -91,8 +91,6 @@ class BleForegroundService : Service() {
     }
 
     /**
-     * OWNER SIDE: Executes any pending friend removal commands stored in the local queue.
-     * OWNER SIDE: Executes any pending friend removal commands stored in the local queue.
      * OWNER SIDE: Executes any pending friend removal commands stored in the local queue.
      */
     private suspend fun processPendingRevocations(transport: IActiveTransport, ownerKeyID: ByteArray) {

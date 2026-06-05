@@ -1,28 +1,31 @@
-package com.example.a100_basiccrypto.digitalkey.core
+package com.example.a100_basiccrypto.ui.sharing
 
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.a100_basiccrypto.NotificationStore
-import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
-import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
-import com.example.a100_basiccrypto.shared.model.Role
-import com.example.a100_basiccrypto.shared.model.KeyState
-import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
-import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransactionClient
+import com.example.a100_basiccrypto.data.model.*
+import com.example.a100_basiccrypto.data.repository.AuthRepository
+import com.example.a100_basiccrypto.data.repository.KeyRepository
 import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.collectLatest
+import com.example.a100_basiccrypto.digitalkey.core.AuthManager
+import com.example.a100_basiccrypto.digitalkey.core.DigitalKeyRecord
+import com.example.a100_basiccrypto.digitalkey.core.SharingManager
+import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
+import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransactionClient
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
+import com.example.a100_basiccrypto.shared.model.KeyState
+import com.example.a100_basiccrypto.shared.model.Role
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 class SharingViewModel(
     private val identityCrypto: IIdentityCrypto,
     private val storageManager: IKeyStorageManager,
-    private val authManager: AuthManager
+    private val authManager: AuthManager,
+    private val authRepository: AuthRepository,
+    private val keyRepository: KeyRepository
 ) : ViewModel() {
 
     private val sharingManager = SharingManager(identityCrypto, storageManager)
@@ -35,10 +38,10 @@ class SharingViewModel(
     val events: SharedFlow<SharingEvent> = _events.asSharedFlow()
 
     // Flow for observing proactive invitations from Server (Stage 1 Push)
-    val incomingInvitations = MockKeyServer.invitationFlow
+    val incomingInvitations = keyRepository.invitationFlow
 
     // Flow for the Owner to observe status updates of their sent invitations
-    val sentInvitationUpdates = MockKeyServer.statusUpdateFlow
+    val sentInvitationUpdates = keyRepository.statusUpdateFlow
 
     init {
         // Sync NotificationStore with current user on initialization
@@ -55,7 +58,7 @@ class SharingViewModel(
 
     private fun observeRevocations() {
         viewModelScope.launch {
-            MockKeyServer.statusUpdateFlow.collectLatest { update ->
+            keyRepository.statusUpdateFlow.collectLatest { update ->
                 if (update.status == InvitationStatus.REVOKED) {
                     val currentEmail = authManager.getUserEmail()
                     // If the revocation is for the current user
@@ -80,7 +83,7 @@ class SharingViewModel(
 
     private fun observeActivations() {
         viewModelScope.launch {
-            MockKeyServer.activationFlow.collectLatest { activatedAp ->
+            keyRepository.activationFlow.collectLatest { activatedAp ->
                 Log.d("SharingViewModel", "⚡ [ACTIVATE] Signal received for an AP. Updating local state...")
                 val allKeys = storageManager.getAllKeys()
                 var found = false
@@ -119,7 +122,7 @@ class SharingViewModel(
 
             // 1. Security Check with Server
             val parentKeyIdHex = ownerRecord.core.keyID?.toHex() ?: ""
-            val errorMsg = MockKeyServer.checkInvitationLegality(senderEmail, recipientEmail, parentKeyIdHex)
+            val errorMsg = keyRepository.checkInvitationLegality(senderEmail, recipientEmail, parentKeyIdHex)
             
             if (errorMsg != null) {
                 _uiState.value = SharingUiState.Error(errorMsg)
@@ -142,7 +145,23 @@ class SharingViewModel(
             )
             
             if (updatedRecord != null) {
-                _uiState.value = SharingUiState.ShareSuccess(updatedRecord.invitationCode ?: "")
+                // 3. Upload to server
+                val invitation = ShareInvitation(
+                    ap = updatedRecord.attestationPackage ?: byteArrayOf(),
+                    friendlyName = updatedRecord.friendlyName,
+                    holderNickname = holderNickname,
+                    recipientEmail = recipientEmail,
+                    senderName = "Owner",
+                    senderEmail = senderEmail,
+                    carMetadata = updatedRecord.carMetadata,
+                    moduleID = updatedRecord.moduleID
+                )
+                
+                if (keyRepository.uploadInvitation(invitation)) {
+                    _uiState.value = SharingUiState.ShareSuccess(updatedRecord.invitationCode ?: "")
+                } else {
+                    _uiState.value = SharingUiState.Error("Failed to upload invitation to server.")
+                }
             } else {
                 _uiState.value = SharingUiState.Error("Failed to create invitation package.")
             }
@@ -176,7 +195,7 @@ class SharingViewModel(
             Log.i("SharingViewModel", "☁️ [REVOKE-SYNC] Notifying Cloud for recipient $recipientEmail")
             
             // Notify Server
-            MockKeyServer.revokeInvitation(senderEmail, recipientEmail, ap, revokeSignature)
+            keyRepository.revokeInvitation(senderEmail, recipientEmail, ap, revokeSignature)
             
             // 4. CLEANUP: Remove from Owner's local share list
             storageManager.deleteKey(friendKeyID)
@@ -193,10 +212,10 @@ class SharingViewModel(
         viewModelScope.launch {
             _uiState.value = SharingUiState.Loading
 
-            // 1. INTERNAL AUTH: Verify via MockKeyServer
+            // 1. INTERNAL AUTH: Verify via AuthRepository
             val email = authManager.getUserEmail() ?: ""
-            val authResult = MockKeyServer.login(email, password)
-            if (authResult == null) {
+            val authResult = authRepository.login(email, password)
+            if (!authResult) {
                 _uiState.value = SharingUiState.Error("Authentication failed. Invalid password.")
                 return@launch
             }
@@ -223,7 +242,7 @@ class SharingViewModel(
 
             // 3. SYNC PHASE: Notify Cloud
             val moduleIDHex = record.moduleID?.toHex() ?: ""
-            val cloudSuccess = MockKeyServer.revokeOwner(email, moduleIDHex)
+            val cloudSuccess = keyRepository.revokeOwner(email, moduleIDHex)
 
             if (cloudSuccess) {
                 // 4. CLEANUP: Wipe local data
@@ -241,7 +260,7 @@ class SharingViewModel(
      */
     fun fetchInvitationsFromCloud(email: String) {
         viewModelScope.launch {
-            val pendingList = MockKeyServer.fetchPendingInvitations(email)
+            val pendingList = keyRepository.fetchPendingInvitations(email)
             pendingList.forEach { invitation ->
                 NotificationStore.addNotification(
                     ownerEmail = email,
@@ -270,14 +289,14 @@ class SharingViewModel(
             val success = sharingManager.verifyPinAndFinalize(record, pin)
             if (success) {
                 // Success: Report CLAIMED status to server
-                MockKeyServer.reportInvitationOutcome(
+                keyRepository.reportInvitationOutcome(
                     recipientEmail = record.accountEmail ?: "",
                     ap = record.attestationPackage ?: byteArrayOf(),
                     status = InvitationStatus.CLAIMED,
                     senderEmail = invitation.senderEmail
                 )
 
-                MockKeyServer.notifyActivation(record.attestationPackage ?: byteArrayOf())
+                keyRepository.notifyActivation(record.attestationPackage ?: byteArrayOf())
                 NotificationStore.markAsUsed(invitation)
                 _uiState.value = SharingUiState.ActivationSuccess
             } else {
@@ -285,7 +304,7 @@ class SharingViewModel(
                 val attempts = NotificationStore.incrementAttempts(invitation)
                 if (attempts >= 3) {
                     // Report FAILED status to server
-                    MockKeyServer.reportInvitationOutcome(
+                    keyRepository.reportInvitationOutcome(
                         recipientEmail = record.accountEmail ?: "",
                         ap = record.attestationPackage ?: byteArrayOf(),
                         status = InvitationStatus.FAILED,

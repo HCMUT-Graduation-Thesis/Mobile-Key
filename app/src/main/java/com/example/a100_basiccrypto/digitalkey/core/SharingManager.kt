@@ -1,6 +1,7 @@
 package com.example.a100_basiccrypto.digitalkey.core
 
 import android.util.Log
+import com.example.a100_basiccrypto.data.model.ShareInvitation
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
@@ -110,10 +111,10 @@ class SharingManager(
                 moduleID = ownerRecord.moduleID
             )
 
-            if (MockKeyServer.uploadInvitation(invitation)) {
-                storageManager.saveDigitalKey(pendingRecord)
-                pendingRecord
-            } else null
+            // Returning the record instead of uploading here.
+            // In the new architecture, the ViewModel/Repository handles the upload.
+            storageManager.saveDigitalKey(pendingRecord)
+            pendingRecord
         } catch (e: Exception) {
             Log.e(TAG, "Error creating invitation: ${e.message}")
             null

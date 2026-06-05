@@ -16,9 +16,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.a100_basiccrypto.digitalkey.core.*
-import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.KeyState
-import com.example.a100_basiccrypto.shared.model.Role
+import com.example.a100_basiccrypto.ui.sharing.ShareConfigActivity
+import com.example.a100_basiccrypto.ui.sharing.SharingViewModel
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -26,8 +26,9 @@ import kotlinx.coroutines.launch
 class EKeyManagerActivity : AppCompatActivity() {
 
     private lateinit var rvEKeys: RecyclerView
-    private val storageManager by lazy { SecureKeyStorageManager(this) }
-    private val authManager by lazy { AuthManager(this) }
+    private val container by lazy { (application as MainApplication).container }
+    private val storageManager by lazy { container.storageManager }
+    private val authManager by lazy { container.authManager }
     private lateinit var sharingViewModel: SharingViewModel
     private var currentKeyId: ByteArray? = null
 
@@ -48,7 +49,13 @@ class EKeyManagerActivity : AppCompatActivity() {
         sharingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
-                return SharingViewModel(com.example.a100_basiccrypto.shared.crypto.DilithiumIdentityCryptoImpl(), storageManager, authManager) as T
+                return SharingViewModel(
+                    container.identityCrypto, 
+                    storageManager, 
+                    authManager,
+                    container.authRepository,
+                    container.keyRepository
+                ) as T
             }
         })[SharingViewModel::class.java]
     }
