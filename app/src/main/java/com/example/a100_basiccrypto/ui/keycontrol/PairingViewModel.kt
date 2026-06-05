@@ -8,12 +8,14 @@ import com.example.a100_basiccrypto.data.repository.KeyRepository
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.shared.model.SyncStatus
+import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class PairingViewModel(
     private val storageManager: SecureKeyStorageManager,
-    private val keyRepository: KeyRepository
+    private val keyRepository: KeyRepository,
+    private val identityCrypto: IIdentityCrypto
 ) : ViewModel() {
 
     fun startBackgroundSync(email: String) {
@@ -34,7 +36,8 @@ class PairingViewModel(
                     ownerEmail = email,
                     holderEmail = email,
                     parentKeyId = null,
-                    devicePublicKey = latestKey.devicePublicKey?.toHex() ?: "",
+                    // Use Account PK instead of Record PK
+                    devicePublicKey = identityCrypto.getPublicKey().toHex(),
                     vehiclePublicKey = latestKey.vehiclePublicKey?.toHex() ?: "",
                     role = latestKey.core.role,
                     permissions = latestKey.core.permissions,

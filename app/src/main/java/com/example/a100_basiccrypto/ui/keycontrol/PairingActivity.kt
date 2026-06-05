@@ -40,6 +40,7 @@ class PairingActivity : AppCompatActivity() {
 
     private lateinit var viewModel: PairingViewModel
     private val container by lazy { (application as MainApplication).container }
+    private val authManager by lazy { container.authManager }
 
     private val nfcReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -63,7 +64,11 @@ class PairingActivity : AppCompatActivity() {
         viewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
-                return PairingViewModel(container.storageManager, container.keyRepository) as T
+                return PairingViewModel(
+                    container.storageManager, 
+                    container.keyRepository,
+                    container.identityCrypto
+                ) as T
             }
         })[PairingViewModel::class.java]
     }
@@ -75,7 +80,9 @@ class PairingActivity : AppCompatActivity() {
 
         etPassword = findViewById(R.id.et_pairing_password)
         btnStart = findViewById(R.id.btn_start_pairing)
-        etPassword.setText(PasswordManager.getPassword(this))
+
+        val email = authManager.getUserEmail() ?: ""
+        etPassword.setText(PasswordManager.getPassword(this, email))
 
         btnStart.setOnClickListener {
             val pwd = etPassword.text.toString()
@@ -83,7 +90,8 @@ class PairingActivity : AppCompatActivity() {
                 Toast.makeText(this, "Password must be at least 8 characters", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            PasswordManager.setPassword(this, pwd)
+
+            PasswordManager.setPassword(this, email, pwd)
             MyHostApduService.isPairingModeEnabled = true
             showNfcPairingDialog()
         }
@@ -130,7 +138,7 @@ class PairingActivity : AppCompatActivity() {
         progressIndicator?.visibility = View.GONE
         ivSuccessIcon?.visibility = View.VISIBLE
 
-        container.authManager.getUserEmail()?.let { viewModel.startBackgroundSync(it) }
+        authManager.getUserEmail()?.let { viewModel.startBackgroundSync(it) }
 
         Handler(Looper.getMainLooper()).postDelayed({ finishPairing() }, 1500)
     }

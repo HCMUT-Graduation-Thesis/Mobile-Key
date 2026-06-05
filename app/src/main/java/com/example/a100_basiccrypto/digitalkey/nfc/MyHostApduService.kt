@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.example.a100_basiccrypto.MainApplication
 import com.example.a100_basiccrypto.digitalkey.core.AuthManager
 import com.example.a100_basiccrypto.shared.link.LogicalFrame
 import com.example.a100_basiccrypto.shared.link.LogicalResponse
@@ -26,7 +27,7 @@ import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransaction
 
 /**
  * Optimized HostApduService using NfcPassiveTransport and TransactionRouter.
- * Updated: Account-aware logic to prevent unauthorized access from logged-out users.
+ * Updated: Uses shared Identity instance from AppContainer for consistency.
  */
 class MyHostApduService : HostApduService() {
 
@@ -42,19 +43,22 @@ class MyHostApduService : HostApduService() {
         var friendPairingHandler: ITransactionHandler? = null
     }
 
-    private val storageManager by lazy { SecureKeyStorageManager(applicationContext) }
-    private val authManager by lazy { AuthManager(applicationContext) }
-    private val identityCrypto = DilithiumIdentityCryptoImpl()
+    private val container by lazy { (application as MainApplication).container }
+    private val storageManager by lazy { container.storageManager }
+    private val authManager by lazy { container.authManager }
+    private val identityCrypto by lazy { container.identityCrypto }
     
     private val nfcTransport = NfcPassiveTransport()
 
     private val router: TransactionRouter by lazy {
+        val currentEmail = authManager.getUserEmail() ?: ""
+        
         val pairingHandler = OwnerPairingTransaction(
             context = applicationContext,
             identityCrypto = identityCrypto,
             storageManager = storageManager,
             authManager = authManager,
-            passwordProvider = { PasswordManager.getPassword(applicationContext) },
+            passwordProvider = { PasswordManager.getPassword(applicationContext, currentEmail) },
             onLog = { sendLogToGui(it) }
         )
         val fastHandler = FastTransaction(
@@ -66,7 +70,7 @@ class MyHostApduService : HostApduService() {
             identityCrypto = identityCrypto,
             storageManager = storageManager,
             authManager = authManager,
-            passwordProvider = { PasswordManager.getPassword(applicationContext) },
+            passwordProvider = { PasswordManager.getPassword(applicationContext, currentEmail) },
             onLog = { sendLogToGui(it) }
         )
         TransactionRouter(
@@ -85,7 +89,6 @@ class MyHostApduService : HostApduService() {
     override fun processCommandApdu(commandApdu: ByteArray?, extras: Bundle?): ByteArray {
         if (commandApdu == null || commandApdu.size < 2) return NfcConstants.SW_INTERNAL_ERROR
 
-        // SECURITY CHECK: Ensure a user is logged in before processing any car commands
         if (!authManager.isLoggedIn()) {
             Log.w(TAG, "NFC Access Denied: No user logged in.")
             return NfcConstants.SW_UNKNOWN_CMD

@@ -157,6 +157,8 @@ class ControlActivity : AppCompatActivity() {
     }
 
     private fun showActionResultDialog(success: Boolean, message: String) {
+        if (isFinishing || isDestroyed) return
+
         val dialog = BottomSheetDialog(this)
         val view = LayoutInflater.from(this).inflate(R.layout.dialog_action_result, null)
         dialog.setContentView(view)

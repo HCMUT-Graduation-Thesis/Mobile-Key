@@ -22,7 +22,8 @@ import java.nio.ByteBuffer
 import java.security.KeyPair
 
 /**
- * Owner Pairing Transaction - Updated for BLE L2CAP Insecure flow and Account Isolation.
+ * Server-side implementation of Owner Pairing flow.
+ * Updated: Reuses Account PQC Identity and copies it into the record for backward compatibility.
  */
 class OwnerPairingTransaction(
     private val context: Context,
@@ -34,7 +35,7 @@ class OwnerPairingTransaction(
 ) : ITransactionHandler {
 
     companion object {
-        private const val TAG = "OwnerPairing"
+        private const val TAG = "OwnerPairingTx"
     }
 
     private var currentSessionKey: ByteArray? = null
@@ -65,7 +66,7 @@ class OwnerPairingTransaction(
     override fun isTransactionComplete(): Boolean = isComplete
 
     private fun handleStartPairing(): LogicalResponse {
-        onLog("Phase 1: Pairing Request")
+        onLog("Phase 1: Pairing Initiated")
         return LogicalResponse(Status.SUCCESS)
     }
 
@@ -107,7 +108,7 @@ class OwnerPairingTransaction(
             val buffer = ByteBuffer.wrap(decryptedData)
             val record = DigitalKeyRecord()
 
-            // 1. Dilithium PK
+            // 1. Vehicle Identity
             val vehiclePK = ByteArray(CryptoConstants.ML_DSA_65_PK_SIZE)
             buffer.get(vehiclePK)
             record.vehiclePublicKey = vehiclePK
@@ -136,14 +137,12 @@ class OwnerPairingTransaction(
                 val metaBytes = ByteArray(metaLen); buffer.get(metaBytes)
                 try {
                     record.carMetadata = gson.fromJson(String(metaBytes), CarMetadata::class.java)
-                    // friendlyName = Car's Name
                     record.friendlyName = record.carMetadata?.modelName ?: "My Vehicle"
                 } catch (e: Exception) {
                     onLog("Metadata parse warning: ${e.message}")
                 }
             }
 
-            // NEW: Assign default holder name for Owner
             record.keyHolderName = "Main Key (Owner)"
 
             // 5. Fast Auth Key Derivation
@@ -153,15 +152,15 @@ class OwnerPairingTransaction(
                 sessionKey, salt, CryptoConstants.FAST_AUTH_TAG.toByteArray(), 32
             )
 
+            // Reusing Account PK/SK and saving into Record for stability
             record.devicePrivateKey = identityCrypto.getPrivateKey()
             record.devicePublicKey = identityCrypto.getPublicKey()
+            
             record.core.keyState = KeyState.PROVISIONING
             pendingRecord = record
 
-            // 6. Prepare Response: App -> Vehicle (Simplified)
+            // 6. Prepare Response: App -> Vehicle
             onLog("Phase 3: Sending App Identity...")
-
-            // Response: PK(1952) only - Address removed
             val response = ByteBuffer.allocate(CryptoConstants.ML_DSA_65_PK_SIZE).apply {
                 put(record.devicePublicKey!!)
             }.array()
