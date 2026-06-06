@@ -24,9 +24,8 @@ class LoginActivity : AppCompatActivity() {
     private lateinit var btnLogin: Button
     private lateinit var btnRegister: Button
     private lateinit var progressBar: ProgressBar
-    
+
     private lateinit var viewModel: AuthViewModel
-    private val container by lazy { (application as MainApplication).container }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,6 +38,7 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun initViewModel() {
+        val container = (application as MainApplication).container
         viewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
@@ -56,29 +56,29 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
+        // 1. Check Auto-Login (Offline-First)
+        viewModel.checkAutoLogin()
+
         btnLogin.setOnClickListener { handleLogin() }
         btnRegister.setOnClickListener { handleRegister() }
     }
 
     private fun observeViewModel() {
         lifecycleScope.launch {
-            viewModel.uiState.collectLatest { state ->
-                setLoading(state is AuthViewModel.AuthUiState.Loading)
+            viewModel.loginState.collectLatest { state ->
+                setLoading(state is AuthViewModel.LoginState.Loading)
+                if (state is AuthViewModel.LoginState.Error) {
+                    Toast.makeText(this@LoginActivity, state.message, Toast.LENGTH_SHORT).show()
+                }
             }
         }
 
         lifecycleScope.launch {
-            viewModel.events.collectLatest { event ->
+            viewModel.events.collect { event ->
                 when (event) {
-                    is AuthViewModel.AuthEvent.LoginSuccess -> {
+                    AuthViewModel.AuthEvent.NavigateToHome -> {
                         startActivity(Intent(this@LoginActivity, HomeActivity::class.java))
                         finish()
-                    }
-                    is AuthViewModel.AuthEvent.RegisterSuccess -> {
-                        Toast.makeText(this@LoginActivity, "Account created! You can now login.", Toast.LENGTH_LONG).show()
-                    }
-                    is AuthViewModel.AuthEvent.Error -> {
-                        Toast.makeText(this@LoginActivity, event.message, Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -88,25 +88,17 @@ class LoginActivity : AppCompatActivity() {
     private fun handleLogin() {
         val email = etEmail.text.toString()
         val pass = etPassword.text.toString()
-
-        if (email.isEmpty() || pass.isEmpty()) {
+        if (email.isBlank() || pass.isBlank()) {
             Toast.makeText(this, "Please enter email and password", Toast.LENGTH_SHORT).show()
             return
         }
-
         viewModel.login(email, pass)
     }
 
     private fun handleRegister() {
-        val email = etEmail.text.toString()
-        val pass = etPassword.text.toString()
-
-        if (email.isEmpty() || pass.length < 6) {
-            Toast.makeText(this, "Email is required and Password >= 6 chars", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        viewModel.register(email, pass)
+        // As per new requirement: Registration is disabled or handled by Admin.
+        // For now, we just show a message.
+        Toast.makeText(this, "Registration is managed by Administrator.", Toast.LENGTH_LONG).show()
     }
 
     private fun setLoading(isLoading: Boolean) {

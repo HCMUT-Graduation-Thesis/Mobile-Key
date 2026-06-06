@@ -11,7 +11,11 @@ interface KeyServerApi {
     fun setOnline(email: String)
     fun setOffline(email: String)
     
-    suspend fun login(email: String, pass: String): UserProfileResponse?
+    // Updated Auth APIs
+    suspend fun login(request: LoginRequest): AuthResponse?
+    suspend fun refresh(request: RefreshRequest): AuthResponse?
+    suspend fun getMe(token: String): MeResponse?
+    
     suspend fun register(email: String, pass: String, displayName: String = ""): Boolean
     
     suspend fun checkInvitationLegality(senderEmail: String, recipientEmail: String, parentKeyIdHex: String): String?
@@ -26,9 +30,3 @@ interface KeyServerApi {
     suspend fun syncKeyToCloud(email: String, record: CloudKeyRecord): Boolean
     suspend fun fetchUserKeys(email: String): List<CloudKeyRecord>
 }
-
-data class UserProfileResponse(
-    val email: String,
-    val displayName: String,
-    val token: String
-)
