@@ -20,7 +20,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.a100_basiccrypto.MainApplication
 import com.example.a100_basiccrypto.data.local.NotificationStore
 import com.example.a100_basiccrypto.R
-import com.example.a100_basiccrypto.data.model.ShareInvitation
+import com.example.a100_basiccrypto.data.model.InvitationDetail
 import com.example.a100_basiccrypto.digitalkey.ble.BleForegroundService
 import com.example.a100_basiccrypto.digitalkey.ble.BleHomeHelper
 import com.example.a100_basiccrypto.digitalkey.ble.BleProvider
@@ -212,7 +212,7 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    private fun showReceiveInvitationDialog(invitation: ShareInvitation) {
+    private fun showReceiveInvitationDialog(invitation: InvitationDetail) {
         val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_receive_invitation, null)
         val dialog = AlertDialog.Builder(this).setView(dialogView).create()
 
@@ -223,7 +223,7 @@ class HomeActivity : AppCompatActivity() {
         val btnProvision = dialogView.findViewById<MaterialButton>(R.id.btn_accept_invitation)
 
         val record = sharingViewModel.onInvitationReceived(invitation)
-        tvOwner.text = "Sender: ${invitation.senderName}"
+        tvOwner.text = "Sender: ${invitation.senderName ?: "Owner"}"
         
         val permissions = record?.core?.permissions ?: 0
         val permsList = mutableListOf<String>()
@@ -259,7 +259,11 @@ class HomeActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         BleProvider.addVehicleInfoListener(vehicleInfoListener)
-        container.authManager.getUserEmail()?.let { homeViewModel.refreshKeys(it) }
+        val email = container.authManager.getUserEmail()
+        if (email != null) {
+            homeViewModel.refreshKeys(email)
+            sharingViewModel.fetchInvitationsFromCloud(email)
+        }
     }
 
     override fun onPause() {

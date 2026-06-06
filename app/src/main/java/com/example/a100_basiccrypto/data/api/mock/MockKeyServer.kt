@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import java.util.UUID
 
 /**
- * Enhanced Mock Server simulating advanced Auth flows and device binding.
+ * Enhanced Mock Server simulating advanced Auth and Sharing flows.
  */
 object MockKeyServer : KeyServerApi {
     private const val TAG = "MockKeyServer"
@@ -18,16 +18,17 @@ object MockKeyServer : KeyServerApi {
     private val userDatabase = mutableMapOf<String, String>().apply {
         put("user01@gmail.com", "123456")
         put("test@gmail.com", "123456")
+        put("friend@gmail.com", "123456")
     }
     
     // email -> identity_pk
     private val deviceDatabase = mutableMapOf<String, String>()
     
     private val userKeyCloud = mutableMapOf<String, MutableList<CloudKeyRecord>>()
-    private val invitationInbox = mutableMapOf<String, MutableList<ShareInvitation>>()
+    private val invitationInbox = mutableMapOf<String, MutableList<InvitationDetail>>()
     private val onlineUsers = mutableSetOf<String>()
     
-    private val _invitationFlow = MutableSharedFlow<ShareInvitation>(replay = 0)
+    private val _invitationFlow = MutableSharedFlow<InvitationDetail>(replay = 0)
     override val invitationFlow = _invitationFlow.asSharedFlow()
     
     private val _activationFlow = MutableSharedFlow<ByteArray>(replay = 0)
@@ -38,39 +39,29 @@ object MockKeyServer : KeyServerApi {
 
     override fun setOnline(email: String) {
         onlineUsers.add(email)
-        Log.i(TAG, "📱 [SERVER] User $email is now ONLINE")
     }
 
     override fun setOffline(email: String) {
         onlineUsers.remove(email)
-        Log.i(TAG, "📱 [SERVER] User $email is now OFFLINE")
     }
 
+    // --- AUTH APIs ---
+
     override suspend fun login(request: LoginRequest): AuthResponse? {
-        delay(1000)
+        delay(500)
         val storedPass = userDatabase[request.email]
-        if (storedPass != null && storedPass == request.password) {
-            
-            // Simulating Device Binding Check
+        if (storedPass == request.password) {
             val boundPk = deviceDatabase[request.email]
-            if (boundPk != null && boundPk != request.identity_pk) {
-                Log.e(TAG, "❌ [AUTH] Device mismatch for ${request.email}")
-                return null
-            }
-            if (boundPk == null) {
-                deviceDatabase[request.email] = request.identity_pk
-                Log.i(TAG, "🔗 [SERVER] New device bound for ${request.email}")
-            }
+            if (boundPk != null && boundPk != request.identity_pk) return null
+            if (boundPk == null) deviceDatabase[request.email] = request.identity_pk
 
             setOnline(request.email)
-            Log.d(TAG, "🔑 [AUTH] Login Success: ${request.email}")
-
             return AuthResponse(
                 message = "Đăng nhập thành công",
                 accessToken = "mock_access_token_" + UUID.randomUUID().toString().take(6),
                 refreshToken = "mock_refresh_token_" + UUID.randomUUID().toString().take(8),
                 user = UserResponse(UUID.randomUUID().toString(), request.email, request.displayName ?: "User", "USER"),
-                device = DeviceResponse(UUID.randomUUID().toString(), request.identity_pk, request.deviceName ?: "Unknown", request.fcmToken, "2026-06-06T12:00:00Z"),
+                device = DeviceResponse("did", request.identity_pk, request.deviceName ?: "Unknown", request.fcmToken, null),
                 cloudPublicKey = MOCK_CLOUD_PK
             )
         }
@@ -78,52 +69,82 @@ object MockKeyServer : KeyServerApi {
     }
 
     override suspend fun refresh(request: RefreshRequest): AuthResponse? {
-        delay(500)
-        if (request.refreshToken.startsWith("mock_refresh_token_")) {
-            return AuthResponse(
-                message = "Cấp lại access token thành công",
-                accessToken = "mock_access_token_new_" + UUID.randomUUID().toString().take(6),
-                user = UserResponse("uid", "user@example.com", "User", "USER"),
-                cloudPublicKey = MOCK_CLOUD_PK
-            )
-        }
-        return null
+        return AuthResponse("Cấp lại thành công", "new_access_token", null, UserResponse("u", "user@mail.com", "User", "USER"), null, MOCK_CLOUD_PK)
     }
 
     override suspend fun getMe(token: String): MeResponse? {
-        delay(500)
-        if (token.startsWith("mock_access_token_")) {
-            return MeResponse(
-                user = UserResponse("uid", "user@example.com", "User", "USER"),
-                devices = listOf(DeviceResponse("did", "identity_pk", "Phone", "fcm", "now")),
-                cloudPublicKey = MOCK_CLOUD_PK
-            )
-        }
-        return null
+        return MeResponse(UserResponse("u", "user@mail.com", "User", "USER"), emptyList(), MOCK_CLOUD_PK)
     }
 
     override suspend fun register(email: String, pass: String, displayName: String): Boolean {
-        delay(800)
-        if (userDatabase.containsKey(email)) return false
         userDatabase[email] = pass
         return true
     }
 
-    // --- SHARING & OTHER METHODS (RESTORED FULL LOGIC) ---
+    // --- SHARING APIs (REST Standard) ---
 
-    override suspend fun checkInvitationLegality(senderEmail: String, recipientEmail: String, parentKeyIdHex: String): String? {
+    override suspend fun checkLegality(request: ShareCheckRequest): ShareCheckResponse? {
+        delay(300)
+        val exists = userDatabase.containsKey(request.recipientEmail)
+        return if (exists) {
+            ShareCheckResponse(true, "Có thể chia sẻ", request.parentKeyId, "mock_mid_123", RecipientInfo("uid", request.recipientEmail, "Friend Name"))
+        } else {
+            ShareCheckResponse(false, "Recipient does not exist", null, null, null)
+        }
+    }
+
+    override suspend fun invite(request: ShareInviteRequest): ShareInviteResponse? {
         delay(500)
-        if (!userDatabase.containsKey(recipientEmail)) return "Recipient account does not exist."
+        val invitation = InvitationDetail(
+            id = UUID.randomUUID().toString(),
+            sender_id = "owner_id",
+            recipient_email = request.recipientEmail,
+            module_id = request.moduleID,
+            parent_key_id = request.parentKeyId,
+            attestation_package = request.ap_blob,
+            pin_hash = request.pin_hash,
+            status = "PENDING",
+            metadata_snapshot = request.car_metadata,
+            // Friendly mapping for Friend UI
+            senderEmail = "owner@mail.com",
+            senderName = "Owner",
+            moduleID = request.moduleID,
+            parentKeyId = request.parentKeyId,
+            ap_blob = request.ap_blob,
+            car_metadata = request.car_metadata
+        )
+        
+        val inbox = invitationInbox.getOrPut(request.recipientEmail) { mutableListOf() }
+        inbox.add(invitation)
+        
+        if (onlineUsers.contains(request.recipientEmail)) {
+            _invitationFlow.emit(invitation)
+        }
+        
+        return ShareInviteResponse("Invite success", invitation)
+    }
+
+    override suspend fun fetchPendingInvitations(email: String): List<InvitationDetail> {
+        return invitationInbox[email] ?: emptyList()
+    }
+
+    override suspend fun claimInvitation(request: ShareClaimRequest): InvitationDetail? {
+        delay(300)
+        // Find and mark as CLAIMED in mock DB
+        for (inbox in invitationInbox.values) {
+            val found = inbox.find { it.id == request.invitationId }
+            if (found != null) return found
+        }
         return null
     }
 
-    override suspend fun uploadInvitation(invitation: ShareInvitation): Boolean {
-        delay(1000)
-        val inbox = invitationInbox.getOrPut(invitation.recipientEmail) { mutableListOf() }
-        inbox.add(invitation)
-        if (onlineUsers.contains(invitation.recipientEmail)) _invitationFlow.emit(invitation)
+    override suspend fun reportOutcome(report: ShareOutcomeReport): Boolean {
+        Log.i(TAG, "📈 [REPORT] Outcome for ${report.invitationId}: ${report.status}")
+        // Update local mock store if needed
         return true
     }
+
+    // --- LEGACY / HELPER METHODS ---
 
     override suspend fun revokeInvitation(senderEmail: String, recipientEmail: String, ap: ByteArray, signature: ByteArray?) {
         _statusUpdateFlow.emit(InvitationStatusUpdate(ap, InvitationStatus.REVOKED, recipientEmail))
@@ -134,16 +155,8 @@ object MockKeyServer : KeyServerApi {
         return true
     }
 
-    override suspend fun reportInvitationOutcome(recipientEmail: String, ap: ByteArray, status: InvitationStatus, senderEmail: String) {
-        _statusUpdateFlow.emit(InvitationStatusUpdate(ap, status, recipientEmail))
-    }
-
-    override suspend fun fetchPendingInvitations(email: String): List<ShareInvitation> {
-        return invitationInbox[email] ?: emptyList()
-    }
-
     override fun removeInvitation(email: String, ap: ByteArray) {
-        invitationInbox[email]?.removeAll { it.ap.contentEquals(ap) }
+        invitationInbox[email]?.removeAll { it.attestation_package == ap.joinToString("") { b -> "%02x".format(b) } }
     }
 
     override suspend fun notifyActivation(ap: ByteArray) {

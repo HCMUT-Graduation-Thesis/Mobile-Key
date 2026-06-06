@@ -14,6 +14,7 @@ import com.example.a100_basiccrypto.digitalkey.core.SharingManager
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import com.example.a100_basiccrypto.digitalkey.transactions.StandardTransactionClient
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.hexToBytes
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.Role
@@ -28,50 +29,40 @@ class SharingViewModel(
     private val keyRepository: KeyRepository
 ) : ViewModel() {
 
+    companion object {
+        private const val TAG = "SharingViewModel"
+    }
+
     private val sharingManager = SharingManager(identityCrypto, storageManager)
 
     private val _uiState = MutableStateFlow<SharingUiState>(SharingUiState.Idle)
     val uiState: StateFlow<SharingUiState> = _uiState
 
-    // Event flow for one-time events like showing a dialog or finishing activity
     private val _events = MutableSharedFlow<SharingEvent>()
     val events: SharedFlow<SharingEvent> = _events.asSharedFlow()
 
-    // Flow for observing proactive invitations from Server (Stage 1 Push)
     val incomingInvitations = keyRepository.invitationFlow
 
-    // Flow for the Owner to observe status updates of their sent invitations
-    val sentInvitationUpdates = keyRepository.statusUpdateFlow
-
     init {
-        // Sync NotificationStore with current user on initialization
         authManager.getUserEmail()?.let { email ->
             NotificationStore.setCurrentUser(email)
         }
-
-        // FRIEND SIDE: Listen for REVOKED signals from server to perform soft-wipe
         observeRevocations()
-
-        // OWNER SIDE: Listen for ACTIVATION signals from server
         observeActivations()
     }
 
     private fun observeRevocations() {
         viewModelScope.launch {
             keyRepository.statusUpdateFlow.collectLatest { update ->
+                Log.d(TAG, "📡 [REVOKE-OBSERVER] Received status update: ${update.status} for ${update.recipientEmail}")
                 if (update.status == InvitationStatus.REVOKED) {
                     val currentEmail = authManager.getUserEmail()
-                    // If the revocation is for the current user
                     if (update.recipientEmail.equals(currentEmail, ignoreCase = true)) {
-                        Log.w("SharingViewModel", "🚨 [REVOKE] Received revocation signal for recipient: ${update.recipientEmail}")
-
-                        // Perform Soft-Wipe: Find local key by AP and delete it
                         val allKeys = storageManager.getAllKeys()
                         val keyToDelete = allKeys.find { it.attestationPackage?.contentEquals(update.ap) == true }
-                        
                         keyToDelete?.core?.keyID?.let { keyId ->
+                            Log.i(TAG, "🗑️ [REVOKE-LOCAL] Deleting revoked key locally: ${keyId.toHex()}")
                             storageManager.deleteKey(keyId)
-                            Log.i("SharingViewModel", "🗑️ [REVOKE] Local key deleted successfully.")
                             _uiState.value = SharingUiState.Error("A key was revoked by the owner.")
                             _events.emit(SharingEvent.KeyRevoked(keyId))
                         }
@@ -84,15 +75,15 @@ class SharingViewModel(
     private fun observeActivations() {
         viewModelScope.launch {
             keyRepository.activationFlow.collectLatest { activatedAp ->
-                Log.d("SharingViewModel", "⚡ [ACTIVATE] Signal received for an AP. Updating local state...")
+                Log.d(TAG, "📡 [ACTIVATE-OBSERVER] Received activation notification for AP: ${activatedAp.toHex()}")
                 val allKeys = storageManager.getAllKeys()
                 var found = false
                 allKeys.forEach { key ->
                     if (key.core.keyState == KeyState.PENDING && key.attestationPackage?.contentEquals(activatedAp) == true) {
+                        Log.i(TAG, "✅ [ACTIVATE-LOCAL] Marking key ${key.core.keyID?.toHex()} as ACTIVE (Remote update)")
                         key.core.keyState = KeyState.ACTIVE
                         storageManager.saveDigitalKey(key)
                         found = true
-                        Log.i("SharingViewModel", "✅ [ACTIVATE] Local Pending key for ${key.keyHolderName} is now ACTIVE.")
                     }
                 }
                 if (found) {
@@ -102,9 +93,6 @@ class SharingViewModel(
         }
     }
 
-    /**
-     * OWNER SIDE: Stage 1.1 - Check and Share key.
-     */
     fun shareKey(
         ownerRecord: DigitalKeyRecord,
         permissions: Int,
@@ -118,18 +106,21 @@ class SharingViewModel(
         senderEmail: String = ""
     ) {
         viewModelScope.launch {
+            Log.i(TAG, "📤 [SHARE] Starting sharing flow for recipient: $recipientEmail")
             _uiState.value = SharingUiState.Loading
 
-            // 1. Security Check with Server
             val parentKeyIdHex = ownerRecord.core.keyID?.toHex() ?: ""
-            val errorMsg = keyRepository.checkInvitationLegality(senderEmail, recipientEmail, parentKeyIdHex)
+            Log.d(TAG, "🔍 [SHARE-CHECK] Checking sharing legality for $recipientEmail...")
+            val checkRes = keyRepository.checkSharingLegality(recipientEmail, parentKeyIdHex)
             
-            if (errorMsg != null) {
-                _uiState.value = SharingUiState.Error(errorMsg)
+            if (checkRes == null || !checkRes.isLegal) {
+                Log.e(TAG, "❌ [SHARE-CHECK] Legality check failed: ${checkRes?.message ?: "Unknown error"}")
+                _uiState.value = SharingUiState.Error(checkRes?.message ?: "Legality check failed")
                 return@launch
             }
+            Log.d(TAG, "✅ [SHARE-CHECK] Legality check passed. ModuleID: ${checkRes.moduleID}")
 
-            // 2. Proceed to create and sign AP
+            Log.d(TAG, "🛠️ [SHARE-GEN] Creating invitation package (AP)...")
             val updatedRecord = sharingManager.createInvitation(
                 ownerRecord = ownerRecord,
                 role = Role.FRIEND,
@@ -145,33 +136,94 @@ class SharingViewModel(
             )
             
             if (updatedRecord != null) {
-                // 3. Upload to server
-                val invitation = ShareInvitation(
-                    ap = updatedRecord.attestationPackage ?: byteArrayOf(),
-                    friendlyName = updatedRecord.friendlyName,
-                    holderNickname = holderNickname,
+                val inviteReq = ShareInviteRequest(
                     recipientEmail = recipientEmail,
-                    senderName = "Owner",
-                    senderEmail = senderEmail,
-                    carMetadata = updatedRecord.carMetadata,
-                    moduleID = updatedRecord.moduleID
+                    moduleID = updatedRecord.moduleID!!.toHex(),
+                    parentKeyId = parentKeyIdHex,
+                    ap_blob = updatedRecord.attestationPackage!!.toHex(),
+                    pin_hash = updatedRecord.invitationCodeHash!!.toHex(),
+                    car_metadata = updatedRecord.carMetadata ?: com.example.a100_basiccrypto.shared.model.CarMetadata(
+                        modelName = updatedRecord.friendlyName
+                    )
                 )
                 
-                if (keyRepository.uploadInvitation(invitation)) {
+                Log.d(TAG, "☁️ [SHARE-UPLOAD] Uploading invitation to Cloud...")
+                val inviteRes = keyRepository.sendInvitation(inviteReq)
+                if (inviteRes != null) {
+                    Log.i(TAG, "🎉 [SHARE-SUCCESS] Invitation uploaded! PIN Code: ${updatedRecord.invitationCode}")
                     _uiState.value = SharingUiState.ShareSuccess(updatedRecord.invitationCode ?: "")
                 } else {
+                    Log.e(TAG, "❌ [SHARE-UPLOAD] Failed to upload invitation to server.")
                     _uiState.value = SharingUiState.Error("Failed to upload invitation to server.")
                 }
             } else {
+                Log.e(TAG, "❌ [SHARE-GEN] Failed to create invitation package.")
                 _uiState.value = SharingUiState.Error("Failed to create invitation package.")
             }
         }
     }
 
-    /**
-     * OWNER SIDE: Revokes a previously shared key (Friend Revocation).
-     * Updated to support Local Phase (Vehicle) and Sync Phase (Cloud) as per 1.1 spec.
-     */
+    fun onInvitationReceived(invitation: InvitationDetail): DigitalKeyRecord? {
+        Log.i(TAG, "📩 [RECV] Processing received invitation: ${invitation.id} from ${invitation.senderName}")
+        val legacyInv = mapToLegacy(invitation)
+        val record = sharingManager.processIncomingInvitation(legacyInv)
+        if (record != null) {
+            Log.d(TAG, "📦 [RECV-LOCAL] Temporary record created for key: ${record.core.keyID?.toHex()}")
+            _uiState.value = SharingUiState.ReceivedInvitation(record, invitation)
+        } else {
+            Log.e(TAG, "❌ [RECV-ERROR] Failed to process AP from invitation.")
+        }
+        return record
+    }
+
+    fun verifyPinAndActivate(record: DigitalKeyRecord, pin: String, invitation: InvitationDetail) {
+        viewModelScope.launch {
+            Log.i(TAG, "🔑 [ACTIVATE] Verifying PIN for key: ${record.core.keyID?.toHex()}")
+            _uiState.value = SharingUiState.Loading
+            val success = sharingManager.verifyPinAndFinalize(record, pin)
+            
+            if (success) {
+                Log.i(TAG, "✅ [ACTIVATE-PIN] PIN correct. Reporting outcome to Cloud...")
+                val report = ShareOutcomeReport(
+                    invitationId = invitation.id,
+                    status = "CLAIMED",
+                    keyId = record.core.keyID?.toHex(),
+                    devicePublicKey = record.devicePublicKey?.toHex(),
+                    vehiclePublicKey = record.vehiclePublicKey?.toHex(),
+                    permissions = record.core.permissions,
+                    keyState = "ACTIVE",
+                    holderNickname = authManager.getUserName()
+                )
+                keyRepository.reportOutcome(report)
+                keyRepository.notifyActivation(record.attestationPackage ?: byteArrayOf())
+                _uiState.value = SharingUiState.ActivationSuccess
+                NotificationStore.markAsUsed(invitation)
+            } else {
+                val attempts = NotificationStore.incrementAttempts(invitation)
+                Log.w(TAG, "❌ [ACTIVATE-PIN] Invalid PIN. Attempt $attempts/3")
+                if (attempts >= 3) {
+                    Log.e(TAG, "🚫 [ACTIVATE-FAIL] Max attempts reached. Reporting FAILURE to Cloud.")
+                    keyRepository.reportOutcome(ShareOutcomeReport(invitation.id, "FAILED"))
+                    _uiState.value = SharingUiState.Error("Too many failed attempts. Key rejected.")
+                } else {
+                    _uiState.value = SharingUiState.Error("Invalid PIN code. Attempt $attempts/3")
+                }
+            }
+        }
+    }
+
+    private fun mapToLegacy(inv: InvitationDetail): ShareInvitation {
+        return ShareInvitation(
+            ap = inv.attestation_package.hexToBytes(),
+            friendlyName = inv.car_metadata?.modelName ?: "New Car",
+            recipientEmail = authManager.getUserEmail() ?: "",
+            senderName = inv.senderName ?: "Owner",
+            senderEmail = inv.senderEmail ?: "",
+            carMetadata = inv.car_metadata,
+            moduleID = inv.moduleID?.hexToBytes()
+        )
+    }
+
     fun revokeKey(record: DigitalKeyRecord) {
         viewModelScope.launch {
             val ap = record.attestationPackage ?: return@launch
@@ -179,25 +231,19 @@ class SharingViewModel(
             val senderEmail = authManager.getUserEmail() ?: return@launch
             val friendKeyID = record.core.keyID ?: return@launch
 
+            Log.i(TAG, "🛑 [REVOKE] Initiating revocation for Friend Key: ${friendKeyID.toHex()}")
             _uiState.value = SharingUiState.Loading
-
-            // 1. Identification: Get Owner key authority
             val parentKeyID = record.core.parentKeyID ?: return@launch
-            val ownerRecord = storageManager.getDigitalKey(parentKeyID)
-            val ownerSK = ownerRecord?.devicePrivateKey ?: return@launch
+            val ownerSK = identityCrypto.getPrivateKey()
 
-            // 2. LOCAL PHASE: Add to pending queue for vehicle removal (via INS_REMOVE_FRIEND)
-            Log.d("SharingViewModel", "🛡️ [REVOKE-LOCAL] Queuing FriendID=${friendKeyID.toHex()} for removal at Vehicle.")
+            Log.d(TAG, "⚙️ [REVOKE-QUEUE] Adding Friend Key to pending local removal queue...")
             storageManager.addPendingRevocation(parentKeyID, friendKeyID)
-
-            // 3. SYNC PHASE: Online Revocation with Proof of Intent (Signature)
-            val revokeSignature = identityCrypto.sign(ap, ownerSK)
-            Log.i("SharingViewModel", "☁️ [REVOKE-SYNC] Notifying Cloud for recipient $recipientEmail")
             
-            // Notify Server
+            val revokeSignature = identityCrypto.sign(ap, ownerSK)
+            Log.d(TAG, "☁️ [REVOKE-CLOUD] Sending revocation to Cloud...")
             keyRepository.revokeInvitation(senderEmail, recipientEmail, ap, revokeSignature)
             
-            // 4. CLEANUP: Remove from Owner's local share list
+            Log.d(TAG, "🗑️ [REVOKE-CLEAN] Deleting Friend Record from Owner's local storage.")
             storageManager.deleteKey(friendKeyID)
             
             _uiState.value = SharingUiState.RevokeSuccess
@@ -205,115 +251,45 @@ class SharingViewModel(
         }
     }
 
-    /**
-     * OWNER SIDE: Revoke Self / Reset Vehicle flow (Spec 1.2).
-     */
     fun revokeOwnerSelf(record: DigitalKeyRecord, password: String) {
         viewModelScope.launch {
             _uiState.value = SharingUiState.Loading
-
-            // 1. INTERNAL AUTH: Verify via AuthRepository
             val email = authManager.getUserEmail() ?: ""
             val authResult = authRepository.login(email, password)
             if (!authResult) {
-                _uiState.value = SharingUiState.Error("Authentication failed. Invalid password.")
+                _uiState.value = SharingUiState.Error("Authentication failed.")
                 return@launch
             }
 
-            // 2. LOCAL PHASE: Execute Standard Transaction CMD_REVOKE_OWNER
             val transport = BleProvider.getTransport()
-            val isConnected = BleProvider.getManager()?.isConnected() == true
-
-            if (transport == null || !isConnected) {
-                _uiState.value = SharingUiState.Error("BLE disconnected. Please stay near the vehicle for Reset.")
+            if (transport == null) {
+                _uiState.value = SharingUiState.Error("BLE disconnected.")
                 return@launch
             }
 
-            val standardTxClient = StandardTransactionClient(storageManager, identityCrypto) { 
-                Log.d("SharingViewModel", "RevokeSelf-BLE: $it")
-            }
-
+            val standardTxClient = StandardTransactionClient(storageManager, identityCrypto) { }
             val localSuccess = standardTxClient.executeRevokeOwner(transport, record.core.keyID!!)
 
-            if (!localSuccess) {
-                _uiState.value = SharingUiState.Error("Vehicle reset failed. Please ensure you are authorized and try again.")
-                return@launch
-            }
-
-            // 3. SYNC PHASE: Notify Cloud
-            val moduleIDHex = record.moduleID?.toHex() ?: ""
-            val cloudSuccess = keyRepository.revokeOwner(email, moduleIDHex)
-
-            if (cloudSuccess) {
-                // 4. CLEANUP: Wipe local data
-                storageManager.deleteKey(record.core.keyID!!)
-                _uiState.value = SharingUiState.RevokeSuccess
-                _events.emit(SharingEvent.LocalRevokeSuccess)
+            if (localSuccess) {
+                val moduleIDHex = record.moduleID?.toHex() ?: ""
+                if (keyRepository.revokeOwner(email, moduleIDHex)) {
+                    storageManager.deleteKey(record.core.keyID!!)
+                    _uiState.value = SharingUiState.RevokeSuccess
+                    _events.emit(SharingEvent.LocalRevokeSuccess)
+                }
             } else {
-                _uiState.value = SharingUiState.Error("Vehicle reset locally, but Cloud sync failed.")
+                _uiState.value = SharingUiState.Error("Vehicle reset failed.")
             }
         }
     }
 
-    /**
-     * FRIEND SIDE: Stage 1.2 - Fetch missed invitations from Server (Inbox).
-     */
     fun fetchInvitationsFromCloud(email: String) {
         viewModelScope.launch {
+            Log.d(TAG, "☁️ [FETCH] Fetching pending invitations for $email from Cloud...")
             val pendingList = keyRepository.fetchPendingInvitations(email)
+            Log.i(TAG, "📥 [FETCH] Received ${pendingList.size} invitations from Cloud.")
             pendingList.forEach { invitation ->
-                NotificationStore.addNotification(
-                    ownerEmail = email,
-                    title = "Missed Key Shared",
-                    message = "${invitation.senderName} shared a key with you.",
-                    invitation = invitation
-                )
-            }
-        }
-    }
-
-    fun onInvitationReceived(invitation: ShareInvitation): DigitalKeyRecord? {
-        val record = sharingManager.processIncomingInvitation(invitation)
-        if (record != null) {
-            _uiState.value = SharingUiState.ReceivedInvitation(record, invitation)
-        }
-        return record
-    }
-
-    /**
-     * FRIEND SIDE: Verify PIN with attempt counting and report results to server.
-     */
-    fun verifyPinAndActivate(record: DigitalKeyRecord, pin: String, invitation: ShareInvitation) {
-        viewModelScope.launch {
-            _uiState.value = SharingUiState.Loading
-            val success = sharingManager.verifyPinAndFinalize(record, pin)
-            if (success) {
-                // Success: Report CLAIMED status to server
-                keyRepository.reportInvitationOutcome(
-                    recipientEmail = record.accountEmail ?: "",
-                    ap = record.attestationPackage ?: byteArrayOf(),
-                    status = InvitationStatus.CLAIMED,
-                    senderEmail = invitation.senderEmail
-                )
-
-                keyRepository.notifyActivation(record.attestationPackage ?: byteArrayOf())
-                NotificationStore.markAsUsed(invitation)
-                _uiState.value = SharingUiState.ActivationSuccess
-            } else {
-                // Failure: Increment attempts
-                val attempts = NotificationStore.incrementAttempts(invitation)
-                if (attempts >= 3) {
-                    // Report FAILED status to server
-                    keyRepository.reportInvitationOutcome(
-                        recipientEmail = record.accountEmail ?: "",
-                        ap = record.attestationPackage ?: byteArrayOf(),
-                        status = InvitationStatus.FAILED,
-                        senderEmail = invitation.senderEmail
-                    )
-                    _uiState.value = SharingUiState.Error("Too many failed attempts. Invitation cancelled.")
-                } else {
-                    _uiState.value = SharingUiState.Error("Invalid PIN code. ${3 - attempts} attempts left.")
-                }
+                NotificationStore.addNotification(email, "Key Shared", "Shared by ${invitation.senderName}", invitation)
             }
         }
     }
@@ -327,7 +303,7 @@ class SharingViewModel(
         object Loading : SharingUiState()
         object RevokeSuccess : SharingUiState()
         data class ShareSuccess(val code: String) : SharingUiState()
-        data class ReceivedInvitation(val record: DigitalKeyRecord, val invitation: ShareInvitation) : SharingUiState()
+        data class ReceivedInvitation(val record: DigitalKeyRecord, val invitation: InvitationDetail) : SharingUiState()
         object ActivationSuccess : SharingUiState()
         data class Error(val message: String) : SharingUiState()
     }
