@@ -24,6 +24,11 @@ interface KeyServerApi {
     suspend fun claimInvitation(request: ShareClaimRequest): InvitationDetail?
     suspend fun reportOutcome(report: ShareOutcomeReport): Boolean
     
+    // Revocation APIs (New Standard)
+    suspend fun revokeFriend(request: RevokeFriendRequest): RevokeFriendResponse?
+    suspend fun fetchRevokeJobs(): List<RevokeJob>
+    suspend fun reportRevokeJob(report: RevokeJobReport): Boolean
+    
     // Management APIs
     suspend fun revokeInvitation(senderEmail: String, recipientEmail: String, ap: ByteArray, signature: ByteArray? = null)
     suspend fun revokeOwner(ownerEmail: String, moduleID: String): Boolean

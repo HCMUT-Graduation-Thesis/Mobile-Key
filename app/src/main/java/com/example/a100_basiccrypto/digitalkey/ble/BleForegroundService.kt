@@ -11,12 +11,15 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.example.a100_basiccrypto.MainApplication
+import com.example.a100_basiccrypto.data.model.RevokeJobReport
 import com.example.a100_basiccrypto.ui.home.HomeActivity
 import com.example.a100_basiccrypto.digitalkey.core.AuthManager
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.digitalkey.transactions.FastTransactionClient
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.hexToBytes
 import com.example.a100_basiccrypto.shared.command.MessageConstants
 import com.example.a100_basiccrypto.shared.link.IActiveTransport
 import kotlinx.coroutines.*
@@ -41,6 +44,7 @@ class BleForegroundService : Service() {
     
     private val storageManager by lazy { SecureKeyStorageManager(this) }
     private val authManager by lazy { AuthManager(this) }
+    private val keyRepository by lazy { (application as MainApplication).container.keyRepository }
     private val fastTxClient by lazy { 
         FastTransactionClient(storageManager) { Log.d("BleService", it) } 
     }
@@ -174,6 +178,27 @@ class BleForegroundService : Service() {
         }
     }
 
+    /**
+     * Standardized Revocation Check: Polls Cloud for pending revoke jobs to sync with Vehicle.
+     */
+    private suspend fun syncCloudRevokeJobs(transport: IActiveTransport, ownerKeyID: ByteArray) {
+        try {
+            val jobs = keyRepository.fetchRevokeJobs()
+            val currentEmail = authManager.getUserEmail() ?: return
+            
+            jobs.filter { it.requesterEmail.equals(currentEmail, ignoreCase = true) }.forEach { job ->
+                Log.i("BleService", "⚙️ [CLOUD-JOB] Syncing Revoke Job ${job.id} to Vehicle...")
+                val status = fastTxClient.executeRemoveFriend(transport, ownerKeyID, job.keyId.hexToBytes())
+                if (status == MessageConstants.Status.SUCCESS) {
+                    Log.i("BleService", "✅ [CLOUD-JOB] Success. Reporting to Cloud.")
+                    keyRepository.reportRevokeJob(RevokeJobReport(job.id, "REVOKED"))
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("BleService", "Error syncing cloud jobs: ${e.message}")
+        }
+    }
+
     private suspend fun performSingleSync() {
         val manager = BleProvider.getManager()
         val activeKeyID = manager?.connectedKeyID
@@ -192,6 +217,9 @@ class BleForegroundService : Service() {
 
             val transport = BleProvider.getTransport()
             if (transport != null) {
+                // NEW: Standardized Cloud Jobs Sync
+                syncCloudRevokeJobs(transport, activeKeyID)
+
                 // LOCAL PHASE: Process pending friend revocations before telemetry sync
                 processPendingRevocations(transport, activeKeyID)
 

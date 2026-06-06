@@ -226,28 +226,110 @@ class SharingViewModel(
 
     fun revokeKey(record: DigitalKeyRecord) {
         viewModelScope.launch {
-            val ap = record.attestationPackage ?: return@launch
+            val keyID = record.core.keyID ?: return@launch
+            val moduleID = record.moduleID?.toHex() ?: return@launch
             val recipientEmail = record.accountEmail ?: return@launch
-            val senderEmail = authManager.getUserEmail() ?: return@launch
-            val friendKeyID = record.core.keyID ?: return@launch
-
-            Log.i(TAG, "🛑 [REVOKE] Initiating revocation for Friend Key: ${friendKeyID.toHex()}")
-            _uiState.value = SharingUiState.Loading
-            val parentKeyID = record.core.parentKeyID ?: return@launch
             val ownerSK = identityCrypto.getPrivateKey()
 
-            Log.d(TAG, "⚙️ [REVOKE-QUEUE] Adding Friend Key to pending local removal queue...")
-            storageManager.addPendingRevocation(parentKeyID, friendKeyID)
-            
-            val revokeSignature = identityCrypto.sign(ap, ownerSK)
-            Log.d(TAG, "☁️ [REVOKE-CLOUD] Sending revocation to Cloud...")
-            keyRepository.revokeInvitation(senderEmail, recipientEmail, ap, revokeSignature)
-            
-            Log.d(TAG, "🗑️ [REVOKE-CLEAN] Deleting Friend Record from Owner's local storage.")
-            storageManager.deleteKey(friendKeyID)
-            
-            _uiState.value = SharingUiState.RevokeSuccess
-            _events.emit(SharingEvent.LocalRevokeSuccess)
+            Log.i(TAG, "🛑 [REVOKE] Initiating standardized revocation for: ${keyID.toHex()}")
+            _uiState.value = SharingUiState.Loading
+
+            // 1. Create Owner Signature (signing the keyID as proof of intent)
+            val signature = identityCrypto.sign(keyID, ownerSK).toHex()
+
+            // 2. Call Standardized Revoke API
+            val request = RevokeFriendRequest(
+                moduleID = moduleID,
+                keyId = keyID.toHex(),
+                friendEmail = recipientEmail,
+                ownerSignature = signature,
+                reason = "Owner revoked access"
+            )
+
+            val response = keyRepository.revokeFriend(request)
+
+            if (response?.success == true) {
+                Log.i(TAG, "☁️ [REVOKE-CLOUD] Key revoked on Cloud. Job ID: ${response.revokeJob?.id}")
+                
+                // 1. Notify SUCCESS immediately as requested (Cloud Job created & Queued)
+                storageManager.deleteKey(keyID)
+                _uiState.value = SharingUiState.RevokeSuccess
+                _events.emit(SharingEvent.LocalRevokeSuccess)
+
+                // 2. Background Vehicle Sync (Don't wait, just trigger or queue)
+                response.vehicleCommand?.let { cmd ->
+                    if (cmd.command == "INS_REMOVE_FRIEND") {
+                        val transport = BleProvider.getTransport()
+                        if (transport != null) {
+                            Log.d(TAG, "⚡ [REVOKE-BLE] Vehicle connected. Attempting background sync...")
+                            // Run in a separate coroutine so it doesn't block the UI success state
+                            viewModelScope.launch {
+                                val fastTxClient = com.example.a100_basiccrypto.digitalkey.transactions.FastTransactionClient(storageManager) { }
+                                val status = fastTxClient.executeRemoveFriend(transport, record.core.parentKeyID!!, keyID)
+                                if (status == com.example.a100_basiccrypto.shared.command.MessageConstants.Status.SUCCESS) {
+                                    Log.i(TAG, "✅ [REVOKE-BLE] Sync successful. Reporting to Cloud.")
+                                    keyRepository.reportRevokeJob(RevokeJobReport(response.revokeJob!!.id, "REVOKED"))
+                                } else {
+                                    Log.w(TAG, "⚠️ [REVOKE-BLE] Immediate sync failed. Background service will retry.")
+                                    storageManager.addPendingRevocation(record.core.parentKeyID!!, keyID)
+                                }
+                            }
+                        } else {
+                            Log.d(TAG, "⚙️ [REVOKE-QUEUE] Vehicle not connected. Added to local queue.")
+                            storageManager.addPendingRevocation(record.core.parentKeyID!!, keyID)
+                        }
+                    }
+                }
+            } else {
+                Log.e(TAG, "❌ [REVOKE-ERROR] ${response?.message ?: "Unknown error"}")
+                _uiState.value = SharingUiState.Error(response?.message ?: "Revoke failed")
+            }
+        }
+    }
+
+    /**
+     * Polling logic for both Owner (sync check) and Friend (soft-wipe check)
+     */
+    fun checkPendingRevokeJobs() {
+        viewModelScope.launch {
+            val jobs = keyRepository.fetchRevokeJobs()
+            if (jobs.isEmpty()) return@launch
+
+            val currentEmail = authManager.getUserEmail() ?: return@launch
+            Log.d(TAG, "🔍 [JOB-CHECK] Found ${jobs.size} pending revoke jobs. Processing...")
+
+            jobs.forEach { job ->
+                if (job.targetEmail.equals(currentEmail, ignoreCase = true)) {
+                    // FRIEND SIDE: Soft-wipe
+                    val keyIdBytes = job.keyId.hexToBytes()
+                    val record = storageManager.getDigitalKey(keyIdBytes)
+                    if (record != null) {
+                        Log.i(TAG, "🧹 [WIPE] Job ${job.id} targets this device. Deleting key ${job.keyId}")
+                        storageManager.deleteKey(keyIdBytes)
+                        keyRepository.reportRevokeJob(RevokeJobReport(job.id, "WIPED"))
+                        _uiState.value = SharingUiState.Error("A key was revoked by the owner.")
+                    }
+                } else if (job.requesterEmail.equals(currentEmail, ignoreCase = true)) {
+                    // OWNER SIDE: Check if we can sync to vehicle now
+                    val transport = BleProvider.getTransport()
+                    if (transport != null) {
+                        val keyIdBytes = job.keyId.hexToBytes()
+                        // Need parentKeyID (ownerKeyID). 
+                        // Simplified: find any key that owns this moduleID
+                        val ownerRecord = storageManager.getAllKeys().find { 
+                            it.moduleID?.toHex() == job.moduleId && it.core.role == Role.OWNER 
+                        }
+                        if (ownerRecord != null) {
+                            Log.i(TAG, "⚡ [SYNC-JOB] Attempting BLE sync for Job ${job.id}")
+                            val fastTxClient = com.example.a100_basiccrypto.digitalkey.transactions.FastTransactionClient(storageManager) { }
+                            val status = fastTxClient.executeRemoveFriend(transport, ownerRecord.core.keyID!!, keyIdBytes)
+                            if (status == com.example.a100_basiccrypto.shared.command.MessageConstants.Status.SUCCESS) {
+                                keyRepository.reportRevokeJob(RevokeJobReport(job.id, "REVOKED"))
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

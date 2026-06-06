@@ -86,3 +86,63 @@ data class ShareOutcomeReport(
     val keyState: String? = null,
     val holderNickname: String? = null
 )
+
+/**
+ * 6. Revocation Models (Standardized)
+ */
+data class RevokeFriendRequest(
+    val moduleID: String,
+    val keyId: String? = null,
+    val friendEmail: String? = null,
+    val ownerSignature: String,
+    val reason: String = "Owner revoked Friend key"
+)
+
+data class RevokeFriendResponse(
+    val success: Boolean,
+    val message: String,
+    val flow: String?,
+    val state: String?,
+    val revokeJob: RevokeJob?,
+    val vehicleCommand: VehicleCommand?,
+    val friendSoftWipe: FriendSoftWipe?,
+    val friendKey: InvitationDetail?
+)
+
+data class RevokeJob(
+    val id: String,
+    @SerializedName("key_id") val keyId: String,
+    @SerializedName("module_id") val moduleId: String,
+    @SerializedName("requester_email") val requesterEmail: String? = null,
+    @SerializedName("requester_name") val requesterName: String? = null,
+    @SerializedName("target_email") val targetEmail: String? = null,
+    @SerializedName("target_name") val targetName: String? = null,
+    val status: String,
+    val reason: String? = null,
+    @SerializedName("created_at") val createdAt: String? = null
+)
+
+data class VehicleCommand(
+    val command: String,
+    val transport: String,
+    val payload: Map<String, String>
+)
+
+data class FriendSoftWipe(
+    val targetUserId: String?,
+    val targetEmail: String?,
+    val keyId: String?,
+    val moduleID: String?
+)
+
+data class RevokeJobReport(
+    val jobId: String,
+    val status: String, // "REVOKED", "FAILED", "DONE", "WIPED"
+    val failureReason: String? = null
+)
+
+data class RevokeJobsResponse(
+    val success: Boolean,
+    val count: Int,
+    val jobs: List<RevokeJob>
+)

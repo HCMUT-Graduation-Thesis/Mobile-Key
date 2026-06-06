@@ -34,6 +34,20 @@ class KeyRepository(private val api: KeyServerApi) {
         return api.reportOutcome(report)
     }
 
+    // --- NEW Revocation APIs (REST Standard) ---
+
+    suspend fun revokeFriend(request: RevokeFriendRequest): RevokeFriendResponse? {
+        return api.revokeFriend(request)
+    }
+
+    suspend fun fetchRevokeJobs(): List<RevokeJob> {
+        return api.fetchRevokeJobs()
+    }
+
+    suspend fun reportRevokeJob(report: RevokeJobReport): Boolean {
+        return api.reportRevokeJob(report)
+    }
+
     // --- Sync & Management ---
 
     suspend fun syncKeyToCloud(email: String, record: CloudKeyRecord): Boolean {

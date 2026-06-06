@@ -263,6 +263,7 @@ class HomeActivity : AppCompatActivity() {
         if (email != null) {
             homeViewModel.refreshKeys(email)
             sharingViewModel.fetchInvitationsFromCloud(email)
+            sharingViewModel.checkPendingRevokeJobs()
         }
     }
 

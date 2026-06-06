@@ -27,7 +27,9 @@ object MockKeyServer : KeyServerApi {
     private val userKeyCloud = mutableMapOf<String, MutableList<CloudKeyRecord>>()
     private val invitationInbox = mutableMapOf<String, MutableList<InvitationDetail>>()
     private val onlineUsers = mutableSetOf<String>()
-    
+
+    private val revokeJobs = mutableListOf<RevokeJob>()
+
     private val _invitationFlow = MutableSharedFlow<InvitationDetail>(replay = 0)
     override val invitationFlow = _invitationFlow.asSharedFlow()
     
@@ -142,6 +144,56 @@ object MockKeyServer : KeyServerApi {
         Log.i(TAG, "📈 [REPORT] Outcome for ${report.invitationId}: ${report.status}")
         // Update local mock store if needed
         return true
+    }
+
+    // --- NEW REVOKE APIs ---
+
+    override suspend fun revokeFriend(request: RevokeFriendRequest): RevokeFriendResponse? {
+        delay(500)
+        val jobId = UUID.randomUUID().toString()
+        val job = RevokeJob(
+            id = jobId,
+            keyId = request.keyId ?: "FRIEND_KEY_123",
+            moduleId = request.moduleID,
+            requesterEmail = "owner@mail.com",
+            requesterName = "Owner",
+            targetEmail = request.friendEmail ?: "friend@mail.com",
+            targetName = "Friend",
+            status = "PENDING",
+            reason = request.reason
+        )
+        revokeJobs.add(job)
+
+        return RevokeFriendResponse(
+            success = true,
+            message = "Friend key is REVOKED on Cloud. Job created.",
+            flow = "OWNER_REVOKE_FRIEND",
+            state = "REVOKED",
+            revokeJob = job,
+            vehicleCommand = VehicleCommand(
+                command = "INS_REMOVE_FRIEND",
+                transport = "BLE_FAST_ACTION",
+                payload = mapOf("moduleID" to request.moduleID, "keyId" to (request.keyId ?: ""))
+            ),
+            friendSoftWipe = FriendSoftWipe(null, request.friendEmail, request.keyId, request.moduleID),
+            friendKey = null
+        )
+    }
+
+    override suspend fun fetchRevokeJobs(): List<RevokeJob> {
+        delay(300)
+        return revokeJobs.filter { it.status == "PENDING" }
+    }
+
+    override suspend fun reportRevokeJob(report: RevokeJobReport): Boolean {
+        delay(200)
+        val index = revokeJobs.indexOfFirst { it.id == report.jobId }
+        if (index != -1) {
+            revokeJobs[index] = revokeJobs[index].copy(status = "REVOKED")
+            Log.i(TAG, "🏁 [JOB-REPORT] Job ${report.jobId} finalized as ${report.status}")
+            return true
+        }
+        return false
     }
 
     // --- LEGACY / HELPER METHODS ---
