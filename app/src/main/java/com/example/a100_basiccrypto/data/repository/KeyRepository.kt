@@ -87,12 +87,12 @@ class KeyRepository(private val api: KeyServerApi) {
         val request = ShareInviteRequest(
             recipientEmail = invitation.recipientEmail,
             moduleID = invitation.moduleID?.toHex() ?: "",
-            parentKeyId = "", // Need to find a way to pass this if required by server
+            parentKeyId = "", 
             ap_blob = invitation.ap.toHex(),
-            pin_hash = "", // Legacy model doesn't have pin_hash separated
+            pin_hash = "", 
             car_metadata = invitation.carMetadata ?: com.example.a100_basiccrypto.shared.model.CarMetadata()
         )
-        return api.invite(request) != null
+        return sendInvitation(request) != null
     }
 
     suspend fun reportInvitationOutcome(recipientEmail: String, ap: ByteArray, status: InvitationStatus, senderEmail: String) {

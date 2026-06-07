@@ -49,28 +49,55 @@ class KeyServerApiImpl(private val api: RetrofitKeyServerApi) : KeyServerApi {
     // --- Sharing APIs ---
 
     override suspend fun checkLegality(request: ShareCheckRequest): ShareCheckResponse? {
-        val response = api.checkLegality(request)
-        return if (response.isSuccessful) response.body() else null
+        return try {
+            val response = api.checkLegality(request)
+            if (response.isSuccessful) response.body() else null
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ [API-SHARING] Check legality error: ${e.message}")
+            null
+        }
     }
 
     override suspend fun invite(request: ShareInviteRequest): ShareInviteResponse? {
-        val response = api.invite(request)
-        return if (response.isSuccessful) response.body() else null
+        return try {
+            val response = api.invite(request)
+            if (response.isSuccessful) response.body() else null
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ [API-SHARING] Invite error: ${e.message}")
+            null
+        }
     }
 
     override suspend fun fetchPendingInvitations(email: String): List<InvitationDetail> {
-        val response = api.fetchPendingInvitations()
-        return if (response.isSuccessful) response.body() ?: emptyList() else emptyList()
+        return try {
+            val response = api.fetchPendingInvitations()
+            if (response.isSuccessful) response.body() ?: emptyList() else emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ [API-SHARING] Fetch pending error: ${e.message}")
+            emptyList()
+        }
     }
 
     override suspend fun claimInvitation(request: ShareClaimRequest): InvitationDetail? {
-        val response = api.claimInvitation(request)
-        return if (response.isSuccessful) response.body() else null
+        return try {
+            val response = api.claimInvitation(request)
+            if (response.isSuccessful) response.body() else null
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ [API-SHARING] Claim error: ${e.message}")
+            null
+        }
     }
 
     override suspend fun reportOutcome(report: ShareOutcomeReport): Boolean {
-        val response = api.reportOutcome(report)
-        return response.isSuccessful && response.body() == true
+        return try {
+            val response = api.reportOutcome(report)
+            // Backend returns Boolean for report-outcome in RetrofitKeyServerApi.
+            // Adjusting to handle both Boolean or generic success response if needed.
+            response.isSuccessful && response.body() == true
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ [API-SHARING] Report outcome error: ${e.message}")
+            false
+        }
     }
 
     // --- Revocation APIs ---

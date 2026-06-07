@@ -1,8 +1,10 @@
 package com.example.a100_basiccrypto.digitalkey.core
 
 import android.util.Log
+import com.example.a100_basiccrypto.data.model.InvitationDetail
 import com.example.a100_basiccrypto.data.model.ShareInvitation
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.hexToBytes
 import com.example.a100_basiccrypto.shared.crypto.IIdentityCrypto
 import com.example.a100_basiccrypto.digitalkey.storage.IKeyStorageManager
 import com.example.a100_basiccrypto.shared.model.Role
@@ -124,9 +126,12 @@ class SharingManager(
     /**
      * FRIEND SIDE: Processes an incoming AP using AttestationMetadata.
      */
-    fun processIncomingInvitation(invitation: ShareInvitation): DigitalKeyRecord? {
+    fun processIncomingInvitation(invitation: InvitationDetail): DigitalKeyRecord? {
         return try {
-            val ap = invitation.ap
+            val apHex = invitation.ap_blob ?: ""
+            if (apHex.isEmpty()) return null
+            val ap = apHex.hexToBytes()
+            
             if (ap.size < AttestationMetadata.METADATA_SIZE) return null
 
             val metadataBytes = ap.sliceArray(0 until AttestationMetadata.METADATA_SIZE)
@@ -148,12 +153,13 @@ class SharingManager(
                 this.attestationPackage = ap
                 this.invitationCodeHash = metadata.invCodeHash
                 this.accountEmail = invitation.recipientEmail
+                this.invitationId = invitation.id // SAVE ID
                 
                 // Map identities from Server
-                this.carMetadata = invitation.carMetadata
-                this.friendlyName = invitation.friendlyName // Map car name
-                this.keyHolderName = invitation.holderNickname // Map user nickname
-                this.moduleID = invitation.moduleID // FIX Mid=null
+                this.carMetadata = invitation.car_metadata
+                this.friendlyName = invitation.senderName ?: "New Vehicle"
+                this.keyHolderName = invitation.senderName ?: "Guest Key"
+                this.moduleID = invitation.moduleID?.hexToBytes()
             }
             return newRecord
         } catch (e: Exception) {

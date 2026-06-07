@@ -3,6 +3,8 @@ package com.example.a100_basiccrypto.data.api.mock
 import android.util.Log
 import com.example.a100_basiccrypto.data.api.KeyServerApi
 import com.example.a100_basiccrypto.data.model.*
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.hexToBytes
+import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
 import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.Role
 import kotlinx.coroutines.delay
@@ -41,12 +43,16 @@ object MockKeyServer : KeyServerApi {
     private val _statusUpdateFlow = MutableSharedFlow<InvitationStatusUpdate>(replay = 0)
     override val statusUpdateFlow = _statusUpdateFlow.asSharedFlow()
 
+    private var currentSessionEmail: String? = null
+
     override fun setOnline(email: String) {
         onlineUsers.add(email)
+        currentSessionEmail = email
     }
 
     override fun setOffline(email: String) {
         onlineUsers.remove(email)
+        if (currentSessionEmail == email) currentSessionEmail = null
     }
 
     // --- AUTH APIs ---
@@ -101,21 +107,16 @@ object MockKeyServer : KeyServerApi {
         delay(500)
         val invitation = InvitationDetail(
             id = UUID.randomUUID().toString(),
-            sender_id = "owner_id",
-            recipient_email = request.recipientEmail,
-            module_id = request.moduleID,
-            parent_key_id = request.parentKeyId,
-            attestation_package = request.ap_blob,
-            pin_hash = request.pin_hash,
-            status = "PENDING",
-            metadata_snapshot = request.car_metadata,
-            // Friendly mapping for Friend UI
-            senderEmail = "owner@mail.com",
-            senderName = "Owner",
+            senderId = "owner_id",
+            recipientEmail = request.recipientEmail,
             moduleID = request.moduleID,
             parentKeyId = request.parentKeyId,
             ap_blob = request.ap_blob,
-            car_metadata = request.car_metadata
+            pin_hash = request.pin_hash,
+            status = "PENDING",
+            car_metadata = request.car_metadata,
+            senderEmail = "owner@mail.com",
+            senderName = "Owner"
         )
         
         val inbox = invitationInbox.getOrPut(request.recipientEmail) { mutableListOf() }
@@ -144,7 +145,47 @@ object MockKeyServer : KeyServerApi {
 
     override suspend fun reportOutcome(report: ShareOutcomeReport): Boolean {
         Log.i(TAG, "📈 [REPORT] Outcome for ${report.invitationId}: ${report.status}")
-        // Update local mock store if needed
+        
+        if (report.status == "CLAIMED") {
+            // Find and mark as CLAIMED/ACTIVE in mock DB
+            for (inbox in invitationInbox.values) {
+                val found = inbox.find { it.id == report.invitationId }
+                if (found != null) {
+                    // Update key in cloud storage
+                    val cloudRecord = CloudKeyRecord(
+                        keyId = report.keyId ?: UUID.randomUUID().toString(),
+                        moduleID = found.moduleID ?: "mock_mid",
+                        ownerEmail = found.senderEmail ?: "owner@mail.com",
+                        holderEmail = found.recipientEmail ?: "friend@mail.com",
+                        holderNickname = report.holderNickname ?: "",
+                        parentKeyId = found.parentKeyId,
+                        devicePublicKey = report.devicePublicKey ?: "",
+                        vehiclePublicKey = report.vehiclePublicKey ?: "",
+                        role = Role.FRIEND,
+                        permissions = report.permissions ?: 0,
+                        keyState = KeyState.ACTIVE,
+                        validityStart = report.validityStart ?: 0,
+                        validityEnd = report.validityEnd ?: 0,
+                        usageLimit = report.usageLimit ?: 0,
+                        friendlyName = found.car_metadata?.modelName ?: "Shared Vehicle",
+                        metadata = found.car_metadata ?: com.example.a100_basiccrypto.shared.model.CarMetadata()
+                    )
+                    
+                    val keys = userKeyCloud.getOrPut(cloudRecord.holderEmail) { mutableListOf() }
+                    keys.add(cloudRecord)
+                    
+                    // Also notify owner via statusUpdateFlow
+                    _statusUpdateFlow.emit(InvitationStatusUpdate(
+                        found.ap_blob?.let { it.hexToBytes() } ?: byteArrayOf(),
+                        InvitationStatus.CLAIMED,
+                        found.recipientEmail ?: ""
+                    ))
+                    
+                    inbox.remove(found)
+                    return true
+                }
+            }
+        }
         return true
     }
 
@@ -204,6 +245,8 @@ object MockKeyServer : KeyServerApi {
         delay(500)
         Log.i(TAG, "☁️ [SYNC-UPLOAD] Uploading key ${request.keyId} for module ${request.moduleID}")
         
+        val email = currentSessionEmail ?: "owner@mail.com"
+        
         val detail = SyncKeyDetail(
             keyId = request.keyId,
             moduleID = request.moduleID,
@@ -226,8 +269,8 @@ object MockKeyServer : KeyServerApi {
         val cloudRecord = CloudKeyRecord(
             keyId = detail.keyId,
             moduleID = detail.moduleID,
-            ownerEmail = "owner@mail.com",
-            holderEmail = "holder@mail.com",
+            ownerEmail = if (detail.role == "OWNER") email else "owner@mail.com",
+            holderEmail = email,
             holderNickname = request.holderNickname ?: "",
             parentKeyId = detail.parentKeyId,
             devicePublicKey = detail.devicePublicKey,
@@ -238,11 +281,11 @@ object MockKeyServer : KeyServerApi {
             validityStart = detail.validityStart,
             validityEnd = detail.validityEnd,
             usageLimit = detail.usageLimit,
-            friendlyName = detail.friendlyName,
+            friendlyName = detail.friendlyName ?: "Shared Vehicle",
             metadata = detail.metadata ?: com.example.a100_basiccrypto.shared.model.CarMetadata()
         )
         
-        val keys = userKeyCloud.getOrPut("owner@mail.com") { mutableListOf() }
+        val keys = userKeyCloud.getOrPut(email) { mutableListOf() }
         keys.removeAll { it.keyId == cloudRecord.keyId }
         keys.add(cloudRecord)
         
@@ -251,7 +294,8 @@ object MockKeyServer : KeyServerApi {
 
     override suspend fun fetchKeysList(): List<SyncKeyDetail> {
         delay(300)
-        val cloudKeys = userKeyCloud["owner@mail.com"] ?: emptyList()
+        val email = currentSessionEmail ?: "owner@mail.com"
+        val cloudKeys = userKeyCloud[email] ?: emptyList()
         return cloudKeys.map { 
             SyncKeyDetail(
                 keyId = it.keyId,
@@ -262,13 +306,13 @@ object MockKeyServer : KeyServerApi {
                 role = it.role.name,
                 keyState = it.keyState.name,
                 permissions = it.permissions,
-                friendlyName = it.friendlyName,
+                friendlyName = it.friendlyName ?: "My Vehicle",
                 devicePublicKey = it.devicePublicKey,
                 vehiclePublicKey = it.vehiclePublicKey,
                 validityStart = it.validityStart,
                 validityEnd = it.validityEnd,
                 usageLimit = it.usageLimit,
-                metadata = it.metadata
+                metadata = it.metadata ?: com.example.a100_basiccrypto.shared.model.CarMetadata()
             )
         }
     }
@@ -285,7 +329,8 @@ object MockKeyServer : KeyServerApi {
     }
 
     override fun removeInvitation(email: String, ap: ByteArray) {
-        invitationInbox[email]?.removeAll { it.attestation_package == ap.joinToString("") { b -> "%02x".format(b) } }
+        val apHex = ap.toHex()
+        invitationInbox[email]?.removeAll { (it.ap_blob ?: "") == apHex }
     }
 
     override suspend fun notifyActivation(ap: ByteArray) {

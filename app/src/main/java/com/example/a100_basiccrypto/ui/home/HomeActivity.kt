@@ -231,6 +231,11 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private fun showReceiveInvitationDialog(invitation: InvitationDetail, record: DigitalKeyRecord) {
+        val inviteId = invitation.id
+        if (inviteId == null) {
+            Toast.makeText(this, "Error: Invitation ID missing", Toast.LENGTH_SHORT).show()
+            return
+        }
         val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_receive_invitation, null)
         val dialog = AlertDialog.Builder(this).setView(dialogView).create()
 
@@ -337,6 +342,11 @@ class HomeActivity : AppCompatActivity() {
             if (success) {
                 // Cloud Sync after successful pairing
                 container.authManager.getUserEmail()?.let { pairingViewModel.startBackgroundSync(it) }
+
+                // NEW: Report final outcome for Friend sharing if applicable
+                if (record.core.role == Role.FRIEND && !record.invitationId.isNullOrEmpty()) {
+                    sharingViewModel.reportFinalPairingOutcome(record, record.invitationId!!)
+                }
 
                 AlertDialog.Builder(this@HomeActivity).setTitle("Success")
                     .setMessage("Your digital key for ${record.friendlyName} is now active and ready to use!")

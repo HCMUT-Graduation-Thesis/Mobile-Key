@@ -33,6 +33,7 @@ data class DigitalKeyRecord(
     var attestationPackage: ByteArray? = null, 
     var invitationCodeHash: ByteArray? = null, 
     var invitationCode: String? = null,        
+    var invitationId: String? = null, // Store cloud invitation ID for reporting
 
     // 6. Local usage count
     var currentUsageCount: Int = 0,

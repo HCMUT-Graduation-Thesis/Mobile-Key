@@ -164,51 +164,54 @@ class SharingViewModel(
     }
 
     fun onInvitationReceived(invitation: InvitationDetail): DigitalKeyRecord? {
-        Log.i(TAG, "📩 [RECV] Claiming invitation: ${invitation.id}")
+        // Since we now use Pre-fetching, 'invitation' should already have full data (ap_blob)
+        // If ap_blob is missing, we try to claim it one last time (backup logic)
+        val inviteId = invitation.id
+        Log.i(TAG, "📩 [RECV] Processing invitation: $inviteId")
         
         viewModelScope.launch {
-            _uiState.value = SharingUiState.Loading
-            val fullInvitation = keyRepository.claimInvitation(invitation.id)
-            
-            if (fullInvitation != null) {
-                Log.d(TAG, "📦 [RECV-CLAIM] Claimed full AP: ${fullInvitation.id}")
-                val legacyInv = mapToLegacy(fullInvitation)
-                val record = sharingManager.processIncomingInvitation(legacyInv)
+            val targetInvitation = if (inviteId != null && invitation.ap_blob.isNullOrEmpty()) {
+                Log.w(TAG, "⚠️ [RECV] ap_blob missing. Triggering emergency claim...")
+                _uiState.value = SharingUiState.Loading
+                keyRepository.claimInvitation(inviteId)
+            } else {
+                invitation
+            }
+
+            if (targetInvitation != null && !targetInvitation.ap_blob.isNullOrEmpty()) {
+                Log.d(TAG, "📦 [RECV-READY] Full data available. Mapping to DigitalKeyRecord...")
+                val record = sharingManager.processIncomingInvitation(targetInvitation)
                 if (record != null) {
-                    Log.d(TAG, "📦 [RECV-LOCAL] Temporary record created for key: ${record.core.keyID?.toHex()}")
-                    _uiState.value = SharingUiState.ReceivedInvitation(record, fullInvitation)
+                    Log.d(TAG, "📦 [RECV-LOCAL] Temporary record created: ${record.core.keyID?.toHex()}")
+                    _uiState.value = SharingUiState.ReceivedInvitation(record, targetInvitation)
                 } else {
                     Log.e(TAG, "❌ [RECV-ERROR] Failed to process AP from invitation.")
                     _uiState.value = SharingUiState.Error("Failed to process invitation package.")
                 }
             } else {
-                Log.e(TAG, "❌ [RECV-ERROR] Failed to claim invitation from server.")
-                _uiState.value = SharingUiState.Error("Failed to claim invitation.")
+                Log.e(TAG, "❌ [RECV-ERROR] Invitation data incomplete or claim failed.")
+                _uiState.value = SharingUiState.Error("Failed to load full invitation details.")
             }
         }
-        return null // Will update via StateFlow
+        return null // Updates via StateFlow
     }
 
     fun verifyPinAndActivate(record: DigitalKeyRecord, pin: String, invitation: InvitationDetail) {
         viewModelScope.launch {
+            val invitationId = invitation.id
+            if (invitationId == null) {
+                Log.e(TAG, "❌ [ACTIVATE] Cannot verify PIN: Invitation ID is null.")
+                _uiState.value = SharingUiState.Error("Invalid invitation data (missing ID)")
+                return@launch
+            }
+
             Log.i(TAG, "🔑 [ACTIVATE] Verifying PIN for key: ${record.core.keyID?.toHex()}")
             _uiState.value = SharingUiState.Loading
             val success = sharingManager.verifyPinAndFinalize(record, pin)
             
             if (success) {
-                Log.i(TAG, "✅ [ACTIVATE-PIN] PIN correct. Reporting outcome to Cloud...")
-                val report = ShareOutcomeReport(
-                    invitationId = invitation.id,
-                    status = "CLAIMED",
-                    keyId = record.core.keyID?.toHex(),
-                    devicePublicKey = record.devicePublicKey?.toHex(),
-                    vehiclePublicKey = record.vehiclePublicKey?.toHex(),
-                    permissions = record.core.permissions,
-                    keyState = "ACTIVE",
-                    holderNickname = authManager.getUserName()
-                )
-                keyRepository.reportOutcome(report)
-                keyRepository.notifyActivation(record.attestationPackage ?: byteArrayOf())
+                Log.i(TAG, "✅ [ACTIVATE-PIN] PIN correct locally. Moving to Provisioning state.")
+                // We no longer report CLAIMED here. We wait for BLE pairing success.
                 _uiState.value = SharingUiState.ActivationSuccess
                 NotificationStore.markAsUsed(invitation)
             } else {
@@ -216,7 +219,7 @@ class SharingViewModel(
                 Log.w(TAG, "❌ [ACTIVATE-PIN] Invalid PIN. Attempt $attempts/3")
                 if (attempts >= 3) {
                     Log.e(TAG, "🚫 [ACTIVATE-FAIL] Max attempts reached. Reporting FAILURE to Cloud.")
-                    keyRepository.reportOutcome(ShareOutcomeReport(invitation.id, "FAILED"))
+                    keyRepository.reportOutcome(ShareOutcomeReport(invitationId, "FAILED"))
                     _uiState.value = SharingUiState.Error("Too many failed attempts. Key rejected.")
                 } else {
                     _uiState.value = SharingUiState.Error("Invalid PIN code. Attempt $attempts/3")
@@ -225,11 +228,32 @@ class SharingViewModel(
         }
     }
 
+    /**
+     * Final report after BLE pairing is complete.
+     */
+    fun reportFinalPairingOutcome(record: DigitalKeyRecord, invitationId: String) {
+        viewModelScope.launch {
+            Log.i(TAG, "✅ [ACTIVATE-REPORT] BLE Pairing successful. Reporting CLAIMED to Cloud.")
+            val report = ShareOutcomeReport(
+                invitationId = invitationId,
+                status = "CLAIMED",
+                keyId = record.core.keyID?.toHex(),
+                devicePublicKey = record.devicePublicKey?.toHex(),
+                vehiclePublicKey = record.vehiclePublicKey?.toHex(),
+                permissions = record.core.permissions,
+                keyState = "ACTIVE",
+                holderNickname = authManager.getUserName()
+            )
+            keyRepository.reportOutcome(report)
+            keyRepository.notifyActivation(record.attestationPackage ?: byteArrayOf())
+        }
+    }
+
     private fun mapToLegacy(inv: InvitationDetail): ShareInvitation {
         return ShareInvitation(
-            ap = inv.attestation_package.hexToBytes(),
+            ap = (inv.ap_blob ?: "").hexToBytes(),
             friendlyName = inv.car_metadata?.modelName ?: "New Car",
-            recipientEmail = authManager.getUserEmail() ?: "",
+            recipientEmail = inv.recipientEmail ?: authManager.getUserEmail() ?: "",
             senderName = inv.senderName ?: "Owner",
             senderEmail = inv.senderEmail ?: "",
             carMetadata = inv.car_metadata,
@@ -382,11 +406,28 @@ class SharingViewModel(
         viewModelScope.launch {
             Log.d(TAG, "☁️ [FETCH] Fetching pending invitations for $email from Cloud...")
             val pendingList = keyRepository.fetchPendingInvitations(email)
-            Log.i(TAG, "📥 [FETCH] Received ${pendingList.size} invitations from Cloud.")
+            Log.i(TAG, "📥 [FETCH] Received ${pendingList.size} raw invitations. Starting Pre-fetch (Claim)...")
             
-            // Sync with local NotificationStore
-            pendingList.forEach { invitation ->
-                NotificationStore.addNotification(email, "Key Shared", "Shared by ${invitation.senderName}", invitation)
+            pendingList.forEach { rawInvitation ->
+                val rawId = rawInvitation.id
+                if (rawId == null) {
+                    Log.e(TAG, "❌ [PRE-FETCH] Invitation ID is null. Skipping.")
+                    return@forEach
+                }
+
+                // Pre-fetch the full invitation package (ap_blob, car_metadata) immediately
+                Log.d(TAG, "📦 [PRE-FETCH] Claiming full data for invitation: $rawId")
+                val fullInvitation = keyRepository.claimInvitation(rawId)
+                
+                if (fullInvitation != null) {
+                    val senderDisplayName = fullInvitation.senderName ?: fullInvitation.senderEmail ?: "Owner"
+                    Log.i(TAG, "✅ [PRE-FETCH] Full data ready for invitation: ${fullInvitation.id} from $senderDisplayName")
+                    NotificationStore.addNotification(email, "Key Shared", "Shared by $senderDisplayName", fullInvitation)
+                } else {
+                    val senderDisplayName = rawInvitation.senderName ?: "Owner"
+                    Log.e(TAG, "❌ [PRE-FETCH] Failed to claim full data for invitation: $rawId")
+                    NotificationStore.addNotification(email, "Key Shared (Data missing)", "Shared by $senderDisplayName", rawInvitation)
+                }
             }
         }
     }
@@ -418,12 +459,13 @@ class SharingViewModel(
 
                     // 2. Metadata Update (Sync Cloud info back to Local)
                     var changed = false
-                    if (local.friendlyName != cloudMatch.friendlyName) {
-                        local.friendlyName = cloudMatch.friendlyName
+                    val cloudFriendlyName = cloudMatch.friendlyName
+                    if (cloudFriendlyName != null && local.friendlyName != cloudFriendlyName) {
+                        local.friendlyName = cloudFriendlyName
                         changed = true
                     }
                     // Update vehicle public key if missing locally but present on cloud
-                    if (local.vehiclePublicKey == null && cloudMatch.vehiclePublicKey.isNotEmpty()) {
+                    if (local.vehiclePublicKey == null && !cloudMatch.vehiclePublicKey.isNullOrEmpty()) {
                         local.vehiclePublicKey = cloudMatch.vehiclePublicKey.hexToBytes()
                         changed = true
                     }

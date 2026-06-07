@@ -43,22 +43,40 @@ data class ShareInviteResponse(
 )
 
 data class InvitationDetail(
-    val id: String,
-    val sender_id: String,
-    val recipient_email: String,
-    val module_id: String,
-    val parent_key_id: String,
-    val attestation_package: String,
-    val pin_hash: String,
-    val status: String,
-    val metadata_snapshot: CarMetadata? = null,
-    // CamelCase variants for Friend side
+    @SerializedName(value = "id", alternate = ["invitation_id", "invitationId"])
+    val id: String?,
+    
+    @SerializedName(value = "senderId", alternate = ["sender_id"])
+    val senderId: String? = null,
+    
+    @SerializedName(value = "senderEmail", alternate = ["sender_email"])
     val senderEmail: String? = null,
+    
+    @SerializedName(value = "senderName", alternate = ["sender_name"])
     val senderName: String? = null,
+    
+    @SerializedName(value = "recipientEmail", alternate = ["recipient_email"])
+    val recipientEmail: String? = null,
+    
+    @SerializedName(value = "moduleID", alternate = ["module_id", "moduleId"])
     val moduleID: String? = null,
+    
+    @SerializedName(value = "parentKeyId", alternate = ["parent_key_id"])
     val parentKeyId: String? = null,
+    
+    @SerializedName(value = "ap_blob", alternate = ["attestation_package"])
     val ap_blob: String? = null,
-    val car_metadata: CarMetadata? = null
+    
+    @SerializedName(value = "pin_hash", alternate = ["pinHash"])
+    val pin_hash: String? = null,
+    
+    val status: String = "PENDING",
+    
+    @SerializedName(value = "car_metadata", alternate = ["metadata_snapshot", "metadata"])
+    val car_metadata: CarMetadata? = null,
+
+    val createdAt: String? = null,
+    val updatedAt: String? = null
 )
 
 /**
@@ -72,7 +90,7 @@ data class ShareClaimRequest(
  * 5. Outcome Report Models
  */
 data class ShareOutcomeReport(
-    @SerializedName("invitation_id") val invitationId: String,
+    @SerializedName("invitation_id") val invitationId: String?,
     val status: String, // "CLAIMED" or "FAILED"
     
     // Data collected from Vehicle after pairing
@@ -113,22 +131,42 @@ data class SyncKeyResponse(
 )
 
 data class SyncKeyDetail(
+    @SerializedName(value = "keyId", alternate = ["key_id"])
     val keyId: String,
+    
+    @SerializedName(value = "moduleID", alternate = ["module_id", "moduleId"])
     val moduleID: String,
-    val ownerId: String?,
-    val holderId: String?,
-    val parentKeyId: String?,
+    
+    val ownerId: String? = null,
+    val holderId: String? = null,
+    
+    @SerializedName(value = "parentKeyId", alternate = ["parent_key_id"])
+    val parentKeyId: String? = null,
+    
     val role: String,
-    val keyState: String, // Server uses keyState or state? User API showed keyState in list
+    
+    @SerializedName(value = "keyState", alternate = ["state", "key_state"])
+    val keyState: String,
+    
     val permissions: Int,
-    val friendlyName: String,
+    
+    @SerializedName(value = "friendlyName", alternate = ["friendly_name"])
+    val friendlyName: String? = null,
+    
+    @SerializedName(value = "devicePublicKey", alternate = ["device_pk"])
     val devicePublicKey: String,
+    
+    @SerializedName(value = "vehiclePublicKey", alternate = ["vehicle_pk"])
     val vehiclePublicKey: String,
-    val validityStart: Long,
-    val validityEnd: Long,
-    val usageLimit: Int,
-    val metadata: CarMetadata?,
-    val eKeys: List<SyncKeyDetail>? = null // Optional: for nested eKey info
+    
+    val validityStart: Long = 0,
+    val validityEnd: Long = 0,
+    val usageLimit: Int = 0,
+    
+    @SerializedName(value = "metadata", alternate = ["car_metadata"])
+    val metadata: CarMetadata? = null,
+    
+    val eKeys: List<SyncKeyDetail>? = null
 )
 data class RevokeFriendRequest(
     val moduleID: String,

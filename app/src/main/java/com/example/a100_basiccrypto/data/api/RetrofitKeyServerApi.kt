@@ -19,19 +19,19 @@ interface RetrofitKeyServerApi {
     
     // --- SHARING ---
     
-    @POST("api/sharing/check-legality")
+    @POST("sharing/check-legality")
     suspend fun checkLegality(@Body request: ShareCheckRequest): Response<ShareCheckResponse>
     
-    @POST("api/sharing/invite")
+    @POST("sharing/invite")
     suspend fun invite(@Body request: ShareInviteRequest): Response<ShareInviteResponse>
     
-    @GET("api/sharing/pending")
+    @GET("sharing/pending")
     suspend fun fetchPendingInvitations(): Response<List<InvitationDetail>>
     
-    @POST("api/sharing/claim")
+    @POST("sharing/claim")
     suspend fun claimInvitation(@Body request: ShareClaimRequest): Response<InvitationDetail>
     
-    @POST("api/sharing/report-outcome")
+    @POST("sharing/report-outcome")
     suspend fun reportOutcome(@Body report: ShareOutcomeReport): Response<Boolean>
     
     // --- REVOCATION ---
