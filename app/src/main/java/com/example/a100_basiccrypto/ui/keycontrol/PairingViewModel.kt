@@ -3,7 +3,7 @@ package com.example.a100_basiccrypto.ui.keycontrol
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.a100_basiccrypto.data.model.CloudKeyRecord
+import com.example.a100_basiccrypto.data.model.SyncKeyRequest
 import com.example.a100_basiccrypto.data.repository.KeyRepository
 import com.example.a100_basiccrypto.digitalkey.storage.SecureKeyStorageManager
 import com.example.a100_basiccrypto.shared.crypto.CryptoUtils.toHex
@@ -29,35 +29,30 @@ class PairingViewModel(
             storageManager.saveDigitalKey(latestKey)
 
             try {
-                // 2. Prepare Cloud Record
-                val cloudRecord = CloudKeyRecord(
+                // 2. Prepare Standardized Sync Request
+                val syncReq = SyncKeyRequest(
                     keyId = latestKey.core.keyID?.toHex() ?: "unknown",
                     moduleID = latestKey.moduleID?.toHex() ?: "unknown",
-                    ownerEmail = email,
-                    holderEmail = email,
-                    parentKeyId = null,
-                    // Use Account PK instead of Record PK
+                    parentKeyId = latestKey.core.parentKeyID?.toHex(),
+                    role = latestKey.core.role.name,
+                    keyState = latestKey.core.keyState.name,
+                    permissions = latestKey.core.permissions,
+                    friendlyName = latestKey.friendlyName.ifEmpty { latestKey.carMetadata?.modelName ?: "My Vehicle" },
+                    holderNickname = latestKey.keyHolderName,
                     devicePublicKey = identityCrypto.getPublicKey().toHex(),
                     vehiclePublicKey = latestKey.vehiclePublicKey?.toHex() ?: "",
-                    role = latestKey.core.role,
-                    permissions = latestKey.core.permissions,
-                    keyState = latestKey.core.keyState,
                     validityStart = latestKey.core.validityStart,
                     validityEnd = latestKey.core.validityEnd,
                     usageLimit = latestKey.core.usageLimit,
-                    friendlyName = latestKey.friendlyName.ifEmpty { latestKey.carMetadata?.modelName ?: "My Vehicle" },
-                    metadata = latestKey.carMetadata ?: com.example.a100_basiccrypto.shared.model.CarMetadata(
-                        modelName = "New Vehicle",
-                        licensePlate = "PENDING"
-                    )
+                    metadata = latestKey.carMetadata
                 )
 
                 // 3. Sync to Cloud
-                val success = keyRepository.syncKeyToCloud(email, cloudRecord)
-                if (success) {
+                val response = keyRepository.uploadKey(syncReq)
+                if (response != null) {
                     latestKey.syncStatus = SyncStatus.SYNCED
                     storageManager.saveDigitalKey(latestKey)
-                    Log.i("PairingViewModel", "Background Sync Successful for ${latestKey.friendlyName}")
+                    Log.i("PairingViewModel", "Standardized Cloud Sync Successful for ${latestKey.friendlyName}")
                 }
             } catch (e: Exception) {
                 Log.e("PairingViewModel", "Background Sync failed: ${e.message}")

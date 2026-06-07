@@ -164,16 +164,29 @@ class SharingViewModel(
     }
 
     fun onInvitationReceived(invitation: InvitationDetail): DigitalKeyRecord? {
-        Log.i(TAG, "📩 [RECV] Processing received invitation: ${invitation.id} from ${invitation.senderName}")
-        val legacyInv = mapToLegacy(invitation)
-        val record = sharingManager.processIncomingInvitation(legacyInv)
-        if (record != null) {
-            Log.d(TAG, "📦 [RECV-LOCAL] Temporary record created for key: ${record.core.keyID?.toHex()}")
-            _uiState.value = SharingUiState.ReceivedInvitation(record, invitation)
-        } else {
-            Log.e(TAG, "❌ [RECV-ERROR] Failed to process AP from invitation.")
+        Log.i(TAG, "📩 [RECV] Claiming invitation: ${invitation.id}")
+        
+        viewModelScope.launch {
+            _uiState.value = SharingUiState.Loading
+            val fullInvitation = keyRepository.claimInvitation(invitation.id)
+            
+            if (fullInvitation != null) {
+                Log.d(TAG, "📦 [RECV-CLAIM] Claimed full AP: ${fullInvitation.id}")
+                val legacyInv = mapToLegacy(fullInvitation)
+                val record = sharingManager.processIncomingInvitation(legacyInv)
+                if (record != null) {
+                    Log.d(TAG, "📦 [RECV-LOCAL] Temporary record created for key: ${record.core.keyID?.toHex()}")
+                    _uiState.value = SharingUiState.ReceivedInvitation(record, fullInvitation)
+                } else {
+                    Log.e(TAG, "❌ [RECV-ERROR] Failed to process AP from invitation.")
+                    _uiState.value = SharingUiState.Error("Failed to process invitation package.")
+                }
+            } else {
+                Log.e(TAG, "❌ [RECV-ERROR] Failed to claim invitation from server.")
+                _uiState.value = SharingUiState.Error("Failed to claim invitation.")
+            }
         }
-        return record
+        return null // Will update via StateFlow
     }
 
     fun verifyPinAndActivate(record: DigitalKeyRecord, pin: String, invitation: InvitationDetail) {
@@ -370,8 +383,28 @@ class SharingViewModel(
             Log.d(TAG, "☁️ [FETCH] Fetching pending invitations for $email from Cloud...")
             val pendingList = keyRepository.fetchPendingInvitations(email)
             Log.i(TAG, "📥 [FETCH] Received ${pendingList.size} invitations from Cloud.")
+            
+            // Sync with local NotificationStore
             pendingList.forEach { invitation ->
                 NotificationStore.addNotification(email, "Key Shared", "Shared by ${invitation.senderName}", invitation)
+            }
+        }
+    }
+
+    fun syncKeysWithCloud() {
+        viewModelScope.launch {
+            val email = authManager.getUserEmail() ?: return@launch
+            Log.d(TAG, "☁️ [SYNC-LIST] Syncing local keys with Cloud list...")
+            val cloudKeys = keyRepository.fetchKeysList()
+            val localKeys = storageManager.getAllKeys()
+
+            // 1. Check for Revoked or Missing keys (Soft-wipe)
+            localKeys.forEach { local ->
+                val cloudMatch = cloudKeys.find { it.keyId == local.core.keyID?.toHex() }
+                if (cloudMatch == null || cloudMatch.state == "REVOKED") {
+                    Log.w(TAG, "🧹 [SYNC-WIPE] Key ${local.core.keyID?.toHex()} is missing or REVOKED on Cloud. Deleting locally.")
+                    storageManager.deleteKey(local.core.keyID!!)
+                }
             }
         }
     }

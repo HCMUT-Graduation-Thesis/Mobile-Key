@@ -3,6 +3,8 @@ package com.example.a100_basiccrypto.data.api.mock
 import android.util.Log
 import com.example.a100_basiccrypto.data.api.KeyServerApi
 import com.example.a100_basiccrypto.data.model.*
+import com.example.a100_basiccrypto.shared.model.KeyState
+import com.example.a100_basiccrypto.shared.model.Role
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -194,6 +196,70 @@ object MockKeyServer : KeyServerApi {
             return true
         }
         return false
+    }
+
+    // --- NEW SYNC APIs ---
+
+    override suspend fun uploadKey(request: SyncKeyRequest): SyncKeyResponse? {
+        delay(500)
+        Log.i(TAG, "☁️ [SYNC-UPLOAD] Uploading key ${request.keyId} for module ${request.moduleID}")
+        
+        val detail = SyncKeyDetail(
+            keyId = request.keyId,
+            moduleId = request.moduleID,
+            ownerId = UUID.randomUUID().toString(),
+            holderId = UUID.randomUUID().toString(),
+            parentKeyId = request.parentKeyId,
+            role = request.role,
+            state = if (request.keyState == "CLAIMED") "ACTIVE" else request.keyState,
+            permissions = request.permissions,
+            friendlyName = request.friendlyName,
+            devicePk = request.devicePublicKey,
+            vehiclePk = request.vehiclePublicKey,
+            validityStart = request.validityStart,
+            validityEnd = request.validityEnd,
+            usageLimit = request.usageLimit,
+            carMetadata = request.metadata
+        )
+        
+        // Update mock cloud storage
+        val cloudRecord = CloudKeyRecord(
+            keyId = detail.keyId,
+            moduleID = detail.moduleId,
+            ownerEmail = "owner@mail.com",
+            holderEmail = "holder@mail.com",
+            holderNickname = request.holderNickname ?: "",
+            parentKeyId = detail.parentKeyId,
+            devicePublicKey = detail.devicePk,
+            vehiclePublicKey = detail.vehiclePk,
+            role = Role.valueOf(detail.role),
+            permissions = detail.permissions,
+            keyState = KeyState.valueOf(detail.state),
+            validityStart = detail.validityStart,
+            validityEnd = detail.validityEnd,
+            usageLimit = detail.usageLimit,
+            friendlyName = detail.friendlyName,
+            metadata = detail.carMetadata ?: com.example.a100_basiccrypto.shared.model.CarMetadata()
+        )
+        
+        val keys = userKeyCloud.getOrPut("owner@mail.com") { mutableListOf() }
+        keys.removeAll { it.keyId == cloudRecord.keyId }
+        keys.add(cloudRecord)
+        
+        return SyncKeyResponse("Sync key thành công", detail)
+    }
+
+    override suspend fun fetchKeysList(): List<SyncKeyDetail> {
+        delay(300)
+        val cloudKeys = userKeyCloud["owner@mail.com"] ?: emptyList()
+        return cloudKeys.map { 
+            SyncKeyDetail(
+                it.keyId, it.moduleID, "oid", "hid", it.parentKeyId,
+                it.role.name, it.keyState.name, it.permissions, it.friendlyName,
+                it.devicePublicKey, it.vehiclePublicKey, it.validityStart, it.validityEnd,
+                it.usageLimit, it.metadata
+            )
+        }
     }
 
     // --- LEGACY / HELPER METHODS ---

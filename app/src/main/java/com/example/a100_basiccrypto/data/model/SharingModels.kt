@@ -88,8 +88,47 @@ data class ShareOutcomeReport(
 )
 
 /**
- * 6. Revocation Models (Standardized)
+ * 7. Sync Models (Standardized)
  */
+data class SyncKeyRequest(
+    val keyId: String,
+    val moduleID: String,
+    val parentKeyId: String? = null,
+    val role: String, // "OWNER" or "FRIEND"
+    val keyState: String, // "ACTIVE", "PROVISIONING", etc.
+    val permissions: Int,
+    val friendlyName: String,
+    val holderNickname: String? = null,
+    val devicePublicKey: String,
+    val vehiclePublicKey: String,
+    val validityStart: Long = 0,
+    val validityEnd: Long = 0,
+    val usageLimit: Int = 0,
+    val metadata: CarMetadata? = null
+)
+
+data class SyncKeyResponse(
+    val message: String,
+    val key: SyncKeyDetail?
+)
+
+data class SyncKeyDetail(
+    @SerializedName("key_id") val keyId: String,
+    @SerializedName("module_id") val moduleId: String,
+    @SerializedName("owner_id") val ownerId: String?,
+    @SerializedName("holder_id") val holderId: String?,
+    @SerializedName("parent_key_id") val parentKeyId: String?,
+    val role: String,
+    val state: String,
+    val permissions: Int,
+    @SerializedName("friendly_name") val friendlyName: String,
+    @SerializedName("device_pk") val devicePk: String,
+    @SerializedName("vehicle_pk") val vehiclePk: String,
+    @SerializedName("validity_start") val validityStart: Long,
+    @SerializedName("validity_end") val validityEnd: Long,
+    @SerializedName("usage_limit") val usageLimit: Int,
+    @SerializedName("car_metadata") val carMetadata: CarMetadata?
+)
 data class RevokeFriendRequest(
     val moduleID: String,
     val keyId: String? = null,

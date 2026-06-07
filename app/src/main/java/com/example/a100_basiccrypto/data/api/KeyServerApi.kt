@@ -29,6 +29,10 @@ interface KeyServerApi {
     suspend fun fetchRevokeJobs(): List<RevokeJob>
     suspend fun reportRevokeJob(report: RevokeJobReport): Boolean
     
+    // Sync APIs (Standardized)
+    suspend fun uploadKey(request: SyncKeyRequest): SyncKeyResponse?
+    suspend fun fetchKeysList(): List<SyncKeyDetail>
+    
     // Management APIs
     suspend fun revokeInvitation(senderEmail: String, recipientEmail: String, ap: ByteArray, signature: ByteArray? = null)
     suspend fun revokeOwner(ownerEmail: String, moduleID: String): Boolean

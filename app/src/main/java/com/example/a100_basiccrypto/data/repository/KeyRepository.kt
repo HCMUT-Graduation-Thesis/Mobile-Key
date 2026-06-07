@@ -48,6 +48,16 @@ class KeyRepository(private val api: KeyServerApi) {
         return api.reportRevokeJob(report)
     }
 
+    // --- NEW Sync APIs (Standardized) ---
+
+    suspend fun uploadKey(request: SyncKeyRequest): SyncKeyResponse? {
+        return api.uploadKey(request)
+    }
+
+    suspend fun fetchKeysList(): List<SyncKeyDetail> {
+        return api.fetchKeysList()
+    }
+
     // --- Sync & Management ---
 
     suspend fun syncKeyToCloud(email: String, record: CloudKeyRecord): Boolean {

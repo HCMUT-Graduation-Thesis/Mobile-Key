@@ -33,6 +33,7 @@ import com.example.a100_basiccrypto.shared.model.KeyState
 import com.example.a100_basiccrypto.shared.model.Role
 import com.example.a100_basiccrypto.ui.keycontrol.ControlActivity
 import com.example.a100_basiccrypto.ui.keycontrol.PairingActivity
+import com.example.a100_basiccrypto.ui.keycontrol.PairingViewModel
 import com.example.a100_basiccrypto.ui.keycontrol.SharingViewModel
 import com.example.a100_basiccrypto.ui.login.LoginActivity
 import com.google.android.material.button.MaterialButton
@@ -52,6 +53,7 @@ class HomeActivity : AppCompatActivity() {
     private val container by lazy { (application as MainApplication).container }
     private lateinit var homeViewModel: HomeViewModel
     private lateinit var sharingViewModel: SharingViewModel
+    private lateinit var pairingViewModel: PairingViewModel
 
     private lateinit var bleHomeHelper: BleHomeHelper
     private val dynamicVehicleData = mutableMapOf<String, Pair<String, Int>>()
@@ -116,6 +118,17 @@ class HomeActivity : AppCompatActivity() {
                 ) as T
             }
         })[SharingViewModel::class.java]
+
+        pairingViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                @Suppress("UNCHECKED_CAST")
+                return PairingViewModel(
+                    container.storageManager,
+                    container.keyRepository,
+                    container.identityCrypto
+                ) as T
+            }
+        })[PairingViewModel::class.java]
     }
 
     private fun setupObservers() {
@@ -144,14 +157,16 @@ class HomeActivity : AppCompatActivity() {
         lifecycleScope.launch {
             sharingViewModel.incomingInvitations.collect { invitation ->
                 NotificationStore.addNotification(email, "New Key Shared", "${invitation.senderName} shared a key with you.", invitation)
-                showReceiveInvitationDialog(invitation)
+                // We no longer show the dialog immediately. The user clicks the notification.
+                // Or we can call sharingViewModel.onInvitationReceived(invitation) here to trigger the Claim flow.
+                sharingViewModel.onInvitationReceived(invitation)
             }
         }
 
         lifecycleScope.launch {
             NotificationStore.pendingInvitation.collect { invitation ->
                 invitation?.let {
-                    showReceiveInvitationDialog(it)
+                    sharingViewModel.onInvitationReceived(it)
                     NotificationStore.setPendingInvitation(null)
                 }
             }
@@ -160,6 +175,9 @@ class HomeActivity : AppCompatActivity() {
         lifecycleScope.launch {
             sharingViewModel.uiState.collectLatest { state ->
                 when (state) {
+                    is SharingViewModel.SharingUiState.ReceivedInvitation -> {
+                        showReceiveInvitationDialog(state.invitation, state.record)
+                    }
                     is SharingViewModel.SharingUiState.ActivationSuccess -> {
                         Toast.makeText(this@HomeActivity, "Key added successfully!", Toast.LENGTH_LONG).show()
                         homeViewModel.refreshKeys(email)
@@ -212,7 +230,7 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    private fun showReceiveInvitationDialog(invitation: InvitationDetail) {
+    private fun showReceiveInvitationDialog(invitation: InvitationDetail, record: DigitalKeyRecord) {
         val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_receive_invitation, null)
         val dialog = AlertDialog.Builder(this).setView(dialogView).create()
 
@@ -222,23 +240,22 @@ class HomeActivity : AppCompatActivity() {
         val etCode = dialogView.findViewById<TextInputEditText>(R.id.et_invitation_code)
         val btnProvision = dialogView.findViewById<MaterialButton>(R.id.btn_accept_invitation)
 
-        val record = sharingViewModel.onInvitationReceived(invitation)
         tvOwner.text = "Sender: ${invitation.senderName ?: "Owner"}"
         
-        val permissions = record?.core?.permissions ?: 0
+        val permissions = record.core.permissions
         val permsList = mutableListOf<String>()
         if (permissions and DigitalKeyPermissions.UNLOCK != 0) permsList.add("Unlock")
         if (permissions and DigitalKeyPermissions.LOCK != 0) permsList.add("Lock")
         if (permissions and DigitalKeyPermissions.START != 0) permsList.add("Start")
         tvPerms.text = "Permissions: ${if(permsList.isEmpty()) "Basic" else permsList.joinToString(", ")}"
         
-        val validityEnd = record?.core?.validityEnd ?: 0L
+        val validityEnd = record.core.validityEnd
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         tvValidity.text = "Expires: ${if (validityEnd > 0L) sdf.format(Date(validityEnd * 1000)) else "Never"}"
 
         btnProvision.setOnClickListener {
             val pin = etCode.text.toString()
-            if (pin.length == 6 && record != null) {
+            if (pin.length == 6) {
                 sharingViewModel.verifyPinAndActivate(record, pin, invitation)
                 dialog.dismiss()
             } else {
@@ -264,6 +281,7 @@ class HomeActivity : AppCompatActivity() {
             homeViewModel.refreshKeys(email)
             sharingViewModel.fetchInvitationsFromCloud(email)
             sharingViewModel.checkPendingRevokeJobs()
+            sharingViewModel.syncKeysWithCloud()
         }
     }
 
@@ -317,6 +335,9 @@ class HomeActivity : AppCompatActivity() {
             val success = client.execute(transport, record, pairingCode)
             progressDialog.dismiss()
             if (success) {
+                // Cloud Sync after successful pairing
+                container.authManager.getUserEmail()?.let { pairingViewModel.startBackgroundSync(it) }
+
                 AlertDialog.Builder(this@HomeActivity).setTitle("Success")
                     .setMessage("Your digital key for ${record.friendlyName} is now active and ready to use!")
                     .setPositiveButton("OK", null).show()
