@@ -1,11 +1,16 @@
 package com.example.a100_basiccrypto.data.api
 
+import android.util.Log
 import com.example.a100_basiccrypto.data.model.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
 class KeyServerApiImpl(private val api: RetrofitKeyServerApi) : KeyServerApi {
+
+    companion object {
+        private const val TAG = "KeyServerApiImpl"
+    }
 
     private val _invitationFlow = MutableSharedFlow<InvitationDetail>(replay = 0)
     override val invitationFlow: SharedFlow<InvitationDetail> = _invitationFlow.asSharedFlow()
@@ -88,13 +93,38 @@ class KeyServerApiImpl(private val api: RetrofitKeyServerApi) : KeyServerApi {
     // --- Sync APIs ---
 
     override suspend fun uploadKey(request: SyncKeyRequest): SyncKeyResponse? {
-        val response = api.uploadKey(request)
-        return if (response.isSuccessful) response.body() else null
+        return try {
+            Log.d(TAG, "📡 [API-SYNC] Uploading key: ${request.keyId}")
+            val response = api.uploadKey(request)
+            if (response.isSuccessful) {
+                Log.i(TAG, "✅ [API-SYNC] Key uploaded successfully.")
+                response.body()
+            } else {
+                Log.e(TAG, "❌ [API-SYNC] Upload failed: ${response.code()} ${response.message()}")
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ [API-SYNC] Network error: ${e.message}")
+            null
+        }
     }
 
     override suspend fun fetchKeysList(): List<SyncKeyDetail> {
-        val response = api.fetchKeysList()
-        return if (response.isSuccessful) response.body() ?: emptyList() else emptyList()
+        return try {
+            Log.d(TAG, "📡 [API-SYNC] Fetching keys list...")
+            val response = api.fetchKeysList()
+            if (response.isSuccessful) {
+                val list = response.body() ?: emptyList()
+                Log.i(TAG, "✅ [API-SYNC] Fetched ${list.size} keys.")
+                list
+            } else {
+                Log.e(TAG, "❌ [API-SYNC] Fetch failed: ${response.code()}")
+                emptyList()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ [API-SYNC] Network error: ${e.message}")
+            emptyList()
+        }
     }
 
     // --- Management APIs (Legacy / Helper) ---

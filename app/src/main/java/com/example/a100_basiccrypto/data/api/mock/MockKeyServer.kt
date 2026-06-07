@@ -206,40 +206,40 @@ object MockKeyServer : KeyServerApi {
         
         val detail = SyncKeyDetail(
             keyId = request.keyId,
-            moduleId = request.moduleID,
+            moduleID = request.moduleID,
             ownerId = UUID.randomUUID().toString(),
             holderId = UUID.randomUUID().toString(),
             parentKeyId = request.parentKeyId,
             role = request.role,
-            state = if (request.keyState == "CLAIMED") "ACTIVE" else request.keyState,
+            keyState = if (request.keyState == "CLAIMED") "ACTIVE" else request.keyState,
             permissions = request.permissions,
             friendlyName = request.friendlyName,
-            devicePk = request.devicePublicKey,
-            vehiclePk = request.vehiclePublicKey,
+            devicePublicKey = request.devicePublicKey,
+            vehiclePublicKey = request.vehiclePublicKey,
             validityStart = request.validityStart,
             validityEnd = request.validityEnd,
             usageLimit = request.usageLimit,
-            carMetadata = request.metadata
+            metadata = request.metadata
         )
         
         // Update mock cloud storage
         val cloudRecord = CloudKeyRecord(
             keyId = detail.keyId,
-            moduleID = detail.moduleId,
+            moduleID = detail.moduleID,
             ownerEmail = "owner@mail.com",
             holderEmail = "holder@mail.com",
             holderNickname = request.holderNickname ?: "",
             parentKeyId = detail.parentKeyId,
-            devicePublicKey = detail.devicePk,
-            vehiclePublicKey = detail.vehiclePk,
+            devicePublicKey = detail.devicePublicKey,
+            vehiclePublicKey = detail.vehiclePublicKey,
             role = Role.valueOf(detail.role),
             permissions = detail.permissions,
-            keyState = KeyState.valueOf(detail.state),
+            keyState = KeyState.valueOf(detail.keyState),
             validityStart = detail.validityStart,
             validityEnd = detail.validityEnd,
             usageLimit = detail.usageLimit,
             friendlyName = detail.friendlyName,
-            metadata = detail.carMetadata ?: com.example.a100_basiccrypto.shared.model.CarMetadata()
+            metadata = detail.metadata ?: com.example.a100_basiccrypto.shared.model.CarMetadata()
         )
         
         val keys = userKeyCloud.getOrPut("owner@mail.com") { mutableListOf() }
@@ -254,10 +254,21 @@ object MockKeyServer : KeyServerApi {
         val cloudKeys = userKeyCloud["owner@mail.com"] ?: emptyList()
         return cloudKeys.map { 
             SyncKeyDetail(
-                it.keyId, it.moduleID, "oid", "hid", it.parentKeyId,
-                it.role.name, it.keyState.name, it.permissions, it.friendlyName,
-                it.devicePublicKey, it.vehiclePublicKey, it.validityStart, it.validityEnd,
-                it.usageLimit, it.metadata
+                keyId = it.keyId,
+                moduleID = it.moduleID,
+                ownerId = "oid",
+                holderId = "hid",
+                parentKeyId = it.parentKeyId,
+                role = it.role.name,
+                keyState = it.keyState.name,
+                permissions = it.permissions,
+                friendlyName = it.friendlyName,
+                devicePublicKey = it.devicePublicKey,
+                vehiclePublicKey = it.vehiclePublicKey,
+                validityStart = it.validityStart,
+                validityEnd = it.validityEnd,
+                usageLimit = it.usageLimit,
+                metadata = it.metadata
             )
         }
     }

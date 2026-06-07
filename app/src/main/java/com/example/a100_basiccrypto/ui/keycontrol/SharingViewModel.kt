@@ -394,18 +394,53 @@ class SharingViewModel(
     fun syncKeysWithCloud() {
         viewModelScope.launch {
             val email = authManager.getUserEmail() ?: return@launch
-            Log.d(TAG, "☁️ [SYNC-LIST] Syncing local keys with Cloud list...")
+            Log.d(TAG, "☁️ [SYNC-LIST] Fetching Cloud keys to update local metadata...")
             val cloudKeys = keyRepository.fetchKeysList()
             val localKeys = storageManager.getAllKeys()
 
-            // 1. Check for Revoked or Missing keys (Soft-wipe)
+            Log.d(TAG, "📊 [SYNC-LIST] Cloud has ${cloudKeys.size} keys. Local has ${localKeys.size} keys.")
+
             localKeys.forEach { local ->
-                val cloudMatch = cloudKeys.find { it.keyId == local.core.keyID?.toHex() }
-                if (cloudMatch == null || cloudMatch.state == "REVOKED") {
-                    Log.w(TAG, "🧹 [SYNC-WIPE] Key ${local.core.keyID?.toHex()} is missing or REVOKED on Cloud. Deleting locally.")
-                    storageManager.deleteKey(local.core.keyID!!)
+                val localKeyIdHex = local.core.keyID?.toHex() ?: ""
+                // Use case-insensitive matching for KeyID and ModuleID
+                val cloudMatch = cloudKeys.find { 
+                    it.keyId.equals(localKeyIdHex, ignoreCase = true) && 
+                    it.moduleID.equals(local.moduleID?.toHex(), ignoreCase = true) 
+                }
+
+                if (cloudMatch != null) {
+                    // 1. Explicit Revocation Check
+                    if (cloudMatch.keyState.equals("REVOKED", ignoreCase = true)) {
+                        Log.w(TAG, "🛑 [SYNC-WIPE] Key $localKeyIdHex is REVOKED on Cloud. Deleting locally.")
+                        storageManager.deleteKey(local.core.keyID!!)
+                        return@forEach
+                    }
+
+                    // 2. Metadata Update (Sync Cloud info back to Local)
+                    var changed = false
+                    if (local.friendlyName != cloudMatch.friendlyName) {
+                        local.friendlyName = cloudMatch.friendlyName
+                        changed = true
+                    }
+                    // Update vehicle public key if missing locally but present on cloud
+                    if (local.vehiclePublicKey == null && cloudMatch.vehiclePublicKey.isNotEmpty()) {
+                        local.vehiclePublicKey = cloudMatch.vehiclePublicKey.hexToBytes()
+                        changed = true
+                    }
+
+                    if (changed) {
+                        Log.d(TAG, "📝 [SYNC-UPDATE] Updated metadata for key: $localKeyIdHex")
+                        storageManager.saveDigitalKey(local)
+                    }
+                } else {
+                    // 3. Key is missing from Cloud but exists locally
+                    // DO NOT DELETE. Instead, we could mark for re-upload if it was supposed to be there.
+                    Log.i(TAG, "📡 [SYNC-MISSING] Key $localKeyIdHex not found on Cloud. Keeping local copy.")
                 }
             }
+            
+            // Refresh Home UI to show updated metadata
+            _events.emit(SharingEvent.RemoteActivationSuccess) // Reusing as a general refresh event
         }
     }
 

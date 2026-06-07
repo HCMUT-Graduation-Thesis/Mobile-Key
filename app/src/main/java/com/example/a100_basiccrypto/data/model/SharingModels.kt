@@ -113,21 +113,22 @@ data class SyncKeyResponse(
 )
 
 data class SyncKeyDetail(
-    @SerializedName("key_id") val keyId: String,
-    @SerializedName("module_id") val moduleId: String,
-    @SerializedName("owner_id") val ownerId: String?,
-    @SerializedName("holder_id") val holderId: String?,
-    @SerializedName("parent_key_id") val parentKeyId: String?,
+    val keyId: String,
+    val moduleID: String,
+    val ownerId: String?,
+    val holderId: String?,
+    val parentKeyId: String?,
     val role: String,
-    val state: String,
+    val keyState: String, // Server uses keyState or state? User API showed keyState in list
     val permissions: Int,
-    @SerializedName("friendly_name") val friendlyName: String,
-    @SerializedName("device_pk") val devicePk: String,
-    @SerializedName("vehicle_pk") val vehiclePk: String,
-    @SerializedName("validity_start") val validityStart: Long,
-    @SerializedName("validity_end") val validityEnd: Long,
-    @SerializedName("usage_limit") val usageLimit: Int,
-    @SerializedName("car_metadata") val carMetadata: CarMetadata?
+    val friendlyName: String,
+    val devicePublicKey: String,
+    val vehiclePublicKey: String,
+    val validityStart: Long,
+    val validityEnd: Long,
+    val usageLimit: Int,
+    val metadata: CarMetadata?,
+    val eKeys: List<SyncKeyDetail>? = null // Optional: for nested eKey info
 )
 data class RevokeFriendRequest(
     val moduleID: String,
