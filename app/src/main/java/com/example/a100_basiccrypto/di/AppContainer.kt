@@ -2,6 +2,8 @@ package com.example.a100_basiccrypto.di
 
 import android.content.Context
 import com.example.a100_basiccrypto.data.api.KeyServerApi
+import com.example.a100_basiccrypto.data.api.KeyServerApiImpl
+import com.example.a100_basiccrypto.data.api.RetrofitClient
 import com.example.a100_basiccrypto.data.api.mock.MockKeyServer
 import com.example.a100_basiccrypto.data.local.IdentityStorageManager
 import com.example.a100_basiccrypto.data.repository.AuthRepository
@@ -19,7 +21,8 @@ class AppContainer(private val context: Context) {
     val identityCrypto: DilithiumIdentityCryptoImpl by lazy { DilithiumIdentityCryptoImpl() }
     
     // API
-    val keyServerApi: KeyServerApi = MockKeyServer
+    private val retrofitClient: RetrofitClient by lazy { RetrofitClient(authManager) }
+    val keyServerApi: KeyServerApi by lazy { KeyServerApiImpl(retrofitClient.api) }
     
     // Repositories
     val authRepository: AuthRepository by lazy {

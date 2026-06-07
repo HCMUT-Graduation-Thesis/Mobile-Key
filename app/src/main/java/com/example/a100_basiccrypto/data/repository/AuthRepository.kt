@@ -70,10 +70,17 @@ class AuthRepository(
                     displayName = response.user.display_name,
                     accessToken = response.accessToken,
                     refreshToken = response.refreshToken ?: "",
-                    // 1 hour expiry
-                    accessTokenExpiresAt = System.currentTimeMillis() + 3600000 
+                    // Use a conservative 55 minutes for 1 hour expiry
+                    accessTokenExpiresAt = System.currentTimeMillis() + (55 * 60 * 1000) 
                 )
             )
+            
+            // 6. Save Cloud Public Key if available
+            response.cloudPublicKey?.let { 
+                Log.d(TAG, "☁️ [SECURITY] Saving Cloud PQC Public Key")
+                // Store this somewhere if needed for server signature verification
+            }
+
             Log.i(TAG, "🏁 [LOGIN-COMPLETE] Session established and Identity bound.")
             true
         } else {
@@ -116,7 +123,7 @@ class AuthRepository(
                 Log.i(TAG, "🔄 [TOKEN-REFRESH] Access Token successfully renewed via Refresh Token.")
                 authManager.updateAccessToken(
                     refreshResponse.accessToken, 
-                    System.currentTimeMillis() + 3600000
+                    System.currentTimeMillis() + (55 * 60 * 1000)
                 )
                 return true
             } else {

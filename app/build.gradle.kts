@@ -55,6 +55,11 @@ dependencies {
     // Security and JSON
     implementation(libs.androidx.security.crypto)
     implementation(libs.gson)
+    
+    // Networking
+    implementation(libs.retrofit.core)
+    implementation(libs.retrofit.gson)
+    implementation(libs.okhttp.logging)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
