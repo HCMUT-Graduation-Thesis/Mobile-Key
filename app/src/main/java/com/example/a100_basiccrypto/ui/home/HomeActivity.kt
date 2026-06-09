@@ -180,7 +180,8 @@ class HomeActivity : AppCompatActivity() {
                     }
                     is SharingViewModel.SharingUiState.ActivationSuccess -> {
                         Toast.makeText(this@HomeActivity, "Key added successfully!", Toast.LENGTH_LONG).show()
-                        homeViewModel.refreshKeys(email)
+                        val currentEmail = container.authManager.getUserEmail() ?: ""
+                        homeViewModel.refreshKeys(currentEmail)
                         startBleBackgroundService(forceRefresh = true)
                     }
                     is SharingViewModel.SharingUiState.Error -> {

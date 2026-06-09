@@ -159,6 +159,7 @@ class AuthRepository(
         val email = authManager.getUserEmail()
         Log.i(TAG, "🚪 [LOGOUT] Cleaning up session for $email")
         email?.let { api.setOffline(it) }
+        // Note: We don't clear keys on logout to support offline-first returning users.
         authManager.logout()
     }
 

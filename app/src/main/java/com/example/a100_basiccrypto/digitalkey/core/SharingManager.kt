@@ -152,13 +152,14 @@ class SharingManager(
                 
                 this.attestationPackage = ap
                 this.invitationCodeHash = metadata.invCodeHash
+                // FALLBACK: If recipientEmail is missing, assume current user (who is claiming)
                 this.accountEmail = invitation.recipientEmail
-                this.invitationId = invitation.id // SAVE ID
+                this.invitationId = invitation.id
                 
                 // Map identities from Server
                 this.carMetadata = invitation.car_metadata
-                this.friendlyName = invitation.senderName ?: "New Vehicle"
-                this.keyHolderName = invitation.senderName ?: "Guest Key"
+                this.friendlyName = invitation.car_metadata?.modelName ?: invitation.senderName ?: "New Vehicle"
+                this.keyHolderName = "Guest Key"
                 this.moduleID = invitation.moduleID?.hexToBytes()
             }
             return newRecord

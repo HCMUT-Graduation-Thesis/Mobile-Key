@@ -182,6 +182,10 @@ class SharingViewModel(
                 Log.d(TAG, "📦 [RECV-READY] Full data available. Mapping to DigitalKeyRecord...")
                 val record = sharingManager.processIncomingInvitation(targetInvitation)
                 if (record != null) {
+                    // Ensure accountEmail is set to the current user if the record doesn't have it
+                    if (record.accountEmail.isNullOrEmpty()) {
+                        record.accountEmail = authManager.getUserEmail()
+                    }
                     Log.d(TAG, "📦 [RECV-LOCAL] Temporary record created: ${record.core.keyID?.toHex()}")
                     _uiState.value = SharingUiState.ReceivedInvitation(record, targetInvitation)
                 } else {
